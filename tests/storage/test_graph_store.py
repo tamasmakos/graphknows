@@ -1564,6 +1564,22 @@ async def test_list_entities_counts_mentions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_entity_coverage_folds_out_rel_in_rel_and_plays_role() -> None:
+    client = _mock_client()
+    client.query = AsyncMock(
+        side_effect=[
+            [{"nn": "a"}, {"nn": "b"}, {"nn": "c"}, {"nn": "d"}],  # total ENTITY set
+            [{"nn": "a"}],  # out-REL: a has an outgoing REL
+            [{"nn": "b"}],  # in-REL: b has only an incoming REL
+            [{"nn": "c"}],  # PLAYS_ROLE: c is reached only via a frame role
+        ]
+    )
+    store = GraphStore(client=client)
+    coverage = await store.entity_coverage()
+    assert coverage == {"total": 4, "connected": 3, "isolated": 1}
+
+
+@pytest.mark.asyncio
 async def test_drop_entities_detach_deletes_by_name_norm() -> None:
     client = _mock_client(query_rows=[{"n": 2}])
     store = GraphStore(client=client)

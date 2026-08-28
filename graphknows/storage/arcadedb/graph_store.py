@@ -2540,6 +2540,45 @@ class GraphStore(ArcadeStoreBase):
         )
         return verifier_coverage_rows(rows)
 
+    async def entity_coverage(self) -> dict[str, int]:
+        """Whole-namespace audit: how many ENTITY nodes carry no semantic edge.
+
+        Reproduces the issue #160 measurement — 70 of 334 conv-30 entities
+        (21%) had no ``REL`` in either direction and no incoming
+        ``PLAYS_ROLE`` from a ``FRAME_INSTANCE``: written, embedded, and
+        connected to nothing but their chunk. That isolated count, not a
+        vibe about span length, is the metric the entity-minting gate
+        (``is_graph_entity_name``) is tuned against — this is how it gets
+        re-measured after a change to that gate.
+
+        Returns ``{"total", "connected", "isolated"}``.
+
+        Collected as three directed queries (out-REL, in-REL, incoming
+        PLAYS_ROLE) folded in Python — the ``verifier_coverage`` idiom — rather
+        than one NOT-EXISTS pattern, for the same reason ``_entity_degree_map``
+        splits REL by direction: ArcadeDB's Cypher subset here is not relied on
+        for undirected patterns or negation, only for a plain grouped scan.
+        """
+        total_rows = await self.query(
+            "MATCH (e:ENTITY) WHERE e.name_norm IS NOT NULL RETURN e.name_norm AS nn"
+        )
+        total = {r["nn"] for r in total_rows if r.get("nn")}
+        out_rel = await self.query(
+            "MATCH (a:ENTITY)-[:REL]->(b:ENTITY) RETURN DISTINCT a.name_norm AS nn"
+        )
+        in_rel = await self.query(
+            "MATCH (a:ENTITY)<-[:REL]-(b:ENTITY) RETURN DISTINCT a.name_norm AS nn"
+        )
+        roles = await self.query(
+            "MATCH (e:ENTITY)<-[:PLAYS_ROLE]-(fi:FRAME_INSTANCE) RETURN DISTINCT e.name_norm AS nn"
+        )
+        connected = {r["nn"] for r in out_rel + in_rel + roles if r.get("nn")} & total
+        return {
+            "total": len(total),
+            "connected": len(connected),
+            "isolated": len(total) - len(connected),
+        }
+
     # ------------------------------------------------------------------
     # Read API — structured fact context (fact-sheet for the generator)
     # ------------------------------------------------------------------

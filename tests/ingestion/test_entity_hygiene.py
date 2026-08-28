@@ -324,16 +324,23 @@ class TestStructuralJunk:
     def test_vocative_rules_do_not_touch_real_names(self, name: str) -> None:
         assert is_graph_entity_name(name)
 
+    def test_verb_headed_span_now_rejected_by_the_head_gate(self) -> None:
+        """#160: the parse now catches what length alone could not.
+
+        "keeping me in the loop" parses with a gerund ROOT ("keeping") tagged
+        VERB, so ``_is_verb_headed`` now drops it — moved out of the xfail
+        below, which used to record this name as an admitted defect.
+        """
+        assert not is_graph_entity_name("keeping me in the loop")
+
     @pytest.mark.xfail(
         reason=(
-            "Known defect, measured not fixed: _MAX_ENTITY_WORDS=8 still admits "
-            "NOUN-headed and gerund-headed long spans. The clause-opener and "
-            "sentence-punctuation rules do not reach them — they are grammatical "
-            "noun phrases, just far too long to be entities — and distinguishing "
-            "them needs the parse, not the string. The 8-word cap stays: lowering "
-            "it to 3 turns these green but deletes legitimate 4-word titles "
-            "('Charlotte's Web: A Review'). Unxfail when the minting paths pass "
-            "the span's head POS to the gate."
+            "#160 gated propositions on the span's syntactic head "
+            "(_is_verb_headed): a ROOT tagged VERB/AUX is rejected. These three "
+            "survive because their ROOT parses as a NOUN, not a verb, so the "
+            "head check does not fire and length is still the only signal. The "
+            "8-word cap stays (see _MAX_ENTITY_WORDS): lowering it deletes "
+            "legitimate 4-word titles ('Charlotte's Web: A Review')."
         ),
         strict=True,
     )
@@ -341,7 +348,6 @@ class TestStructuralJunk:
         "name",
         [
             "goals written down on paper",
-            "keeping me in the loop",
             "one-on-one mentoring and training",
             "new offers and promotions",
         ],
@@ -673,3 +679,81 @@ class TestUtteranceBoundarySpans:
     def test_a_real_name_with_periods_survives(self, name: str) -> None:
         """The rule must key on SENTENCE-ending periods, not on any period at all."""
         assert is_graph_entity_name(name) is True
+
+
+class TestVerbHeadedPropositionsAreNotEntities:
+    """A span whose syntactic head is a verb is a PREDICATION, not a name.
+
+    None of the string rules fire on these: they are under the 8-word cap, carry
+    no ``!``/``?``, no sentence break, no speaker colon, no code markup, and do
+    not open with a pronoun/auxiliary/subordinator token, so ``_is_clause_fragment``
+    never sees them. Measured on LoCoMo conv-30: 21% of the 334 entities were
+    isolated, and this is why -- minted as ENTITY, a predication has no nominal
+    referent to resolve against, so it types as "" / ENTITY / EVENT, no REL
+    property's domain/range ever matches it, and it lands with only a MENTIONS
+    edge to its chunk.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "expanding Jon's dance studio's social media presence",
+            "welcoming dancers of all ages and backgrounds",
+            "helps Jon find areas to improve",
+            "make the dance studio look awesome",
+        ],
+    )
+    def test_verb_headed_propositions_are_rejected(self, name: str) -> None:
+        assert not is_graph_entity_name(name)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Charlotte's Web: A Review",
+            "one-on-one mentoring and training",
+            "New York City",
+            "New York",
+            "Washington, D.C.",
+            "Dr. Nagy",
+            "county hospital",
+            "dance studio",
+            "Gina",  # a plain person name
+        ],
+    )
+    def test_real_multi_word_names_still_survive(self, name: str) -> None:
+        """A proposition gate that buys its drops by deleting real multi-word
+        names is not a fix.
+
+        One- and two-token names ("dance studio", "New York", "Gina") are
+        deliberately never head-checked -- too POS-ambiguous in isolation, and
+        no proposition measured on #160 is shorter than four tokens.
+        """
+        assert is_graph_entity_name(name)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Saving Private Ryan",
+            "The Empire Strikes Back",
+            "Live and Let Die",
+        ],
+    )
+    def test_verb_headed_titles_survive_when_typed_as_work_of_art(self, name: str) -> None:
+        """A verb-headed span is still a name when it is a typed title -- the
+        gate exists to catch predications with no nominal referent, and a
+        typed title already has one."""
+        assert is_graph_entity_name(name, "WORK_OF_ART")
+
+    def test_degrades_to_admit_when_the_parser_is_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing spaCy model must never empty the graph -- it must admit,
+        not reject, the spans the head-gate can no longer check."""
+        import graphknows.ingestion.extraction.entities.hygiene as hygiene
+
+        monkeypatch.setattr(hygiene, "_parser", lambda: None)
+        hygiene._is_verb_headed.cache_clear()
+        try:
+            assert is_graph_entity_name("helps Jon find areas to improve") is True
+        finally:
+            hygiene._is_verb_headed.cache_clear()

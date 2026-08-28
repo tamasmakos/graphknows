@@ -70,6 +70,13 @@ _RELATION_LABEL_CAP = 25
 # and waiting longer only delays every chunk before it.
 _LEXICAL_WARMUP = 40
 
+# Entity types that carry no discriminating meaning: the extractor's fallback
+# when a minted ENTITY has no nominal referent for _map_to_profile_class to
+# resolve (see #160). Measured on conv-30: of 334 entities, 97 were typed
+# literally ENTITY and 99 EVENT — 59% with no type a relation's domain/range
+# gate can match against.
+_UNTYPED_ENTITY_TYPES = frozenset({"", "ENTITY", "EVENT"})
+
 # The one class the range gate enforces against (see _range_admits). Asserting a
 # non-person-ranged property over a person is the whole observed defect; every
 # other range mismatch is the ontology being narrower than the data.
@@ -630,6 +637,7 @@ class _STMIngestHandler:
             entity_count=entity_count,
             elapsed_s=elapsed,
             errors=errors,
+            abstentions={k: v for k, v in self._abstentions.items() if v},
         )
 
     async def _relation_pass(
@@ -1035,6 +1043,14 @@ class _STMIngestHandler:
             ]
             if extra:
                 filtered = graph_entities(list(extraction.entities) + extra)
+        # Denominator and untyped count for the #160 share (see
+        # _UNTYPED_ENTITY_TYPES above) — the metric the span-length gate
+        # decision needs, computed once filtered is final so it counts exactly
+        # what gets written below.
+        self._abstentions["entities"] += len(filtered)
+        self._abstentions["untyped_entities"] += sum(
+            1 for e in filtered if str(e.get("type") or "").upper() in _UNTYPED_ENTITY_TYPES
+        )
         await self._store.write_chunk(
             {
                 "chunk_id": chunk_id,

@@ -13,11 +13,38 @@ gate ate the graph".
 
 from __future__ import annotations
 
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
+from graphknows.ingestion.stm.ingest import _STMIngestHandler
 from graphknows.models.ingest import IngestResult
 
 pytestmark = pytest.mark.unit
+
+
+def _handler() -> tuple[_STMIngestHandler, MagicMock]:
+    store = MagicMock()
+    for name in (
+        "ensure_session",
+        "ensure_file",
+        "write_chunk",
+        "write_entities_bulk",
+        "write_class_matches",
+        "write_instance_of",
+        "write_temporal",
+        "write_frames",
+        "write_frame_instances",
+    ):
+        setattr(store, name, AsyncMock(return_value=None))
+    return _STMIngestHandler(store, extractor=None, embed_fn=None), store
+
+
+class _Extraction:
+    def __init__(self, entities: list[dict[str, Any]]) -> None:
+        self.entities = entities
+        self.relations: list[dict[str, Any]] = []
 
 
 def test_the_result_carries_a_tally() -> None:
@@ -52,6 +79,16 @@ def test_the_flush_contract_exposes_it() -> None:
     assert '"abstentions": abstentions' in src, "flush stopped reporting the tally"
 
 
+def test_the_flush_contract_exposes_entity_coverage() -> None:
+    """Isolated-entity count (issue #160) is only ever visible via flush's report."""
+    import inspect
+
+    from graphknows.memory import Memory
+
+    src = inspect.getsource(Memory.flush_memory)
+    assert '"entity_coverage": entity_coverage' in src, "flush stopped reporting entity_coverage"
+
+
 def test_flush_reports_per_stage_seconds() -> None:
     """`elapsed_s` alone cannot say WHICH stage took the time.
 
@@ -70,3 +107,68 @@ def test_flush_reports_per_stage_seconds() -> None:
     assert "finally:" in src and "stage_s[name] =" in src, (
         "a failed stage would report no duration — which is when you most want it"
     )
+
+
+@pytest.mark.asyncio
+async def test_untyped_entity_share_is_computable_from_the_tally() -> None:
+    """59% of conv-30's entities carried literal ENTITY/EVENT — a type that
+    can't satisfy any relation's domain/range — and nothing counted it (#160).
+    """
+    handler, _store = _handler()
+    entities = [
+        {"name": "Mel", "type": "PERSON", "confidence": 0.9},
+        {"name": "the meeting", "type": "ENTITY", "confidence": 0.5},
+        {"name": "the trip", "type": "EVENT", "confidence": 0.5},
+        {"name": "something", "type": "", "confidence": 0.5},
+    ]
+    await handler._write_extracted(
+        session_id="s1",
+        file_id="f1",
+        chunk_id="c1",
+        text="Mel: I went.",
+        seq=0,
+        kind="window",
+        speaker="Mel",
+        ts="",
+        embedding=[0.1],
+        extraction=_Extraction(entities),
+        temporal=[],
+        memory_class="ltm",
+    )
+
+    assert handler._abstentions["entities"] == 4
+    assert handler._abstentions["untyped_entities"] == 3
+
+
+@pytest.mark.asyncio
+async def test_ingest_file_result_carries_the_tally() -> None:
+    """`IngestResult` from a file ingest dropped `abstentions` entirely — a
+    file ingest reported no tally at all, unlike the message path (#160)."""
+    from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
+    from graphknows.ingestion.parsers.text import ParsedFile, TextSegment
+
+    class _FakeExtractor:
+        def extract(self, *args: Any, **kw: Any) -> ExtractionResult:
+            return ExtractionResult(entities=[{"name": "the meeting", "type": "ENTITY"}])
+
+    store = MagicMock()
+    for name in (
+        "ensure_session",
+        "ensure_file",
+        "write_chunk",
+        "write_entities_bulk",
+        "write_class_matches",
+        "write_instance_of",
+        "write_temporal",
+    ):
+        setattr(store, name, AsyncMock(return_value=None))
+    handler = _STMIngestHandler(store, extractor=_FakeExtractor(), embed_fn=lambda t: [0.1])
+    parsed = ParsedFile(
+        source_id="f1",
+        title="t",
+        parser_name="text",
+        segments=[TextSegment(text="Mel: hi.", heading_path="", char_offset=0)],
+    )
+    result = await handler.ingest_parsed(parsed, session_id="s1")
+
+    assert result.abstentions == {"entities": 1, "untyped_entities": 1}
