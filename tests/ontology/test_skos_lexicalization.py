@@ -1,30 +1,24 @@
-"""Lexicalization must not hand BFO plumbing everyday triggers.
+"""Lexicalization: what ``alt_labels`` a concept gets, and what upper-ontology
+properties are excluded from.
 
-CCO ships no ``skos:altLabel``, so ``lexicalize`` harvests them from the label's
-content words plus their dominant WordNet synset. For an UPPER-ONTOLOGY property
-that synset is a common English verb, and the property ends up firing on
-ordinary conversation while carrying none of its declared meaning.
-
-Measured on conv-30: `permits` (Process Regulation -> process) acquired
-"allow"/"let" and produced 23 edges — `Gina permits fashion`, `dancing permits
-Gina`. With its siblings that was 64 of 286 REL edges (22%), none of them
-asserted by anyone.
-
-The prefLabel and the label's own words stay: text that says "permits" IS
-asserting the property.
+Issue #141 deleted synonym expansion from ``lexicalize`` entirely — a content
+word's WordNet expansion is now a MATCH-TIME decision anchored to a mention's
+context (``senses.sense_lemmas`` + ``lexical.evoked``), never a build-time one.
+This file now covers the two things that survive that change: the
+``_upper_ontology_property`` blocklist (still applied, now at the expansion
+site instead of here — see ``lexical._sense_anchored_matches``) and
+``ancestors``, the ``broader`` closure. It also keeps the missing-corpus
+regression coverage for ``lexicalize`` itself, which is not really exercising
+WordNet at all any more — see ``TestMissingWordnetCorpus``.
 """
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 
-from graphknows.symbolic.ontology import skos
 from graphknows.symbolic.ontology.skos import (
     Concept,
     _upper_ontology_property,
-    _wordnet_synonyms,
     ancestors,
     lexicalize,
 )
@@ -77,51 +71,40 @@ class TestUpperOntologyDetection:
         assert not _upper_ontology_property(cls)
 
 
-class TestLexicalizeDropsPlumbingSynonyms:
-    def test_permits_keeps_its_label_and_loses_allow_and_let(self) -> None:
-        """The exact conv-30 defect: `Gina permits fashion`, minted from "let"."""
-        c = lexicalize(_prop("permits", ("Process Regulation",), ("process",)))
-        assert "permits" in c.alt_labels
-        assert not {"allow", "let", "countenance", "permit"} & c.alt_labels
-
-    def test_realizes_loses_recognize(self) -> None:
-        c = lexicalize(_prop("realizes", ("process",), ("realizable entity",)))
-        assert "realizes" in c.alt_labels
-        assert not {"recognize", "recognise", "realise", "agnize"} & c.alt_labels
-
-    def test_a_concrete_property_keeps_its_synonyms(self) -> None:
-        """The guard must not cost the authored vocabulary its lexical surface."""
-        c = lexicalize(_prop("teaches", ("Person",), ("Person",)))
-        assert "teaches" in c.alt_labels
-        # WordNet's dominant synset for the verb "teach" supplies these; if the
-        # guard over-fires the conversational vocabulary goes silent.
-        assert len(c.alt_labels) > 1
-
-    def test_synonyms_disabled_is_still_honoured(self) -> None:
-        c = lexicalize(_prop("teaches", ("Person",), ("Person",)), synonyms=False)
-        assert c.alt_labels == {"teaches"}
-
-
 def _cls(label: str, broader: tuple[str, ...] = ()) -> Concept:
     return Concept(
         uri=f"cco:{label}", pref_label=label, definition="", kind="class", broader=broader
     )
 
 
-class TestMissingWordnetCorpus:
-    """Lexicalization must degrade, not crash, when the WordNet corpus is absent.
+class TestLexicalizePropertiesReachTheirBaseForm:
+    """Build-time WordNet synonym expansion is gone; base-form reach is not.
 
-    ``nltk.corpus.wordnet`` is a lazy loader: it only touches disk on first
-    attribute access, so a bare ``try/except`` around the import does not
-    catch the ``LookupError`` the corpus raises on that first access. Patching
-    ``skos._wordnet`` itself (rather than the ``nltk`` module) simulates that
-    outcome without ever touching the real corpus, so this test is meaningful
-    even in an environment where WordNet genuinely isn't installed.
+    CCO names properties as inflected present-tense verbs ("requires",
+    "permits"), but matching runs on spaCy lemmas everywhere else
+    (``lexical.lemma_view``) and WordNet's own lemma names are always base
+    forms. Without lemmatising the label itself, an inflected-only altLabel
+    is an index key that neither the STRONG lexical match nor sense-anchored
+    expansion (``lexical._sense_anchored_matches``) could ever reach.
     """
 
-    @pytest.fixture(autouse=True)
-    def _patch_missing_corpus(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(skos, "_wordnet", lambda: None)
+    def test_an_inflected_property_label_also_reaches_its_lemma(self) -> None:
+        c = lexicalize(_prop("teaches", ("Person",), ("Person",)))
+        assert "teaches" in c.alt_labels
+        assert "teach" in c.alt_labels
+
+    def test_a_class_label_is_not_lemmatised(self) -> None:
+        """Classes are left alone: their labels are already base-form nouns."""
+        c = lexicalize(_cls("Commercial Organization"))
+        assert c.alt_labels == {"commercial organization", "commercial", "organization"}
+
+
+class TestMissingWordnetCorpus:
+    """``lexicalize`` no longer touches WordNet at all, so these now hold trivially.
+
+    Kept rather than deleted: they still pin that a class's own label and
+    content words populate ``alt_labels`` correctly, with no corpus involved.
+    """
 
     def test_lexicalize_a_class_survives_without_wordnet(self) -> None:
         concept = lexicalize(
@@ -141,9 +124,6 @@ class TestMissingWordnetCorpus:
         assert "commercial" in concept.alt_labels
         assert "organization" in concept.alt_labels
         assert "commercial organization" in concept.alt_labels
-
-    def test_wordnet_synonyms_returns_empty_set_instead_of_raising(self) -> None:
-        assert _wordnet_synonyms("hospital", "class") == set()
 
 
 class TestAncestors:
@@ -183,53 +163,3 @@ class TestAncestors:
     def test_depth_bounds_the_walk(self) -> None:
         scheme = {"A": _cls("A", ("B",)), "B": _cls("B", ("C",)), "C": _cls("C")}
         assert ancestors(scheme, "A", depth=1) == ["B"]
-
-
-class TestMissingCorpusIsLoudAndOffline:
-    """A missing corpus warns and degrades — it never downloads.
-
-    #137 shipped `nltk.download("wordnet")` here because the corpus was absent from the
-    image. The tests went green, so the criterion was met, and a package strangers
-    pip-install reached the internet mid-ingest. It could not even work: nltk.download
-    ignores NLTK_DATA without an explicit download_dir (scripts/bake_models.py:99), so
-    the fetch landed where nothing reads. Provisioning is scripts/bake_models.py's job.
-    """
-
-    @pytest.fixture(autouse=True)
-    def _clear_cache(self):
-        skos._wordnet.cache_clear()
-        yield
-        skos._wordnet.cache_clear()
-
-    def _absent_corpus(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
-        from nltk.corpus import wordnet as wn
-
-        monkeypatch.setattr(
-            wn, "synsets", lambda *a, **k: (_ for _ in ()).throw(LookupError("wordnet"))
-        )
-        calls = {"downloads": 0}
-
-        def _record(*_a, **_k):
-            calls["downloads"] += 1
-            return True
-
-        import nltk
-
-        monkeypatch.setattr(nltk, "download", _record)
-        return calls
-
-    def test_it_never_downloads(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls = self._absent_corpus(monkeypatch)
-        assert skos._wordnet() is None
-        assert calls["downloads"] == 0, "library code reached the network for a missing corpus"
-
-    def test_it_says_what_is_missing_and_how_to_provision_it(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        self._absent_corpus(monkeypatch)
-        with caplog.at_level(logging.WARNING, logger=skos.__name__):
-            assert skos._wordnet() is None
-        assert caplog.records, "a missing corpus degraded matching silently"
-        text = caplog.text
-        assert "bake_models" in text, "the warning does not name the provisioning step"
-        assert "synonyms=False" in text, "the warning does not name the explicit opt-out"
