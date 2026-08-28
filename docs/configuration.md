@@ -47,6 +47,7 @@ async with Memory(settings) as mem:
 | `GRAPHKNOWS_DSPY_RELATIONS` | _(preset)_ | Run the DSPy/LLM relation extractor on top of the deterministic pass. |
 | `GRAPHKNOWS_ONTOLOGY` | _(empty)_ | RDF/OWL ontology **file or folder** to inject. Mode-independent. See [ontology.md](ontology.md). |
 | `GRAPHKNOWS_ONTOLOGY_FILE` | _(empty)_ | Deprecated alias for `GRAPHKNOWS_ONTOLOGY` (single file only). |
+| `GRAPHKNOWS_RELATION_ONTOLOGY` | `personal` | Vocabulary relation properties are drawn from. Bare tokens `personal` \| `cco`, or a path to a custom vocabulary. Entity typing stays on `GRAPHKNOWS_ONTOLOGY`. See [ontology.md](ontology.md). |
 | **Extraction / chunking** | | |
 | `GRAPHKNOWS_RELEX_MODEL` | `knowledgator/gliner-relex-large-v1.0` | Joint entity+relation extraction model (HuggingFace id). |
 | `GRAPHKNOWS_SPACY_MODEL` | `en_core_web_lg` | spaCy model for relation mining. |

@@ -38,22 +38,20 @@ _BUNDLED_ONTOLOGY = str(
 # topically-close, relationally-irrelevant terms and produced ZERO relations
 # over 60 real turns), so a hand-curated 25-property profile carried relations.
 #
-# The Common Core Ontologies serve both jobs, so the split is gone: 1401 classes
-# to type entities, and 224 object properties of which 112 declare the domain
-# and range that property selection keys on — including the 86 familial
-# relations that are the conversational vocabulary the profile was invented to
-# supply. Both names remain so that pointing GRAPHKNOWS_RELATION_ONTOLOGY at a
-# separate curated vocabulary is still a supported override.
-_BUNDLED_RELATION_PROFILE = _BUNDLED_ONTOLOGY
-
-# The hand-curated alternative, now shipped so the CCO-vs-profile question is an
-# A/B anyone can run rather than a fixture only the test suite can reach:
-#
-#     GRAPHKNOWS_RELATION_ONTOLOGY=personal
-#
-# 9 classes and 25 object properties, every one declaring a domain and a range,
-# sized to be offered WHOLE. It is NOT the default: the decision to unify on CCO
-# above was deliberate, and reversing it is a measurement, not an opinion.
+# CCO still types entities (1437 classes, see ``ontology_source`` below) but no
+# longer supplies the default relation vocabulary. The conv-30 personal-vs-cco
+# A/B pre-registered in #135 (blocked in earlier attempts by an unrelated
+# ingestion defect, since fixed) ran to completion in both arms and is written
+# up in evaluation/audit/baseline/relation-vocabulary-ab.md: evidence recall and
+# accuracy don't discriminate between the two (generation-bound saturation /
+# noise), but predicate anchoring does — CCO leaves 48/356 REL edges (13.5%) as
+# bare, unanchored ``lemma:`` predicates versus the personal profile's 9/356
+# (2.5%), because CCO's enterprise/commercial-frame object properties don't
+# cover a sizeable share of what personal, two-person conversation expresses.
+# That is the evidence #137 asks for, so the personal profile (9 classes, 25
+# object properties, every one declaring a domain and a range, sized to be
+# offered WHOLE) is now the bundled default — entity typing and relation
+# vocabulary are two separate knobs, and only the latter moves here.
 _BUNDLED_PERSONAL_PROFILE = str(
     Path(__file__).resolve().parent
     / "symbolic"
@@ -62,6 +60,14 @@ _BUNDLED_PERSONAL_PROFILE = str(
     / "personal"
     / "personal-profile.json"
 )
+_BUNDLED_RELATION_PROFILE = _BUNDLED_PERSONAL_PROFILE
+
+# CCO's own object properties (264, each declaring domain and range), kept as
+# the documented example you switch back to with:
+#
+#     GRAPHKNOWS_RELATION_ONTOLOGY=cco
+#
+# See the A/B report above for why it is no longer the default.
 
 # Bare tokens accepted by GRAPHKNOWS_RELATION_ONTOLOGY in place of a path, so an
 # A/B arm is one short env var instead of a path into site-packages.
@@ -395,10 +401,11 @@ class GraphKnowsSettings(BaseSettings):
     def relation_ontology_source(self) -> str:
         """The vocabulary relation properties are drawn from — never empty.
 
-        Defaults to the same bundled digest as :attr:`ontology_source` — CCO
-        supplies both vocabularies — but stays a separate knob so a deployment
-        can point relations at a curated domain profile without replacing the
-        class vocabulary that types entities.
+        Defaults to the bundled personal profile — a separate digest from
+        :attr:`ontology_source`, which keeps typing entities with CCO — so a
+        deployment can swap relations back to CCO's object properties
+        (``GRAPHKNOWS_RELATION_ONTOLOGY=cco``) without replacing the class
+        vocabulary that types entities.
         """
         chosen = self.relation_ontology.strip()
         if not chosen:

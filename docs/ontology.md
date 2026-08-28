@@ -132,16 +132,31 @@ Setting the variable **replaces** that default with your own file or folder.
 
 | Path | What it is |
 | --- | --- |
-| `cco/cco.json` | The merged CCO digest — the default ontology and relation vocabulary. |
+| `cco/cco.json` | The merged CCO digest — the default entity-typing ontology, and the example relation vocabulary you switch back to with `GRAPHKNOWS_RELATION_ONTOLOGY=cco`. |
 | `cco/conversational.json` | A SKOS overlay adding everyday concepts CCO does not model, with altLabels that make them lexically reachable and domain/range in CCO's own classes. |
 | `cco-modules/` | The 11 CCO modules as `.ttl` (Agent, Event, Time, Geospatial, Quality, Artifact, Facility, …). |
 | `cco-imports/`, `cco-extensions/` | Import closure and governance-board extensions. |
+| `personal/personal-profile.json` | The default relation vocabulary — 9 classes, 25 object properties, every one domain- and range-typed, sized to be offered whole. |
 
 There is no by-name registry — point `GRAPHKNOWS_ONTOLOGY` at a path, exactly as
 you would at your own file:
 
 ```bash
 GRAPHKNOWS_ONTOLOGY=graphknows/ontology/assets/cco-modules/AgentOntology.ttl
+```
+
+Entity typing and the relation vocabulary are two separate knobs:
+`GRAPHKNOWS_ONTOLOGY` controls what types entities and always defaults to CCO;
+`GRAPHKNOWS_RELATION_ONTOLOGY` controls what relation properties are drawn
+from and defaults to the bundled personal profile. The conv-30 personal-vs-cco
+A/B (`evaluation/audit/baseline/relation-vocabulary-ab.md`) found CCO's
+enterprise/commercial-frame object properties leave 13.5% of REL edges
+unanchored versus the personal profile's 2.5% on personal, two-person
+conversation — CCO remains loadable as the relation vocabulary too, as a
+documented example, with one env var:
+
+```bash
+GRAPHKNOWS_RELATION_ONTOLOGY=cco
 ```
 
 ## llm_assisted: extract-then-map
