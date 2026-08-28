@@ -1,0 +1,271 @@
+{
+  "sheet": "conv-30-seed0.csv",
+  "database": "mem_eval_locomo_llm_free_conv_30",
+  "seed": 0,
+  "generated_at": "2026-08-28T01:17:09.048420+00:00",
+  "rows": 150,
+  "manifest": "conv-30-seed0.csv",
+  "axes": [
+    "span",
+    "predicate",
+    "direction",
+    "polarity_modality",
+    "all_four"
+  ],
+  "caveats": [
+    "verifier_score coverage is PARTIAL: scored on `ontology`, `lemma`, never scored on `frame`. Read no mean below as a whole-graph number.",
+    "`frame`: verifier_score is NULL on every sampled edge - `RelationVerifierGate` runs only in the relex write path, so it structurally cannot score this tier. Its mean is not a health number here.",
+    "`frame`: 51 rows sampled, none judged yet.",
+    "`wordnet`: no edges of this tier in the graph — nothing to audit.",
+    "`ontology`: 51 rows sampled, none judged yet.",
+    "`lemma`: 48 rows sampled, none judged yet.",
+    "`unclassified`: no edges of this tier in the graph — nothing to audit."
+  ],
+  "tiers": [
+    {
+      "tier": "frame",
+      "population": 2551,
+      "sampled": 51,
+      "no_evidence": 0,
+      "verifier_score": {
+        "scored": 0,
+        "null": 51,
+        "mean": null,
+        "median": null
+      },
+      "precision": {
+        "span": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "predicate": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "direction": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "polarity_modality": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "all_four": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        }
+      }
+    },
+    {
+      "tier": "wordnet",
+      "population": 0,
+      "sampled": 0,
+      "no_evidence": 0,
+      "verifier_score": {
+        "scored": 0,
+        "null": 0,
+        "mean": null,
+        "median": null
+      },
+      "precision": {
+        "span": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "predicate": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "direction": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "polarity_modality": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "all_four": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        }
+      }
+    },
+    {
+      "tier": "ontology",
+      "population": 105,
+      "sampled": 51,
+      "no_evidence": 0,
+      "verifier_score": {
+        "scored": 51,
+        "null": 0,
+        "mean": 0.6179,
+        "median": 0.5978
+      },
+      "precision": {
+        "span": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "predicate": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "direction": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "polarity_modality": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "all_four": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        }
+      }
+    },
+    {
+      "tier": "lemma",
+      "population": 48,
+      "sampled": 48,
+      "no_evidence": 0,
+      "verifier_score": {
+        "scored": 48,
+        "null": 0,
+        "mean": 0.5615,
+        "median": 0.551
+      },
+      "precision": {
+        "span": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "predicate": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "direction": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "polarity_modality": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "all_four": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        }
+      }
+    },
+    {
+      "tier": "unclassified",
+      "population": 0,
+      "sampled": 0,
+      "no_evidence": 0,
+      "verifier_score": {
+        "scored": 0,
+        "null": 0,
+        "mean": null,
+        "median": null
+      },
+      "precision": {
+        "span": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "predicate": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "direction": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "polarity_modality": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        },
+        "all_four": {
+          "judged": 0,
+          "correct": 0,
+          "precision": null,
+          "ci_low": 0.0,
+          "ci_high": 1.0
+        }
+      }
+    }
+  ]
+}

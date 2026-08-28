@@ -1,0 +1,23 @@
+{
+  "database": "mem_eval_locomo_llm_free_conv_30",
+  "namespace": "eval_locomo_llm_free_conv_30",
+  "seed": 0,
+  "requested": 150,
+  "drawn": 150,
+  "generated_at": "2026-08-28T01:16:47.872322+00:00",
+  "sheet": "conv-30-seed0.csv",
+  "tier_population": {
+    "frame": 2551,
+    "wordnet": 0,
+    "ontology": 105,
+    "lemma": 48,
+    "unclassified": 0
+  },
+  "tier_quota": {
+    "frame": 51,
+    "wordnet": 0,
+    "ontology": 51,
+    "lemma": 48,
+    "unclassified": 0
+  }
+}
