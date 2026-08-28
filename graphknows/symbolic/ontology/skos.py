@@ -37,12 +37,16 @@ altLabel that fires on the wrong chunk is worse than one that never fires.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 # Tokens that are structural in CCO labels rather than descriptive. "Act of
 # Employment" and "Act of Travel" share "act"; letting it become an altLabel
@@ -177,24 +181,35 @@ def content_tokens(label: str) -> list[str]:
 
 @lru_cache(maxsize=1)
 def _wordnet() -> Any:
-    """The WordNet reader, or ``None`` if the corpus can't be made available.
+    """The WordNet reader, or ``None`` if the corpus is not provisioned.
 
     ``nltk.corpus.wordnet`` is a ``LazyCorpusLoader``: importing it never touches
     disk, so the corpus is only resolved on first *use* (e.g. ``wn.NOUN``). The
     guard has to sit around that use, not the import above it.
+
+    A missing corpus is an ENVIRONMENT defect, so this neither downloads it nor
+    passes over it quietly. It does not download because this is library code: a
+    package installed from PyPI must not reach the network mid-ingest, and
+    ``nltk.download()`` without an explicit ``download_dir`` ignores ``NLTK_DATA``
+    anyway (see ``scripts/bake_models.py``), so the fetch would land somewhere
+    nothing reads. It warns rather than raising because synonym expansion is an
+    enrichment: callers that never wanted it pass ``synonyms=False``, and losing
+    it degrades matching instead of breaking it. Warning once per process — the
+    cache sees to that — is what keeps the degradation visible.
     """
     from nltk.corpus import wordnet as wn  # type: ignore[import-untyped]  # nltk ships no stubs
 
     try:
         wn.synsets("dog", pos=wn.NOUN)  # probe: forces the lazy corpus load
     except LookupError:
-        import nltk
-
-        nltk.download("wordnet", quiet=True)
-        try:
-            wn.synsets("dog", pos=wn.NOUN)
-        except LookupError:
-            return None
+        log.warning(
+            "WordNet corpus not found, so SKOS labels get no synonym expansion and "
+            "relation matching will be measurably worse. Provision it rather than "
+            "working around it: `python scripts/bake_models.py` writes it to NLTK_DATA "
+            "(%s). Pass synonyms=False to ask for lexicalization without it.",
+            os.environ.get("NLTK_DATA") or "unset — nltk's default search path",
+        )
+        return None
     return wn
 
 
