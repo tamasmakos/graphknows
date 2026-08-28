@@ -1108,8 +1108,18 @@ class _STMIngestHandler:
         # second GLiNER2 schema pass, so only on fact-bearing chunks. Distinct from
         # the FRAME chunk-tag layer above.
         if self._enable_frames:
+            # {name.casefold(): type} from this chunk's own already-typed
+            # entities — the type veto's filler type comes from the graph's
+            # OWN entity typing, not a second WordNet lookup.
+            entity_types = {str(e["name"]).casefold(): str(e.get("type", "")) for e in filtered}
             instances, nesting = await asyncio.to_thread(
-                self._frame_instances, text, chunk_id, speaker, embedding, srl_hits
+                self._frame_instances,
+                text,
+                chunk_id,
+                speaker,
+                embedding,
+                srl_hits,
+                entity_types,
             )
             if instances:
                 # An instance whose FRAME vertex does not exist gets no EVOKES
@@ -1889,6 +1899,33 @@ class _STMIngestHandler:
             log.warning("frame SRL parse failed, falling back to LU frames: %s", exc)
             return []
 
+    def _veto_semtype_conflicts(
+        self, inst: Any, roles: dict[str, list[str]], entity_types: dict[str, str] | None
+    ) -> dict[str, list[str]]:
+        """Drop role fillers whose type conflicts with the FE's semantic type.
+
+        Only called when ``settings.enable_fe_type_gate`` is on. A filler's
+        type comes from the graph's OWN entity typing (``entity_types``, built
+        from `filtered` at the call site) so this never re-runs a WordNet
+        lookup. An unmapped filler yields "" and never vetoes.
+        """
+        from graphknows.symbolic.framenet import fe
+
+        out = dict(roles)
+        for role, fillers in roles.items():
+            kept = []
+            for filler in fillers:
+                filler_type = (entity_types or {}).get(filler.casefold(), "")
+                if fe.semtype_conflict(inst.frame, role, filler_type):
+                    self._abstentions["frame_semtype_veto"] += 1
+                else:
+                    kept.append(filler)
+            if kept:
+                out[role] = kept
+            else:
+                del out[role]
+        return out
+
     def _frame_instances(
         self,
         text: str,
@@ -1896,6 +1933,7 @@ class _STMIngestHandler:
         speaker: str,
         embedding: list[float] | None = None,
         srl_hits: list[Any] | None = None,
+        entity_types: dict[str, str] | None = None,
     ) -> tuple[list[dict[str, Any]], list[tuple[int, str, int]]]:
         """Frame-guided role extraction for one chunk → write dicts (thread-run).
 
@@ -1908,7 +1946,10 @@ class _STMIngestHandler:
         the role-fillability gate; the FRAME_INSTANCE id is content-hashed at write
         time. ``nesting`` is ``(parent, role, child)`` indexed into the returned
         list, empty unless the SRL path ran. Empty if the extractor doesn't expose
-        reusable models.
+        reusable models. ``entity_types`` (``{name.casefold(): type}``, built from
+        this chunk's already-typed ``filtered`` entities) feeds the default-off
+        semantic-type veto; omit it and every filler's type is unknown, so the
+        veto never fires.
         """
         extractor = self._extractor
         if extractor is None or not hasattr(extractor, "nlp") or not hasattr(extractor, "gliner"):
@@ -1953,6 +1994,16 @@ class _STMIngestHandler:
         # no confidence and no MENTIONS edge to any chunk — 30% of the graph —
         # and fed them to the generator's fact-sheet ("Buyer=Hey Gina!",
         # "Speaker=Yeah", "Cognizer=Wow").
+        # Default-off experiment (settings.enable_fe_type_gate): vetoes a role
+        # filler whose graph entity type conflicts with the FE's FrameNet
+        # semantic type. Read the same way this file reads other one-off
+        # settings (local import, fresh instance) rather than threaded through
+        # the constructor, so an eval A/B can flip it by environment alone.
+        from graphknows.settings import GraphKnowsSettings
+        from graphknows.symbolic.framenet import fe
+
+        type_gate_on = GraphKnowsSettings().enable_fe_type_gate
+
         out: list[dict[str, Any]] = []
         kept_offsets: list[int] = []
         for inst in instances:
@@ -1961,8 +2012,14 @@ class _STMIngestHandler:
                 for role, fills in inst.roles.items()
             }
             roles = {r: f for r, f in roles.items() if f}
+
+            if type_gate_on:
+                roles = self._veto_semtype_conflicts(inst, roles, entity_types)
+
             # The frame's own gate: an instance under two filled roles is not a
-            # fact, it is a frame label with a stray span attached.
+            # fact, it is a frame label with a stray span attached. Re-checked
+            # here (not just once above) because the type veto above can drop
+            # a role that was filled a moment ago.
             if len(roles) < 2:
                 self._abstentions["frame_under_two_roles"] += 1
                 continue
@@ -1971,13 +2028,63 @@ class _STMIngestHandler:
             # no model load, no second parse. A trigger_offset of -1 (the
             # non-SRL path, which guesses one frame per chunk with no span)
             # returns the defaults rather than analysing an arbitrary token.
+            # Hoisted above the validity/coreset gates below so voice is
+            # computed once and shared by both the write-props and the CNI
+            # split, including for an instance those gates go on to drop.
+            props = analyse(doc, inst.trigger_offset).as_props()
+
+            # Unfilled-core reporting: CNI (Constructional Null Instantiation)
+            # vs unknown. Counted against this role set (post fillability
+            # floor, post type veto) regardless of what the validity/coreset
+            # gates below decide — a role FrameNet requires but the extractor
+            # never filled is a miss either way. Core-Unexpressed FEs are
+            # excluded by definition — the frame cannot express them locally,
+            # so their absence is not a miss. A PASSIVE clause licenses
+            # omitting its unfilled core roles (the agent is omissible by the
+            # construction itself), so that is not evidence the extractor
+            # missed anything; anything else left unfilled is a genuine
+            # unknown — the denominator the bare count never gave us.
+            # ponytail: only passive voice is checked. Imperative subject-drop
+            # and definite/indefinite null instantiation are not detected, and
+            # typed DNI needs the valence patterns the parent spec leaves
+            # stubbed — both would need more of FrameNet's construction data
+            # than this module reads today.
+            fes = fe.frame_elements(inst.frame)
+            unfilled_core = sum(
+                1 for name, elem in fes.items() if elem.coreness == "Core" and name not in roles
+            )
+            if unfilled_core:
+                key = (
+                    "unfilled_core_cni"
+                    if props.get("voice") == "passive"
+                    else "unfilled_core_unknown"
+                )
+                self._abstentions[key] += unfilled_core
+
+            # FrameNet's own Requires/Excludes constraints: a role configuration
+            # that violates them is not a fact FrameNet licenses, regardless of
+            # how many roles got filled.
+            reason = fe.violation(inst.frame, roles.keys())
+            if reason:
+                kind = reason.split(":", 1)[0]
+                self._abstentions[f"frame_invalid_{kind}"] += 1
+                continue
+            # CoreSet fillability: the members of a core set are alternative
+            # expressions of the SAME core participant, so an instance filling
+            # two roles drawn from one set while leaving another set wholly
+            # empty has one participant, not two — a bare count of filled
+            # roles cannot see that, which is exactly the gap this closes.
+            if not fe.core_sets_satisfied(inst.frame, roles.keys()):
+                self._abstentions["frame_coreset_unsatisfied"] += 1
+                continue
+
             out.append(
                 {
                     "frame": inst.frame,
                     "match_sim": inst.match_sim,
                     "role_confidence": inst.role_confidence,
                     "roles": roles,
-                    **analyse(doc, inst.trigger_offset).as_props(),
+                    **props,
                 }
             )
             kept_offsets.append(inst.trigger_offset)

@@ -43,7 +43,7 @@ model. Every field maps to a `GRAPHKNOWS_`-prefixed environment variable (also
 read from a `.env` file). Key ones: `GRAPHKNOWS_MODE`, `GRAPHKNOWS_NAMESPACE`,
 `GRAPHKNOWS_ARCADEDB_URL`, `GRAPHKNOWS_LLM_MODEL`, `GRAPHKNOWS_LLM_API_KEY`,
 `GRAPHKNOWS_EMBED_MODEL`, `GRAPHKNOWS_EMBED_API_BASE`, `GRAPHKNOWS_ONTOLOGY_FILE`,
-`GRAPHKNOWS_ENABLE_FRAMES`, `GRAPHKNOWS_FACT_CONTEXT`.
+`GRAPHKNOWS_ENABLE_FRAMES`, `GRAPHKNOWS_ENABLE_FE_TYPE_GATE`, `GRAPHKNOWS_FACT_CONTEXT`.
 
 `GRAPHKNOWS_MODE` (enum `MemoryMode`) governs extraction. There is no separate
 profile object: the mode fork lives in exactly one factory,
@@ -86,7 +86,10 @@ they match the configured embedder.
 - Vertices: `SESSION`, `TURN`, `FILE`, `CHUNK`, `ENTITY` (keyed on `name_norm`),
   `TEMPORAL` (one node per ISO date), `TOPIC`, `FRAME` (canonical — one vertex
   per frame type for the whole namespace, keyed by the frame name),
-  `FRAME_INSTANCE`, `ONTOLOGY`, `ONTOLOGY_CLASS`.
+  `FRAME_INSTANCE`, `FE` (one vertex per FrameNet `(frame, frame element)`
+  pair, carrying its coreness — Core, Peripheral, Extra-Thematic or
+  Core-Unexpressed — plus its CoreSet index and Requires/Excludes targets),
+  `SEMTYPE` (FrameNet semantic types), `ONTOLOGY`, `ONTOLOGY_CLASS`.
 - Edges: `IN_SESSION` (FILE→SESSION), `PART_OF` (CHUNK→FILE), `MENTIONS`
   (CHUNK→ENTITY), `MENTIONS_DATE` (CHUNK→TEMPORAL),
   `IN_TOPIC` (ENTITY→TOPIC, with a
@@ -96,7 +99,9 @@ they match the configured embedder.
   chunk or session of its own, so everything per-evocation lives here),
   `BROADER` (the subsumption taxonomy, FRAME→FRAME and
   ONTOLOGY_CLASS→ONTOLOGY_CLASS), `FRAME_EVOKED_IN` (FRAME_INSTANCE→CHUNK),
-  `PLAYS_ROLE` (FRAME_INSTANCE→ENTITY, with a `role` property), `EVOKES`
+  `PLAYS_ROLE` (FRAME_INSTANCE→ENTITY, with a `role` property), `HAS_FE`
+  (FRAME→FE), `HAS_SEMTYPE` (FE→SEMTYPE), `REQUIRES_FE` and `EXCLUDES_FE`
+  (FE→FE, FrameNet's own role-configuration constraints), `EVOKES`
   (FRAME_INSTANCE→FRAME, the fact plane's link into the frame taxonomy, since
   `BROADER` hangs off the canonical FRAME vertex), and `REL`.
 - `REL` carries **every** ENTITY→ENTITY fact; the predicate is the `predicate`
@@ -148,7 +153,22 @@ Both paths converge on the same write helper, which per chunk:
    scoped to the trigger's sentence, not its whole chat turn, so two events on
    one turn don't share fillers; an instance is written only once at least two
    role fillers resolve to an `ENTITY`, and a same-chunk sibling with a strict
-   subset of another's fillers collapses into it;
+   subset of another's fillers collapses into it. A role configuration is then
+   checked against FrameNet's own frame-element plane
+   (`graphknows/symbolic/framenet/fe.py`, imported into the graph as `FE` /
+   `SEMTYPE`, see Schema above): an instance whose filled roles violate a
+   Requires or Excludes constraint is dropped
+   (`abstentions.frame_invalid_requires` / `frame_invalid_excludes`), and one
+   that fills two roles from the same FrameNet CoreSet while leaving another
+   CoreSet empty is dropped as well (`frame_coreset_unsatisfied`) — a
+   CoreSet's members are alternative expressions of one core participant, so a
+   bare count of filled roles cannot see that gap. Every unfilled Core role is
+   counted too, split into `unfilled_core_cni` (a passive clause licenses
+   omitting it — Constructional Null Instantiation) versus
+   `unfilled_core_unknown` (no such licence — a genuine miss). Setting
+   `GRAPHKNOWS_ENABLE_FE_TYPE_GATE` (default off) adds a further veto: a role
+   filler whose graph entity type conflicts with the frame element's
+   FrameNet semantic type is dropped and counted under `frame_semtype_veto`;
 6. resolves dates (`resolve_temporal` in `graphknows/temporal.py`) into
    `TEMPORAL` nodes and `MENTIONS_DATE` edges.
 

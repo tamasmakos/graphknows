@@ -126,6 +126,30 @@ _CORE_DDL: list[tuple[str, str]] = [
         f"CREATE INDEX IF NOT EXISTS ON FRAME(embedding) LSM_VECTOR "
         f"METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
     ),
+    # FrameNet's frame-element (FE) plane -- coreness, Requires/Excludes,
+    # CoreSets and semantic types (issue #143). Reference data, one vertex per
+    # (frame, FE) pair keyed by "Frame:FE", written once per namespace by
+    # GraphStore.write_frame_elements. Making coreness/CoreSet/Requires/
+    # Excludes queryable and traversable here is separate from gating: the
+    # validity stage in ingest reads them straight from
+    # symbolic.framenet.fe, not through the graph.
+    ("sql", "CREATE VERTEX TYPE FE IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY FE.id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FE.frame IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FE.name IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FE.coreness IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FE.definition IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FE.semtype IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY FE.core_set IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE INDEX ON FE(id) UNIQUE"),
+    ("sql", "CREATE INDEX ON FE(coreness) NOTUNIQUE"),
+    # FrameNet semantic types (fn.semtypes()) -- not vector-searched, no
+    # embedding column, same precedent as ONTOLOGY_PROPERTY.
+    ("sql", "CREATE VERTEX TYPE SEMTYPE IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY SEMTYPE.name IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SEMTYPE.abbrev IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SEMTYPE.definition IF NOT EXISTS STRING"),
+    ("sql", "CREATE INDEX ON SEMTYPE(name) UNIQUE"),
     # Role-filled frame instances (WS/D3 layer). Distinct from the FRAME
     # chunk-tag layer above: one FRAME_INSTANCE = one evoked frame whose CORE
     # frame elements were GLiNER2-filled with entity fillers, linked to those
@@ -201,6 +225,12 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE EDGE TYPE EVOKED_BY IF NOT EXISTS"),  # FRAME -> CHUNK
     ("sql", "CREATE PROPERTY EVOKED_BY.confidence IF NOT EXISTS DOUBLE"),
     ("sql", "CREATE EDGE TYPE PLAYS_ROLE IF NOT EXISTS"),  # FRAME_INSTANCE -> ENTITY
+    # FE plane edges (issue #143). No properties -- the relationship itself is
+    # the fact; Requires/Excludes direction is exactly as FrameNet declares it.
+    ("sql", "CREATE EDGE TYPE HAS_FE IF NOT EXISTS"),  # FRAME -> FE
+    ("sql", "CREATE EDGE TYPE HAS_SEMTYPE IF NOT EXISTS"),  # FE -> SEMTYPE
+    ("sql", "CREATE EDGE TYPE REQUIRES_FE IF NOT EXISTS"),  # FE -> FE
+    ("sql", "CREATE EDGE TYPE EXCLUDES_FE IF NOT EXISTS"),  # FE -> FE
     # SKOS broader — the subsumption taxonomy, shared by both hierarchies:
     # FRAME -> FRAME (FrameNet Inheritance/Using/Perspective_on) and
     # ONTOLOGY_CLASS -> ONTOLOGY_CLASS (CCO subClassOf). One edge type because
