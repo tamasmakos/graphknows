@@ -23,6 +23,7 @@ pins so a failure is legible without reading this docstring.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import re
 import tomllib
@@ -279,10 +280,28 @@ class TestGateScript:
 # Removing the last entry is the goal. Adding one is the thing this test exists to stop.
 _KNOWN_RUNTIME_DOWNLOADS = {
     "graphknows/symbolic/framenet/framenet.py",  # nltk.download("framenet_v17") — pre-existing
-    "graphknows/symbolic/ontology/skos.py",  # nltk.download("wordnet") — added by PR #246
 }
 
-_DOWNLOAD_CALL = re.compile(r"nltk\.download\s*\(")
+
+def _downloads_at_runtime(source: str) -> bool:
+    """Whether this module CALLS ``nltk.download(...)``.
+
+    Parsed, not grepped: a regex over the text also matches the call named inside a
+    docstring or a comment, so documenting the rule would violate it. That false
+    positive is how a guard earns a `# noqa` instead of a fix.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:  # not importable anyway; other checks own that
+        return False
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "download"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "nltk"
+        for node in ast.walk(tree)
+    )
 
 
 class TestNoRuntimeDownloads:
@@ -298,7 +317,7 @@ class TestNoRuntimeDownloads:
     def _offenders(self) -> set[str]:
         found = set()
         for path in (REPO_ROOT / "graphknows").rglob("*.py"):
-            if _DOWNLOAD_CALL.search(path.read_text(encoding="utf-8")):
+            if _downloads_at_runtime(path.read_text(encoding="utf-8")):
                 found.add(path.relative_to(REPO_ROOT).as_posix())
         return found
 
