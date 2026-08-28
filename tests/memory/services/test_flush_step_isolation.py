@@ -86,6 +86,39 @@ async def test_analytics_failure_still_consolidates() -> None:
 
 
 @pytest.mark.asyncio
+async def test_drain_turns_per_turn_errors_are_surfaced() -> None:
+    """A per-turn extraction failure inside drain_turns must not vanish.
+
+    STMService catches per-turn errors into IngestResult.errors without
+    raising, so the ``step()`` wrapper around drain_turns sees a clean
+    return and cannot report it on its own — flush_memory must read
+    ``errors`` off the drained result itself.
+    """
+    store = _store()
+    store.list_turns = AsyncMock(return_value=[{"role": "user", "text": "hi"}])
+
+    mem = _memory(store)
+    mem._ingest_buffered_turns = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "turns": 1,
+            "chunks": 0,
+            "abstentions": {},
+            "errors": ["wordnet: Resource 'wordnet' not found"],
+        }
+    )
+
+    with patch(
+        "graphknows.ingestion.consolidation.resolve_entities",
+        AsyncMock(return_value={"dropped": 0, "merged": 0}),
+    ):
+        out = await mem.flush_memory("s1")
+
+    assert any(e == "drain_turns: wordnet: Resource 'wordnet' not found" for e in out["errors"]), (
+        out["errors"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_connect_failure_reports_and_returns_defaults() -> None:
     """Without a store no step can run; the result says so rather than raising."""
     mem = Memory(settings=MagicMock(namespace=""), namespace="")

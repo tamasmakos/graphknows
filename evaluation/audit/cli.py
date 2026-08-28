@@ -30,6 +30,7 @@ import argparse
 import asyncio
 import csv
 import json
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -222,6 +223,9 @@ async def _sample(args: argparse.Namespace) -> int:
         edges = await _fetch_edges(client, database)
         if not edges:
             raise SystemExit(f"no current REL edges in {database} — nothing to audit")
+        # Over the full population, not the drawn sample: this is the vocabulary-usage
+        # number an A/B compares, not a judging concern.
+        predicate_counts = Counter(edge.get("canonical_predicate") or "<none>" for edge in edges)
         picked, census, quota = stratify(edges, args.size, args.seed)
         rows = await attach_evidence(client, database, picked)
     finally:
@@ -241,6 +245,7 @@ async def _sample(args: argparse.Namespace) -> int:
         "sheet": sheet.name,
         "tier_population": census,
         "tier_quota": quota,
+        "predicate_population": dict(predicate_counts.most_common()),
     }
     sheet.with_suffix(".json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -249,6 +254,9 @@ async def _sample(args: argparse.Namespace) -> int:
     print(f"[audit] {database}: {len(edges)} current REL edges")
     for tier, population in census.items():
         print(f"  {tier:<13} population={population:<6} sampled={quota[tier]}")
+    for predicate, count in predicate_counts.most_common(15):
+        print(f"  {predicate:<13} population={count}")
+    print(f"\n{len(predicate_counts)} distinct predicates")
     print(f"\nSheet     : {sheet}")
     print(f"Manifest  : {sheet.with_suffix('.json')}")
     print(

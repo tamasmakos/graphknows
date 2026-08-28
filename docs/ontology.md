@@ -136,12 +136,23 @@ Setting the variable **replaces** that default with your own file or folder.
 | `cco/conversational.json` | A SKOS overlay adding everyday concepts CCO does not model, with altLabels that make them lexically reachable and domain/range in CCO's own classes. |
 | `cco-modules/` | The 11 CCO modules as `.ttl` (Agent, Event, Time, Geospatial, Quality, Artifact, Facility, …). |
 | `cco-imports/`, `cco-extensions/` | Import closure and governance-board extensions. |
+| `personal/personal-profile.json` | A hand-curated alternative relation vocabulary — 9 classes, 25 object properties, every one domain- and range-typed, sized to be offered whole. |
 
 There is no by-name registry — point `GRAPHKNOWS_ONTOLOGY` at a path, exactly as
 you would at your own file:
 
 ```bash
 GRAPHKNOWS_ONTOLOGY=graphknows/ontology/assets/cco-modules/AgentOntology.ttl
+```
+
+Entity typing and the relation vocabulary are two separate knobs:
+`GRAPHKNOWS_ONTOLOGY` controls what types entities, `GRAPHKNOWS_RELATION_ONTOLOGY`
+controls what relation properties are drawn from. CCO remains loadable as
+either. Switch relation vocabularies with one env var — the bare tokens
+`personal` and `cco`, or a path of your own:
+
+```bash
+GRAPHKNOWS_RELATION_ONTOLOGY=personal
 ```
 
 ## llm_assisted: extract-then-map

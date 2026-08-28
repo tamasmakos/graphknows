@@ -526,7 +526,7 @@ class Memory:
 
     async def _ingest_buffered_turns(
         self, store: Any, session_id: str, raw_turns: list[dict[str, Any]]
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         """Run the session's buffered ``TURN`` rows through the real STM pipeline.
 
         This is the expensive step (GLiNER extraction + embeddings) that the
@@ -570,6 +570,7 @@ class Memory:
             "turns": len(messages),
             "chunks": result.chunk_count,
             "abstentions": result.abstentions,
+            "errors": list(result.errors),
         }
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
@@ -658,11 +659,17 @@ class Memory:
                 drained = await step(
                     "drain_turns",
                     self._ingest_buffered_turns(store, session_id, raw_turns),
-                    {"turns": 0, "chunks": 0, "abstentions": {}},
+                    {"turns": 0, "chunks": 0, "abstentions": {}, "errors": []},
                 )
                 turns_ingested = drained["turns"]
                 turn_chunks = drained["chunks"]
                 abstentions = drained.get("abstentions") or {}
+                # Per-turn extraction failures are caught inside STMService and
+                # never raise, so `step()` above sees a clean return and would
+                # otherwise hide them — surface them here so a graph that failed
+                # on every write is not indistinguishable from an empty one.
+                for turn_error in drained.get("errors") or []:
+                    errors.append(f"drain_turns: {turn_error}")
             await step("mark_turns_consolidated", store.mark_turns_consolidated(session_id), 0)
 
             # Caller-supplied structure goes in HERE: the buffer has drained, so

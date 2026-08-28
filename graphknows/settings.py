@@ -38,12 +38,13 @@ _BUNDLED_ONTOLOGY = str(
 # topically-close, relationally-irrelevant terms and produced ZERO relations
 # over 60 real turns), so a hand-curated 25-property profile carried relations.
 #
-# The Common Core Ontologies serve both jobs, so the split is gone: 1401 classes
-# to type entities, and 224 object properties of which 112 declare the domain
-# and range that property selection keys on — including the 86 familial
-# relations that are the conversational vocabulary the profile was invented to
-# supply. Both names remain so that pointing GRAPHKNOWS_RELATION_ONTOLOGY at a
-# separate curated vocabulary is still a supported override.
+# The Common Core Ontologies serve both jobs, so the split is gone: 1437 classes
+# to type entities, and 264 object properties, all of which declare the domain
+# and range that property selection keys on. CCO stays the default: the conv-30
+# personal-vs-cco A/B pre-registered in #135 could not be run (both arms produced
+# zero REL edges from an unrelated ingestion defect) and the #136 audit sheet is
+# still unjudged, so there is no evidence to move off it — see
+# evaluation/audit/baseline/relation-vocabulary-ab.md.
 _BUNDLED_RELATION_PROFILE = _BUNDLED_ONTOLOGY
 
 # The hand-curated alternative, now shipped so the CCO-vs-profile question is an
