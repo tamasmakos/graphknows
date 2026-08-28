@@ -79,6 +79,21 @@ class STMService:
         # store call is count-guarded, so a restart is a no-op.
         if self._ontology_index is not None:
             await self._store.write_ontology(self._ontology_index)
+        # FrameNet's FE plane, same story: reference data, once per namespace,
+        # count-guarded so a restart is a no-op. Only loaded/paid for when
+        # frames are enabled at all.
+        if self._enable_frames:
+            import asyncio
+
+            from graphknows.symbolic.framenet import fe
+
+            # fe_rows()/semtype_rows() walk the full FrameNet corpus (~6.6s) --
+            # off the event loop so connect() never blocks other coroutines on
+            # it, count-guarded write or not.
+            fe_rows, semtype_rows = await asyncio.to_thread(
+                lambda: (fe.fe_rows(), fe.semtype_rows())
+            )
+            await self._store.write_frame_elements(fe_rows, semtype_rows)
 
     async def close(self) -> None:
         """Close the store client. Idempotent."""

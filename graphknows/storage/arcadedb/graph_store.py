@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -89,7 +90,10 @@ _SINGLE_VALUED_RELATIONS: frozenset[str] = frozenset(
     }
 )
 
-# Vertex labels wiped by clear_all() / walked by delete_session().
+# Vertex labels wiped by clear_all() / walked by delete_session(). FE and
+# SEMTYPE are deliberately absent, same as ONTOLOGY/ONTOLOGY_CLASS: they are
+# reference data written once per namespace by write_frame_elements, not
+# per-namespace content tied to a session's lifecycle.
 _VERTEX_LABELS = (
     "FRAME_INSTANCE",
     "FRAME",
@@ -1463,6 +1467,132 @@ class GraphStore(ArcadeStoreBase):
         )
         logger.info("Ontology hierarchy persisted: %d BROADER edges", len(pairs))
         return len(pairs)
+
+    async def write_frame_elements(
+        self, fe_rows: Sequence[Any], semtype_rows: Sequence[Any] = ()
+    ) -> int:
+        """Persist FrameNet's frame-element (FE) plane (issue #143).
+
+        Coreness, Requires/Excludes, CoreSets and semantic types. This plane
+        exists to make the constraints INSPECTABLE and TRAVERSABLE,
+        not to gate anything: the validity stage in ingest
+        (``_STMIngestHandler._frame_instances``) reads coreness/CoreSet/
+        Requires/Excludes straight from ``symbolic.framenet.fe``, never
+        through the graph. Shipped-corpus counts: 1221 frames, 11428 FEs,
+        109 semantic types, 105 requires, 455 excludes.
+
+        Reference data, written once per namespace like ``write_ontology``:
+        rows are duck-typed (dict or attribute access) since storage sits
+        below symbolic in the import-linter layer contract and cannot import
+        ``symbolic.framenet.fe`` to build them itself. Count-guarded against
+        FE alone, so a reconnect costs one query, not a 25k-row rewrite.
+        Batched UNWINDs throughout, no per-row statements. Returns 0 and
+        writes nothing on empty input.
+        """
+        if not fe_rows:
+            return 0
+        existing = await self.query("MATCH (n:FE) RETURN count(n) AS c")
+        if existing and int(existing[0].get("c") or 0) >= len(fe_rows):
+            return len(fe_rows)
+
+        def _get(row: Any, *names: str, default: Any = "") -> Any:
+            for name in names:
+                value = row.get(name) if isinstance(row, dict) else getattr(row, name, None)
+                if value is not None and value != "":
+                    return value
+            return default
+
+        fes = []
+        for r in fe_rows:
+            frame = _get(r, "frame")
+            name = _get(r, "name", "fe")
+            fes.append(
+                {
+                    "id": _get(r, "id", default=f"{frame}:{name}"),
+                    "frame": frame,
+                    "name": name,
+                    "coreness": _get(r, "coreness"),
+                    "definition": _get(r, "definition"),
+                    "semtype": _get(r, "sem_type", "semtype"),
+                    "requires": _get(r, "requires"),
+                    "excludes": _get(r, "excludes"),
+                    "core_set": _get(r, "core_set", default=-1),
+                }
+            )
+
+        # SEMTYPE vertices: everything semtype_rows names, plus every semtype
+        # a FE references but semtype_rows didn't carry (metadata-less).
+        semtypes = {
+            _get(s, "name"): {
+                "name": _get(s, "name"),
+                "abbrev": _get(s, "abbrev"),
+                "definition": _get(s, "definition"),
+            }
+            for s in semtype_rows
+        }
+        for row in fes:
+            if row["semtype"] and row["semtype"] not in semtypes:
+                semtypes[row["semtype"]] = {"name": row["semtype"], "abbrev": "", "definition": ""}
+        if semtypes:
+            await self.command(
+                "UNWIND $rows AS r MERGE (n:SEMTYPE {name: r.name}) "
+                "SET n.abbrev = r.abbrev, n.definition = r.definition",
+                rows=list(semtypes.values()),
+            )
+
+        # FRAME vertices the FEs name -- MERGE only, matching write_frames'
+        # own MERGE-on-parents, so an FE imported before its frame is ever
+        # evoked does not clobber an existing frame's summary/embedding.
+        frame_rows = [{"frame": fr} for fr in {row["frame"] for row in fes}]
+        await self.command(
+            "UNWIND $rows AS r MERGE (f:FRAME {id: r.frame}) SET f.frame_type = r.frame",
+            rows=frame_rows,
+        )
+
+        await self.command(
+            "UNWIND $rows AS r MERGE (n:FE {id: r.id}) "
+            "SET n.frame = r.frame, n.name = r.name, n.coreness = r.coreness, "
+            "n.definition = r.definition, n.semtype = r.semtype, n.core_set = r.core_set",
+            rows=fes,
+        )
+        await self.command(
+            "UNWIND $rows AS r MATCH (f:FRAME {id: r.frame}), (e:FE {id: r.id}) "
+            "MERGE (f)-[:HAS_FE]->(e)",
+            rows=fes,
+        )
+        semtype_edges = [row for row in fes if row["semtype"]]
+        if semtype_edges:
+            await self.command(
+                "UNWIND $rows AS r MATCH (e:FE {id: r.id}), (s:SEMTYPE {name: r.semtype}) "
+                "MERGE (e)-[:HAS_SEMTYPE]->(s)",
+                rows=semtype_edges,
+            )
+        requires_edges = [
+            {"id": row["id"], "target": f"{row['frame']}:{row['requires']}"}
+            for row in fes
+            if row["requires"]
+        ]
+        if requires_edges:
+            await self.command(
+                "UNWIND $rows AS r MATCH (a:FE {id: r.id}), (b:FE {id: r.target}) "
+                "MERGE (a)-[:REQUIRES_FE]->(b)",
+                rows=requires_edges,
+            )
+        excludes_edges = [
+            {"id": row["id"], "target": f"{row['frame']}:{row['excludes']}"}
+            for row in fes
+            if row["excludes"]
+        ]
+        if excludes_edges:
+            await self.command(
+                "UNWIND $rows AS r MATCH (a:FE {id: r.id}), (b:FE {id: r.target}) "
+                "MERGE (a)-[:EXCLUDES_FE]->(b)",
+                rows=excludes_edges,
+            )
+        logger.info(
+            "FE plane persisted: %d frame elements, %d semantic types", len(fes), len(semtypes)
+        )
+        return len(fes)
 
     async def write_class_matches(self, chunk_id: str, matches: list[tuple[str, float]]) -> int:
         """MERGE CHUNK-[:MATCHES_CLASS {sim}]->ONTOLOGY_CLASS edges for one chunk."""

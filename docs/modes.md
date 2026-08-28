@@ -26,6 +26,7 @@ These are mode-independent and behave identically in both:
 | Entity extraction | GLiNER relex + spaCy-mined labels — always model-driven, never LLM-driven |
 | Deterministic relations | relex + SVO mining — runs in both modes; DSPy is *additive on top* |
 | Frame layer | `GRAPHKNOWS_ENABLE_FRAMES`, on by default |
+| Frame-element semantic-type veto | `GRAPHKNOWS_ENABLE_FE_TYPE_GATE`, off by default — drops a role filler whose entity type conflicts with the frame element's FrameNet semantic type; the coreness/Requires/Excludes/CoreSet validity checks it layers on top of always run |
 | Ontology injection | `GRAPHKNOWS_ONTOLOGY` — steers labels and links entities in both modes ([ontology.md](ontology.md)) |
 | Embeddings | local sentence-transformers by default |
 

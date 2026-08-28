@@ -70,7 +70,7 @@ dependencies = [
     # ingestion/extraction/relations/_lingfeatures.py and frames/framenet.py.
     # Core, not eval-only — those call sites guard LookupError (missing *corpus*),
     # which does not catch the ModuleNotFoundError raised by a missing *package*.
-    "nltk>=3.8",
+    "nltk>=3.10.2",  # PYSEC-2026-3726 fixed in 3.10.2
     # plug-and-play MCP server. Capped below 2.0: that release removed
     # `mcp.server.fastmcp`, which graphknows.server.mcp imports, so the server
     # raises BrokenInstallError on import. The cap is here rather than in the

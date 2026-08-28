@@ -357,6 +357,13 @@ class GraphKnowsSettings(BaseSettings):
     # the switch is to restore the measured channel set so the next A/B isolates
     # one change. Turn it on to measure it, and record the number here.
     enable_ontology_channel: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_ONTOLOGY_CHANNEL")
+    # Experiment layered ON TOP of the FE plane (graphknows.symbolic.framenet.fe):
+    # vetoes a role filler whose graph entity type conflicts with the FE's
+    # FrameNet semantic type (e.g. a LOCATION filling a Sentient-typed role).
+    # The FE plane's own justification (coreness, Requires/Excludes, CoreSet
+    # fillability) does not depend on this flag — it is default OFF so the
+    # type veto itself can be A/B'd independently before it gates real writes.
+    enable_fe_type_gate: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_FE_TYPE_GATE")
 
     @field_validator("topics", "enable_dspy_relations", mode="before")
     @classmethod
