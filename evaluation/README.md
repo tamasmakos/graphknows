@@ -121,6 +121,22 @@ by nothing.
 near p=0.5. The report says so in its own output; read the cells as directions,
 not measurements, until n is much larger.
 
+### Baseline
+
+`evaluation/audit/baseline/` holds a committed conv-30 baseline
+(`conv-30-seed0.csv`, `conv-30-seed0.json`, `conv-30-seed0-report.{json,md}`),
+deliberately outside the gitignored `evaluation/results/` tree so it survives a
+clone and later audits have something to compare against. It was drawn with
+`--namespace eval_locomo_llm_free_conv_30 -n 150 --seed 0`; a comparable later
+audit must use the same namespace, size and seed.
+
+The four `judge_*` columns ship blank — the sample is the baseline, not a
+judged result — so every precision cell in the committed report is an em dash
+until a human completes the judging pass. See `conv-30-seed0-report.md` for
+the current population/quota/`no evidence`/`verifier_score` figures rather
+than this paragraph, so redrawing the baseline can't leave stale numbers here
+disagreeing with the regenerated report.
+
 ## Generation pipeline
 
 Answer generation is a plain chat completion (httpx → OpenRouter, temp 0):
@@ -140,6 +156,7 @@ evaluation/
 │                     # lexical metrics, MCP ingestion/retrieval, pipeline, reporting
 ├── locomo/           # config, dataset, prompts, adapter, cli
 ├── audit/            # stratified triplet audit: core (pure) + cli (db, csv, report)
+├── audit/baseline/   # committed conv-30 baseline sheet + report
 ├── data/locomo/      # dataset (gitignored)
 ├── results/locomo/   # JSON + CSV + Markdown reports per run (gitignored)
 ├── results/audit/    # audit sheets, manifests and reports (gitignored)
