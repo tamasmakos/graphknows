@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import pytest
 
+from graphknows.symbolic.ontology import skos
 from graphknows.symbolic.ontology.skos import (
     Concept,
     _upper_ontology_property,
+    _wordnet_synonyms,
     ancestors,
     lexicalize,
 )
@@ -102,6 +104,44 @@ def _cls(label: str, broader: tuple[str, ...] = ()) -> Concept:
     return Concept(
         uri=f"cco:{label}", pref_label=label, definition="", kind="class", broader=broader
     )
+
+
+class TestMissingWordnetCorpus:
+    """Lexicalization must degrade, not crash, when the WordNet corpus is absent.
+
+    ``nltk.corpus.wordnet`` is a lazy loader: it only touches disk on first
+    attribute access, so a bare ``try/except`` around the import does not
+    catch the ``LookupError`` the corpus raises on that first access. Patching
+    ``skos._wordnet`` itself (rather than the ``nltk`` module) simulates that
+    outcome without ever touching the real corpus, so this test is meaningful
+    even in an environment where WordNet genuinely isn't installed.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_missing_corpus(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(skos, "_wordnet", lambda: None)
+
+    def test_lexicalize_a_class_survives_without_wordnet(self) -> None:
+        concept = lexicalize(
+            Concept(uri="cco:Hospital", pref_label="Hospital", definition="", kind="class")
+        )
+        assert "hospital" in concept.alt_labels
+
+    def test_multiword_label_still_yields_its_content_words(self) -> None:
+        concept = lexicalize(
+            Concept(
+                uri="cco:CommercialOrganization",
+                pref_label="Commercial Organization",
+                definition="",
+                kind="class",
+            )
+        )
+        assert "commercial" in concept.alt_labels
+        assert "organization" in concept.alt_labels
+        assert "commercial organization" in concept.alt_labels
+
+    def test_wordnet_synonyms_returns_empty_set_instead_of_raising(self) -> None:
+        assert _wordnet_synonyms("hospital", "class") == set()
 
 
 class TestAncestors:

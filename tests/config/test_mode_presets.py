@@ -101,22 +101,21 @@ class TestOntologySource:
         assert GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY="").ontology_source == default
         assert GraphKnowsSettings(GRAPHKNOWS_ONTOLOGY="   ").ontology_source == default
 
-    def test_relations_resolve_to_the_same_bundled_vocabulary(self) -> None:
-        """One ontology now serves both jobs, but the knob stays separate.
+    def test_relations_resolve_to_the_personal_profile_by_default(self) -> None:
+        """Entity typing and relation vocabulary are two separate knobs again.
 
-        Entity typing and relation extraction used to need different files:
-        schema.org typed entities well and supplied relation properties badly
-        (945 of them, cosine-selected, 0 relations over 60 real turns), so a
-        curated profile carried relations. CCO supplies both — 1401 classes and
-        112 domain/range-typed properties — so the default is shared, while the
-        override remains so a deployment can still split them.
+        The conv-30 personal-vs-cco A/B (evaluation/audit/baseline/
+        relation-vocabulary-ab.md) found CCO's object properties leave 13.5% of
+        REL edges as unanchored ``lemma:`` predicates versus the personal
+        profile's 2.5%, so #137 makes the personal profile the relation
+        default while CCO keeps typing entities via ``ontology_source``.
         """
         from pathlib import Path
 
         source = Path(GraphKnowsSettings().relation_ontology_source)
-        assert source.parts[-3:] == ("assets", "cco", "cco.json")
+        assert source.parts[-3:] == ("assets", "personal", "personal-profile.json")
         assert source.is_file()
-        assert str(source) == GraphKnowsSettings().ontology_source
+        assert str(source) != GraphKnowsSettings().ontology_source
 
     def test_empty_relation_env_still_yields_the_bundled_profile(self) -> None:
         default = GraphKnowsSettings().relation_ontology_source

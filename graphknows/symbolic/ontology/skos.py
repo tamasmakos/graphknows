@@ -40,7 +40,9 @@ import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 # Tokens that are structural in CCO labels rather than descriptive. "Act of
 # Employment" and "Act of Travel" share "act"; letting it become an altLabel
@@ -173,11 +175,33 @@ def content_tokens(label: str) -> list[str]:
     return [w for w in words if w not in _STRUCTURAL and len(w) > 2]
 
 
+@lru_cache(maxsize=1)
+def _wordnet() -> Any:
+    """The WordNet reader, or ``None`` if the corpus can't be made available.
+
+    ``nltk.corpus.wordnet`` is a ``LazyCorpusLoader``: importing it never touches
+    disk, so the corpus is only resolved on first *use* (e.g. ``wn.NOUN``). The
+    guard has to sit around that use, not the import above it.
+    """
+    from nltk.corpus import wordnet as wn  # type: ignore[import-untyped]  # nltk ships no stubs
+
+    try:
+        wn.synsets("dog", pos=wn.NOUN)  # probe: forces the lazy corpus load
+    except LookupError:
+        import nltk
+
+        nltk.download("wordnet", quiet=True)
+        try:
+            wn.synsets("dog", pos=wn.NOUN)
+        except LookupError:
+            return None
+    return wn
+
+
 def _wordnet_synonyms(word: str, kind: str) -> set[str]:
     """Lemmas of the word's FIRST synset — its dominant sense only."""
-    try:
-        from nltk.corpus import wordnet as wn  # type: ignore[import-untyped]  # nltk ships no stubs
-    except Exception:
+    wn = _wordnet()
+    if wn is None:
         return set()
     pos = wn.NOUN if kind == "class" else wn.VERB
     synsets = wn.synsets(word, pos=pos)

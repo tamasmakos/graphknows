@@ -187,9 +187,10 @@ def test_built_wheel_ships_the_default_ontology_assets(tmp_path: Path) -> None:
     These three archive paths mirror `_BUNDLED_ONTOLOGY`, `_BUNDLED_OVERLAY`
     and `_BUNDLED_PERSONAL_PROFILE` in graphknows/settings.py. The first two
     are what `GraphKnowsSettings().ontology_source` / `overlay_source`
-    resolve to by default; the personal profile is only reached via
-    `GRAPHKNOWS_RELATION_ONTOLOGY=personal` (the default relation ontology
-    is `_BUNDLED_ONTOLOGY`, same file as `_BUNDLED_RELATION_PROFILE`).
+    resolve to by default; the personal profile is `_BUNDLED_RELATION_PROFILE`
+    — the default relation vocabulary — and is also reached explicitly via
+    `GRAPHKNOWS_RELATION_ONTOLOGY=personal` (`=cco` reaches `_BUNDLED_ONTOLOGY`
+    instead).
     """
     if shutil.which("uv") is None:
         pytest.skip("uv not on PATH; cannot build a wheel here")

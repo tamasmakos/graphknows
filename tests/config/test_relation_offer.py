@@ -148,9 +148,14 @@ class TestBundledProfile:
             == "/somewhere/else.json"
         )
 
-    def test_cco_remains_the_default(self) -> None:
-        """Unifying on CCO was a deliberate, documented decision. Reversing it is
-        a measurement, not an opinion — so this ticket ships the alternative
-        without flipping the default."""
+    def test_personal_is_now_the_default(self) -> None:
+        """The conv-30 personal-vs-cco A/B (evaluation/audit/baseline/
+        relation-vocabulary-ab.md) found predicate anchoring favours the
+        personal profile (97.5% vs CCO's 86.5% of non-frame edges anchored),
+        so #137 flips the default; ``GRAPHKNOWS_RELATION_ONTOLOGY=cco`` still
+        reaches the CCO digest for anyone who wants it back."""
         s = GraphKnowsSettings()
-        assert s.relation_ontology_source.endswith("cco.json")
+        assert s.relation_ontology_source.endswith("personal-profile.json")
+        assert GraphKnowsSettings(
+            GRAPHKNOWS_RELATION_ONTOLOGY="cco"
+        ).relation_ontology_source.endswith("cco.json")

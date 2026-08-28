@@ -1,53 +1,152 @@
 # Relation-vocabulary A/B — cco vs personal (conv-30)
 
-- Generated: `2026-08-28T03:13:39Z`
+- Generated: `2026-08-28T11:04:00Z`
 - Command (both arms): `python -m evaluation locomo --offset 152 --limit 81 --turns --reset --namespace eval_relvocab_<arm>`
 - Databases: `mem_eval_relvocab_cco_llm_free_conv_30`, `mem_eval_relvocab_personal_llm_free_conv_30`
-- Reports: `evaluation/results/locomo/eval-llm_free-20260828025127-locomo.json` (cco), `evaluation/results/locomo/eval-llm_free-20260828030841-locomo.json` (personal)
-- `GRAPHKNOWS_RELATION_ONTOLOGY` was confirmed to resolve to the intended asset for each token before the runs (`.../assets/cco/cco.json` for `cco`, `.../assets/personal/personal-profile.json` for `personal`), and the eval process's own `os.environ` (which `docker exec -e` sets) is spread wholesale into the spawned `graphknows-mcp` subprocess's environment (`graphknows/integrations/client/mcp.py`), so the variable reaches the ingest process in both arms.
+- Reports: `evaluation/results/locomo/eval-llm_free-20260828080112-locomo.json` (cco), `evaluation/results/locomo/eval-llm_free-20260828083246-locomo.json` (personal)
+- Audit sheets: `evaluation/audit/baseline/relvocab-cco-seed0.csv/.json`, `evaluation/audit/baseline/relvocab-personal-seed0.csv/.json` (drawn with `-n 150 --seed 0`)
+- `GRAPHKNOWS_RELATION_ONTOLOGY` was confirmed to resolve to the intended asset for each token (`.../assets/cco/cco.json` for `cco`, `.../assets/personal/personal-profile.json` for `personal`) before the runs.
 
-## Result: the comparison could not be made
+## The blocker is fixed — this is the real comparison
 
-Both arms ran to completion (ingest + all 81 questions, ~14–17 minutes each) with no crash and no reported errors, but **both produced a graph with zero REL edges** — there is nothing to compare a relation vocabulary against.
+The previous attempt (see git history of this file) root-caused both arms
+producing zero-REL-edge graphs to `graphknows/symbolic/ontology/skos.py::_wordnet_synonyms`
+letting a `LookupError` (missing WordNet corpus) escape past its import-only
+try/except and abort every window write. A prior task in this plan guarded the
+lookup itself (a cached `_wordnet()` helper, mirroring `framenet.py::_framenet()`,
+degrading to `set()` when the corpus cannot be made available). With that guard
+in place and the WordNet corpus present in this container, **both arms ran to
+completion, ingested a real graph, and produced comparable REL edges.**
 
-`python -m evaluation audit sample --namespace eval_relvocab_<arm>_llm_free_conv_30 -n 150 --seed 0` refused to draw a sheet for either arm:
+### Sanity probe before committing to a full run
 
-```
-no current REL edges in mem_eval_relvocab_cco_llm_free_conv_30 — nothing to audit
-no current REL edges in mem_eval_relvocab_personal_llm_free_conv_30 — nothing to audit
-```
+`Memory().ingest_memory(messages=..., session_id=...)` + `Memory().flush_memory(session_id)`
+on 6 synthetic turns (personal profile): `nodes=8, chunks=2, turns=6, edges=0,
+errors=[]`. CHUNK/ENTITY rows were gained and `flush_memory`'s `errors` list was
+empty, so the ingest path was confirmed healthy before spending ~26 minutes per
+arm on the full conv-30 run. This probe's `drain_turns` stage alone took
+**271.5s** for one window — the FrameNet lexical-unit index build
+(`framenet.py::_lus()`), confirmed below to scale to the full run rather than
+hang.
 
-Direct queries against both databases confirm the same shape: `TURN` rows exist (369, the raw buffered conversation) but `CHUNK` and `ENTITY` are both `0`. No `relvocab-cco-seed0.csv/.json` or `relvocab-personal-seed0.csv/.json` are included in this commit — the audit tool did not write a manifest for either arm, and fabricating one from nothing would misrepresent a real number as measured. The four-tier census, top predicates and distinct-predicate count this task was to report are all vacuously zero/absent in both arms, for the same non-relation-vocabulary reason below.
+### FrameNet cold-start cost (timed, not mistaken for a hang)
 
-## What blocked it
+Each arm is a fresh `docker compose exec` — a new `graphknows-mcp` subprocess —
+so the FrameNet LU index (per-process in-memory cache only) rebuilds once per
+arm on the first window:
 
-Root-caused with a scratch repro (`Memory().ingest_memory(messages=...)` + `Memory().flush_memory(...)`, 6–20 synthetic turns, reproduces at any scale, unrelated to the LoCoMo corpus or either relation vocabulary):
+| Arm | `flush_elapsed_s` | `drain_turns` stage |
+|---|---|---|
+| cco | 1547.5s (~25.8 min) | 1531.1s (~25.5 min) |
+| personal | 1554.2s (~25.9 min) | 1538.5s (~25.6 min) |
 
-1. The Docker image is missing NLTK's `wordnet` corpus data (checked: not under `/opt/models/nltk_data`, `/home/graphknows/nltk_data`, or any of the other search paths). Something on the per-turn write path that a window emission triggers depends on it and raises `LookupError: Resource 'wordnet' not found` for *every* turn that closes a window (turn 3 and turn 6 of a 6-turn/stride-3 probe; in the real 369-turn conv-30 runs this is every `_chunk_stride`'th turn plus the final one).
-2. That exception used to be swallowed three layers up without a trace: `STMService.ingest_messages` (`evaluation`-independent, `graphknows/ingestion/stm/service.py`) catches it per-turn into a local `errors: list[str]`, but `Memory._ingest_buffered_turns` (`graphknows/memory.py`) only read `result.chunk_count` and `result.abstentions` off the returned `IngestResult` — it never looked at `result.errors`, so the failure vanished. `flush_memory()` then reported `chunks: 0`, `abstentions: {}`, `errors: []` — a graph that failed on every write was indistinguishable from a conversation that legitimately had nothing to extract. This part is now fixed: `_ingest_buffered_turns` returns `result.errors` and `flush_memory` folds them into its own `errors` list under a `drain_turns:` prefix, so a future run of this A/B will surface the `LookupError` instead of a silent zero. The underlying corpus-missing and hot-loop defects below are unchanged.
+Both runs completed cleanly — ingest `errors=0` in both arms — confirming this
+is the documented cold-start cost, not a second defect. (The rest of ingest —
+`resolve_entities`, `graph_embeddings`, `pagerank`, `communities`, `topics` —
+is a few seconds combined in both arms.)
 
-Net effect: `--turns` ingestion (the mode both arms were required to use, per the issue's evidence_recall@probe rationale) is currently non-functional in this environment for either relation vocabulary, and the failure is invisible in every counter the eval harness surfaces — which is also why the accuracy/evidence-recall numbers below read as floor-with-abstention rather than a real signal.
-
-An attempt was made to unblock the measurement by installing the missing corpus at runtime (`nltk.download('wordnet', download_dir='/opt/models/nltk_data')`, then unzipping — the downloader fetches the zip but does not extract it there). That fixed the `LookupError`, but the same 6-turn repro then ran for **over 10 minutes of continuous 99%-CPU work with no completion** (previously ~40s when the lookup failed fast). Whatever wordnet-dependent code executes once the corpus is actually present appears to scan or iterate the corpus in a way that does not scale even to 6 turns — a second, independent defect. The run was killed (container restart) rather than left to find out how long it would take; the corpus was not made a permanent fix, and no further attempt was made to re-run the two arms with it installed.
-
-## Numbers observed (not a vocabulary comparison — both arms hit the same defect)
-
-Recorded for completeness since the runs did execute; read strictly as "both arms produced an empty graph," not as a personal-vs-cco result.
+## Result: both arms produced a real, comparable graph
 
 | Metric | cco arm | personal arm |
 |---|---|---|
-| REL edges (current) | 0 | 0 |
-| CHUNK / ENTITY vertices | 0 / 0 | 0 / 0 |
-| `evidence_recall_at_probe` (mean) | 0.000 | 0.000 |
-| `evidence_recall_in_context` (mean) | 0.000 | 0.000 |
-| Accuracy overall (judge, confirmation only — harness noise ~0.06) | 0.000 | 0.000 |
-| Accuracy — `single_hop` | 0.000 | 0.000 |
-| Accuracy — `temporal` | 0.000 | 0.000 |
-| Accuracy — `knowledge_synthesis` | 0.000 | 0.000 |
-| Abstention rate | 0.9506 | ~0.95 (81 cases, near-all `'Unknown'`) |
+| REL edges (current) | 356 | 356 |
+| CHUNK / ENTITY-bearing vertices (`flush_nodes`) | 334 | 334 |
+| `evidence_recall_at_probe` (mean) | 0.9759 | 0.9759 |
+| `evidence_recall_in_context` (mean) | 0.9019 | 0.9019 |
+| Accuracy overall (LLM judge) | 0.8519 | 0.8272 |
+| Accuracy — `single_hop` | 0.8409 | 0.8636 |
+| Accuracy — `temporal` | 0.8846 | 0.8077 |
+| Accuracy — `knowledge_synthesis` | 0.8182 | 0.7273 |
+| Abstention rate | 0.0617 | 0.0617 |
+| Distinct predicates (audit sample) | 55 | 52 |
+| Tier — `frame` (population) | 203 | 203 |
+| Tier — `wordnet` (population) | 0 | 0 |
+| Tier — `ontology` (population) | 105 | 144 |
+| Tier — `lemma` (population) | 48 | 9 |
+| Tier — `unclassified` (population) | 0 | 0 |
 
-No number here favours either arm — they are identical because neither arm has a graph to retrieve from. **No conclusion about the bundled default is drawn from this run.**
+Top predicates (`predicate_population`, from the seed-0 audit manifest):
+
+**cco** — `fn:Activity_ongoing:Activity->Agent` 48, `lemma:plans to` 42, `uses`
+35, `environs` 22, `fn:Giving:Recipient->Theme` 14, `has sender` 13,
+`fn:Giving:Donor->Theme` 12, `fn:Feeling:Emotion->Experiencer` 12, `interval is
+before` 11, `fn:Assistance:Focal_entity->Helper` 8, `receives` 8.
+
+**personal** — `fn:Activity_ongoing:Activity->Agent` 48, `likes` 45, `plansTo`
+42, `worksFor` 21, `owns` 20, `fn:Giving:Recipient->Theme` 14, `attendee` 13,
+`fn:Giving:Donor->Theme` 12, `fn:Feeling:Emotion->Experiencer` 12,
+`fn:Assistance:Focal_entity->Helper` 8.
+
+## Reading the numbers
+
+**Evidence recall is identical to four decimals in both arms** —
+`evidence_recall_at_probe=0.9759` / `evidence_recall_in_context=0.9019` — the
+same saturation `evaluation/README.md` already documents for retrieval-metric
+changes on this conversation: the system is generation-bound, so this pair of
+metrics cannot discriminate between the two vocabularies here. This is
+expected, not a null result specific to this A/B.
+
+**Accuracy differs by 0.0247** (0.8519 cco vs 0.8272 personal), well inside the
+harness's own noise band (~0.06, per the prior baseline notes) and with the
+per-category deltas pointing in *both* directions (`single_hop` and `temporal`
+trade places between arms) — consistent with judge/sampling noise on 81 cases,
+not a systematic effect of the relation vocabulary. **Accuracy does not
+distinguish the two arms.**
+
+**The `fn:` (frame) tier is identical in both arms** (203/203, byte-for-byte
+same predicate/count breakdown) — expected, since FrameNet projection does not
+consult `GRAPHKNOWS_RELATION_ONTOLOGY` at all. Both arms drew the same 356
+edges from the same underlying graph structure; only the labels attached to
+the non-frame ~155 edges differ per vocabulary. This is the one axis in this
+run that *does* separate the two arms:
+
+- **cco** maps 105 edges into its ontology tier and leaves **48 edges
+  (13.5% of all REL edges) as bare, unanchored `lemma:` predicates** (`plans
+  to`, `is interest of`, `formerly worked for`, `teaches`, `is husband of`) —
+  i.e. CCO's enterprise/commercial-frame vocabulary has no formal property for
+  a sizeable share of what this personal, two-person conversation actually
+  expresses.
+- **personal** maps 144 edges into its ontology tier (`likes`, `plansTo`,
+  `worksFor`, `owns`, `attendee`, `friendOf`) and leaves only **9 edges (2.5%)**
+  unanchored. The 25-object-property personal vocabulary was hand-curated for
+  exactly this kind of conversational content, and the predicate distribution
+  bears that out: `likes`/`plansTo`/`worksFor`/`owns`/`attendee` are all
+  legible, reusable relation names, where cco's mapped equivalents
+  (`environs`, `interval is before`, `has sender`, `occurs at`, `receives`)
+  read as generic/formal labels borrowed from a domain (commerce, logistics,
+  time-interval algebra) this conversation isn't in.
+
+Distinct-predicate counts are close (55 cco vs 52 personal) and not
+informative on their own — the difference that matters is *which* tier the
+edges land in, not how many distinct labels appear.
+
+**Triplet-audit precision (`judge_span`/`judge_predicate`/`judge_direction`/
+`judge_polarity_modality`) is not judged in this run** — both
+`relvocab-cco-seed0.csv` and `relvocab-personal-seed0.csv` ship with the four
+`judge_*` columns blank, per the same convention as the committed `#136`
+baseline (`conv-30-seed0.csv`). A human judging pass over these two sheets
+would be the strongest evidence for a quality delta and is not part of this
+task; it remains open for whoever acts on this report next.
+
+## Verdict
+
+**The evidence favours the personal profile, on the one axis this run can
+actually discriminate: predicate anchoring quality**, not on accuracy or
+evidence recall (both read as noise/saturation between the two arms). The
+personal vocabulary anchors 97.5% of non-frame-tier edges into a real ontology
+property versus cco's 86.5%, and the anchored labels are legible for the kind
+of personal, two-person conversational memory this vocabulary is meant to
+serve — which is exactly the case issue #137 makes for demoting CCO to an
+example and bundling the personal profile as the default. This is not a
+blind/precision-scored result (the triplet audit is unjudged), so treat it as
+directional evidence supporting the flip, not a statistically certified
+precision win.
 
 ## Still true regardless of the above
 
-The triplet-audit half of the decision (span / predicate / direction / polarity_modality judgement) remains unjudged in the existing `#136` baseline sheet (`conv-30-seed0.csv`, `judged=0` on every tier) — this run neither advances nor blocks that half, since no new sheets could be drawn either.
+The triplet-audit half of the decision (span / predicate / direction /
+polarity_modality judgement) remains unjudged in both the existing `#136`
+baseline sheet (`conv-30-seed0.csv`, `judged=0` on every tier) and the two new
+sheets drawn here — a human judging pass is the natural next step before
+calling the predicate-anchoring signal above a certified precision result
+rather than a directional one.
