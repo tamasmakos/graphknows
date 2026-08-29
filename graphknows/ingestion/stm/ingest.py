@@ -242,12 +242,36 @@ def _attributed(
     return kept
 
 
+def _curated_alias_candidate(
+    key: str, coarse_aliases: dict[str, str], classes: list[Any], label_index: dict[str, str]
+) -> tuple[dict[str, str] | None, bool]:
+    """The curated-alias resolution for ``_lexical_candidates`` rule 1.
+
+    Returns ``(result, abstain)``: ``result`` is the resolved ``{label: uri}``
+    candidate when the alias's target class exists, or ``None`` when there is
+    no alias for ``key`` or it did not resolve (caller falls through to the
+    normal lexical build in either ``None`` case). ``abstain`` is ``True``
+    only for a deliberate empty-string mapping, telling the caller to return
+    ``{}`` outright rather than fall through.
+    """
+    if key not in coarse_aliases:
+        return None, False
+    mapped = coarse_aliases[key]
+    if not mapped:
+        return None, True
+    uri = label_index.get(mapped.casefold())
+    if not uri:
+        uri = next((t.uri for t in classes if t.label.casefold() == mapped.casefold()), "")
+    return ({mapped: uri} if uri else None), False
+
+
 def _lexical_candidates(
     entity_type: str,
     classes: list[Any],
     label_index: dict[str, str],
     lex_index: dict[str, set[str]] | None,
     scheme: dict[str, Any] | None,
+    coarse_aliases: dict[str, str],
 ) -> dict[str, str]:
     """``{label: uri}`` candidates for ``entity_type``, from lexical evidence only.
 
@@ -255,14 +279,46 @@ def _lexical_candidates(
     exact-label index (``label_index``) or, when built, the SKOS altLabel index
     (``lex_index``, prefLabel resolved back to a uri via ``scheme`` / ``classes``).
     Cosine is never consulted here; it may only RANK what this returns.
+
+    Two rules on top of that, in order:
+
+    1. A CURATED alias wins when its target class exists in the loaded
+       ontology. The overlay's ``coarseAliases`` block already says what each
+       of the extractor's guaranteed coarse types (``labels.COARSE``) MEANS in
+       CCO terms — a human curated this, so it is the answer and nothing else
+       is even looked up. A mapped empty string is a deliberate abstention
+       (e.g. ``entity``: untypeable), not a miss. But the alias block is
+       CCO-authored and independent of which base ontology ``GRAPHKNOWS_ONTOLOGY``
+       loads; when the mapped label names no class here, that is not an
+       abstention — fall through to the normal lexical build below so a
+       non-CCO ontology keeps its own exact-label typing.
+    2. A FRAGMENT may not anchor. ``skos.lexicalize`` turns every content word
+       of a class label into a standalone altLabel, so ``lex_index`` can offer
+       a class whose label merely CONTAINS ``entity_type`` as one word among
+       several ("product" -> "Product Transport Facility"). Kept only when
+       every content word of the candidate label is also a content word of
+       ``entity_type`` — the same STRONG-match rule ``lexical.evoked`` applies,
+       for the same reason: one word of a multi-word label is not the
+       ontology's term, it is one of its words. The exact-label branch is
+       exempt: an exact match already names the whole class.
     """
     key = entity_type.casefold()
+    alias_result, abstain = _curated_alias_candidate(key, coarse_aliases, classes, label_index)
+    if abstain:
+        return {}
+    if alias_result is not None:
+        return alias_result
     candidates: dict[str, str] = {}
     if uri := label_index.get(key):
         label = next((t.label for t in classes if t.uri == uri), entity_type)
         candidates[label] = uri
     if lex_index is not None:
+        from graphknows.symbolic.ontology.skos import content_tokens
+
+        wanted = set(content_tokens(entity_type))
         for pref in lex_index.get(key, ()):
+            if not set(content_tokens(pref)) <= wanted:
+                continue
             concept = scheme.get(pref) if scheme is not None else None
             uri2 = concept.uri if concept is not None else ""
             if not uri2:
@@ -411,6 +467,9 @@ class _STMIngestHandler:
         self._lexical: bool = _cfg.lexical_labels
         self._scheme: Any = None
         self._lex_index: Any = None
+        # The overlay's curated coarse-type -> CCO-class mapping (issue #154):
+        # populated in `_ensure_scheme` alongside `_scheme`.
+        self._coarse_aliases: dict[str, str] = {}
         self._corpus_seen: list[str] = []
         self._lex_frozen: bool = False
         # Corpus size the lexical index was last built at. `_ensure_scheme` is
@@ -894,10 +953,11 @@ class _STMIngestHandler:
             return False
         if self._scheme is None:
             from graphknows.settings import GraphKnowsSettings
-            from graphknows.symbolic.ontology.scheme import load_scheme
+            from graphknows.symbolic.ontology.scheme import load_coarse_aliases, load_scheme
 
             cfg = GraphKnowsSettings()
             self._scheme = load_scheme(cfg.ontology_source, cfg.overlay_source)
+            self._coarse_aliases = load_coarse_aliases(cfg.overlay_source)
         # Built EAGERLY from whatever text has arrived, then rebuilt once at the
         # warmup mark. Waiting for the full warmup would leave every corpus's
         # first turns with no lexical selection at all, and a short session with
@@ -1547,7 +1607,12 @@ class _STMIngestHandler:
             return hit
         self._ensure_scheme()
         candidates = _lexical_candidates(
-            entity_type, self._ontology.classes, self._uri_by_label, self._lex_index, self._scheme
+            entity_type,
+            self._ontology.classes,
+            self._uri_by_label,
+            self._lex_index,
+            self._scheme,
+            self._coarse_aliases,
         )
         if not candidates:
             self._abstentions["unanchored_type"] += 1

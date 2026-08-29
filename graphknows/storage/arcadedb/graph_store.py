@@ -1330,6 +1330,20 @@ class GraphStore(ArcadeStoreBase):
         the already-built index matrix, never recomputed. Guarded by a count
         check so a restart does not re-MERGE hundreds of rows.
 
+        This writes every class in the loaded ontology (1437 for the bundled
+        CCO digest), whether or not any chunk in the namespace ever gets tagged
+        with it — deliberately, not because materialisation is lazy elsewhere.
+        A class no chunk ever matched directly is still the entry point that
+        makes its grounded descendants reachable from a general query:
+        `_narrower_scores` walks one hop DOWN the `BROADER` edges written here,
+        at a discount, so a query that matches `Facility` reaches a chunk
+        tagged only `Dance Studio` even though `Facility` itself tags nothing.
+        Two honest limits on that story: the reader sits behind
+        `GRAPHKNOWS_ENABLE_ONTOLOGY_CHANNEL`, default-off pending its A/B, and
+        a class with no grounded descendant in a given namespace genuinely
+        contributes nothing there — it is only dead weight for namespaces that
+        never populate its subtree, not in general.
+
         Returns the number of terms present after the write.
         """
         terms = getattr(index, "terms", None)

@@ -14,11 +14,11 @@ meant to feed. The budgets below are small on purpose, and the ranking that
 fills them is the real work.
 
 The coarse types are always included: they are the labels measured to work
-(``'Gina'=person 1.00``, ``'Door Dash'=organization 0.99``) and are themselves
-CCO classes verbatim, so they cost nothing ontologically while guaranteeing the
-offer is never empty. No reject label is added here — measured, ``other``
-absorbed 10 of 16 spans in a chunk, out-competing the real types it was meant to
-protect. Rejection belongs at the score threshold instead.
+(``'Gina'=person 1.00``, ``'Door Dash'=organization 0.99``), so they cost
+nothing ontologically while guaranteeing the offer is never empty. No reject
+label is added here — measured, ``other`` absorbed 10 of 16 spans in a chunk,
+out-competing the real types it was meant to protect. Rejection belongs at the
+score threshold instead.
 """
 
 from __future__ import annotations
@@ -26,7 +26,10 @@ from __future__ import annotations
 from graphknows.symbolic.ontology.lexical import evoked
 from graphknows.symbolic.ontology.skos import Concept, _upper_ontology_property, ancestors
 
-# The measured-good coarse types, which are also CCO class labels verbatim.
+# The measured-good coarse types. Three of these are NOT CCO class labels
+# verbatim (event, occupation, product) — they reach CCO through the overlay's
+# curated `coarseAliases` block (conversational.json), read by
+# `ingest._lexical_candidates`, not through their own bare spelling.
 COARSE = ["person", "organization", "facility", "occupation", "event", "animal", "product"]
 
 
