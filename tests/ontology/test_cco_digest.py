@@ -201,7 +201,7 @@ def _difference(shipped: dict[str, Any], fresh: dict[str, Any]) -> str:
     dicts prints a diff nobody reads, and the useful answer is *which term*
     moved.
     """
-    for key in ("source", "ontologies", "imports_unresolved"):
+    for key in ("source", "ontologies", "imports_unresolved", "dropped_expressions"):
         if shipped.get(key) != fresh[key]:
             return f"header {key!r}: shipped {shipped.get(key)!r} != fresh {fresh[key]!r}"
     for kind in ("classes", "properties"):

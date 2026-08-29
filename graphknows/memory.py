@@ -184,6 +184,7 @@ class Memory:
         ``raw``/``consolidated`` split is reported per lifecycle ``state``.
         """
         from graphknows.storage import build_arcadedb_client
+        from graphknows.storage.arcadedb.graph_store import GraphStore
         from graphknows.storage.namespace import db_name
 
         db = db_name(self.namespace)
@@ -246,9 +247,30 @@ class Memory:
                 "topics": _n(topics),
                 "chunks": {"raw": _n(raw_chunks), "consolidated": _n(cons_chunks)},
                 "turns": {"raw": _n(raw_turns), "consolidated": _n(cons_turns)},
+                # SOURCE rows: which (channel, version) this namespace holds —
+                # the reader that keeps SOURCE from being write-only (#145).
+                # Wraps the already-connected client rather than opening a
+                # second connection just to reuse GraphStore.sources().
+                "sources": await GraphStore(client=c, db=db).sources(),
             }
         finally:
             await c.close()
+
+    async def rebind_memory(self, channel: str = "ontology") -> dict[str, Any]:
+        """Re-ground ``channel``'s stored mentions against the currently loaded index.
+
+        A dual-write: new groundings land under the index's current version
+        and the old version's edges are flagged superseded, never deleted —
+        see :meth:`STMService.rebind` (issue #145).
+        """
+        from graphknows.ingestion import build_stm_service
+
+        service = build_stm_service(self.settings, self.namespace)
+        try:
+            await service.connect()
+            return await service.rebind(channel)  # type: ignore[no-any-return]
+        finally:
+            await service.close()
 
     async def ingest_memory(
         self,

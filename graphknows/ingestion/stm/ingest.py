@@ -360,9 +360,13 @@ class _STMIngestHandler:
         self._property_mapper: Any = None
         self._uri_by_label: dict[str, str] = {}
         self._type_cache: dict[str, tuple[str, str, float, str]] = {}
-        # The grounding provenance block's "version" field. Set from the loaded
-        # ontology's own source identity below; falls back to this configured
-        # string so a grounding edge is never written with an empty version.
+        # The grounding provenance block's "version" field falls back to this
+        # configured string only when the loaded index has no digest, so a
+        # grounding edge is never written with an empty version. The primary
+        # value is ``self._ontology.digest`` — a content hash over every
+        # term's uri/label/definition — not this file path: two loads of the
+        # same path can carry different content after an ontology upgrade,
+        # and the digest is what makes that visible.
         self._ontology_source: str = ""
         # Entity type -> RELATION-profile class, memoised the same way and kept
         # separate: the two vocabularies are the same file by default but need
@@ -1577,7 +1581,7 @@ class _STMIngestHandler:
             return
         if ontology_classes:
             await self._store.write_class_matches(chunk_id, ontology_classes)
-        version = getattr(self._ontology, "source", "") or self._ontology_source
+        version = getattr(self._ontology, "digest", "") or self._ontology_source
         by_norm = {s.casefold(): v for s, v in (typed or {}).items()}
         mappings: list[dict[str, Any]] = []
         for ent in entities:

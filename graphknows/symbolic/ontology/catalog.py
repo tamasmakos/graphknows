@@ -34,7 +34,7 @@ from functools import cached_property
 import numpy as np
 
 from graphknows.symbolic.index import cache_key, cached_matrix
-from graphknows.symbolic.ontology.loader import OntologyTerm, load_ontology_terms
+from graphknows.symbolic.ontology.loader import OntologyTerm, load_ontology
 
 log = logging.getLogger(__name__)
 
@@ -65,12 +65,19 @@ TAG_MIN_SIM: float = 0.52
 DEFAULT_TOP_K: int = 12
 
 _lock = threading.Lock()
-_indexes: dict[str, OntologyIndex] = {}
+# Keyed on (source, on-disk fingerprint) -- see _fingerprint / load_ontology_index.
+_indexes: dict[tuple[str, str], OntologyIndex] = {}
 
 
 def _source_digest(terms: list[OntologyTerm]) -> str:
     """Content hash of the loaded terms — changing an ontology invalidates the cache."""
-    payload = "\n".join(sorted(f"{t.kind}\t{t.uri}\t{t.label}\t{t.definition}" for t in terms))
+    payload = "\n".join(
+        sorted(
+            f"{t.kind}\t{t.uri}\t{t.label}\t{t.definition}\t"
+            f"{','.join(t.alt_labels)}\t{','.join(t.examples)}"
+            for t in terms
+        )
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -122,9 +129,12 @@ def _top_k(
 class OntologyIndex:
     """Embedded class/property definitions for one ontology source."""
 
-    def __init__(self, source: str, terms: list[OntologyTerm]) -> None:
+    def __init__(
+        self, source: str, terms: list[OntologyTerm], *, dropped_expressions: int = 0
+    ) -> None:
         self.source = source
         self.terms = terms
+        self.dropped_expressions = dropped_expressions
         self.classes = [t for t in terms if t.kind == "class"]
         self.properties = [t for t in terms if t.kind == "property"]
         self.digest = _source_digest(terms)
@@ -201,6 +211,28 @@ class OntologyIndex:
         return [t.label for t in self.properties]
 
 
+def _fingerprint(source: str) -> str:
+    """Cheap on-disk identity for ``source``: every file's ``(mtime_ns, size)``.
+
+    ``_indexes`` used to be keyed on the source PATH alone, so an in-place
+    ontology upgrade (same path, new content -- exactly how ``rebind_memory``
+    is meant to be used) kept resolving to the OLD index for the rest of the
+    process: a rebind re-grounded against the ontology it was supposed to
+    replace and still reported success (issue #145). Stat-ing every file costs
+    microseconds; re-parsing the ontology on every lookup would not.
+    """
+    from graphknows.symbolic.ontology import rdf_io
+    from graphknows.symbolic.ontology.loader import _ontology_files
+
+    try:
+        resolved = rdf_io.local_path(source)
+        files = _ontology_files(resolved) if resolved.exists() else []
+        stat = sorted((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in files)
+    except (OSError, ValueError):
+        return ""
+    return hashlib.sha256(repr(stat).encode("utf-8")).hexdigest()[:16]
+
+
 def load_ontology_index(source: str) -> OntologyIndex | None:
     """Build (or reuse) the index for an ontology file or folder.
 
@@ -224,19 +256,25 @@ def load_ontology_index(source: str) -> OntologyIndex | None:
             "Ontology injection is OFF: no source configured (GRAPHKNOWS_ONTOLOGY is empty)"
         )
         return None
-    cached = _indexes.get(source)
+    # Cached on (path, on-disk fingerprint): a file replaced in place mints a
+    # new key, so the stale entry is simply never looked up again. It is left
+    # in ``_indexes`` rather than evicted -- unbounded only in the pathological
+    # case of the same process rebinding to many distinct ontology contents,
+    # which is not a case this package's callers create.
+    key = (source, _fingerprint(source))
+    cached = _indexes.get(key)
     if cached is not None:
         return cached
     with _lock:
-        if (cached := _indexes.get(source)) is not None:  # another thread won
+        if (cached := _indexes.get(key)) is not None:  # another thread won
             return cached
         try:
-            terms = load_ontology_terms(source)
+            loaded = load_ontology(source)
         except (FileNotFoundError, ValueError):
             log.exception("Ontology source unusable; continuing without it")
             return None
-        index = OntologyIndex(source, terms)
-        _indexes[source] = index
+        index = OntologyIndex(source, loaded.terms, dropped_expressions=loaded.dropped_expressions)
+        _indexes[key] = index
         return index
 
 

@@ -76,24 +76,57 @@ class STMService:
             dims = embed_dim()
         await self._store.ensure_schema(dims)
         # Reference data, written once per namespace rather than per chunk. The
-        # store call is count-guarded, so a restart is a no-op.
+        # store call is guarded by IDENTITY (the ontology's own content digest
+        # keys its ONTOLOGY vertex), so a restart is a no-op but an in-place
+        # upgrade re-imports under its own version. Each write also mints a
+        # SOURCE row so the (channel, version) it produced is enumerable.
         if self._ontology_index is not None:
             await self._store.write_ontology(self._ontology_index)
+            await self._store.write_source(
+                {
+                    "channel": "ontology",
+                    "version": self._ontology_index.digest,
+                    "source_hash": self._ontology_index.digest,
+                    "imported": len(self._ontology_index.terms),
+                    "dropped_expressions": self._ontology_index.dropped_expressions,
+                    "dropped_fe_mappings": 0,
+                }
+            )
         # FrameNet's FE plane, same story: reference data, once per namespace,
-        # count-guarded so a restart is a no-op. Only loaded/paid for when
-        # frames are enabled at all.
+        # but guarded by IDENTITY now rather than presence — a corpus upgrade
+        # (same FE count, different content) re-imports under a new version
+        # instead of keeping the old plane forever (issue #145). Only
+        # loaded/paid for when frames are enabled at all.
         if self._enable_frames:
             import asyncio
+            import hashlib
 
             from graphknows.symbolic.framenet import fe
 
-            # fe_rows()/semtype_rows() walk the full FrameNet corpus (~6.6s) --
-            # off the event loop so connect() never blocks other coroutines on
-            # it, count-guarded write or not.
-            fe_rows, semtype_rows = await asyncio.to_thread(
-                lambda: (fe.fe_rows(), fe.semtype_rows())
+            def _build_fe() -> tuple[tuple[Any, ...], tuple[Any, ...], str]:
+                # fe_rows()/semtype_rows() walk the full FrameNet corpus
+                # (~6.6s) -- off the event loop so connect() never blocks
+                # other coroutines on it. The corpus carries no version of
+                # its own, so one is minted here the same way the ontology's
+                # digest is: a short content hash, computed on this same
+                # worker thread so connect() still does not block on it.
+                rows = fe.fe_rows()
+                payload = "\n".join(f"{r.id}\x1f{r.definition}" for r in rows)
+                version = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+                return rows, fe.semtype_rows(), version
+
+            fe_rows, semtype_rows, fe_version = await asyncio.to_thread(_build_fe)
+            await self._store.write_frame_elements(fe_rows, semtype_rows, version=fe_version)
+            await self._store.write_source(
+                {
+                    "channel": "framenet",
+                    "version": fe_version,
+                    "source_hash": fe_version,
+                    "imported": len(fe_rows),
+                    "dropped_expressions": 0,
+                    "dropped_fe_mappings": fe.fe_mapping_drops(),
+                }
             )
-            await self._store.write_frame_elements(fe_rows, semtype_rows)
 
     async def close(self) -> None:
         """Close the store client. Idempotent."""
@@ -112,6 +145,49 @@ class STMService:
                 ontology_index=self._ontology_index,
             )
         return self._ingest_handler
+
+    async def rebind(self, channel: str = "ontology") -> dict[str, Any]:
+        """Re-ground ``channel``'s stored mentions against the currently loaded index.
+
+        Dual-write, in this order: read the namespace's existing (not yet
+        superseded) INSTANCE_OF groundings for ``channel``, re-resolve each
+        through the handler's own :meth:`_map_to_class` against the index
+        this service was built with, write the results under the CURRENT
+        version, and only then flag the old version's edges superseded. New
+        groundings land first; old ones are retained and flagged, never
+        deleted — an evaluated graph is not silently rewritten (issue #145).
+        """
+        handler = self._handler()
+        version = getattr(self._ontology_index, "digest", "") or handler._ontology_source
+        rows = await self._store.query(
+            "MATCH (e:ENTITY)-[i:INSTANCE_OF]->(:ONTOLOGY_CLASS) "
+            "WHERE i.channel = $channel AND coalesce(i.superseded, false) = false "
+            "RETURN e.name AS name, e.type AS type, i.chunk_id AS chunk_id, "
+            "i.span AS span",
+            channel=channel,
+        )
+        mappings: list[dict[str, Any]] = []
+        for row in rows:
+            uri, _label, score, matcher = handler._map_to_class(str(row.get("type") or ""))
+            if not uri:
+                continue
+            mappings.append(
+                {
+                    "name": row.get("name"),
+                    "uri": uri,
+                    "channel": channel,
+                    "version": version,
+                    "matcher": matcher,
+                    "score": score,
+                    "rank": 0,
+                    "chunk_id": row.get("chunk_id"),
+                    "span": row.get("span"),
+                }
+            )
+        if mappings:
+            await self._store.write_groundings(mappings)
+        superseded = await self._store.supersede_groundings(channel, keep_version=version)
+        return {"rebound": len(mappings), "superseded": superseded, "version": version}
 
     # ------------------------------------------------------------------
     # Ingest

@@ -21,10 +21,11 @@ GRAPHKNOWS_ONTOLOGY=/path/to/ontology.ttl     # or /path/to/ontologies/
 
 An ontology's load-bearing content is not its labels but its **definitions** —
 the `skos:definition` / `rdfs:comment` text describing each class and property.
-`load_ontology_terms()` reads both, along with `rdfs:domain`, `rdfs:range` and
-`rdfs:subClassOf`, into `OntologyTerm` records. `OntologyIndex` embeds each term
-once as `"Label. definition"` and caches the matrix to disk, keyed by embed model
-+ dimension + a content hash of the sources.
+`load_ontology_terms()` reads both, along with `rdfs:domain`, `rdfs:range`,
+`rdfs:subClassOf`, `skos:altLabel` and `skos:example`, into `OntologyTerm`
+records. `OntologyIndex` embeds each term once as its label, definition,
+alt labels and examples joined together, and caches the matrix to disk, keyed
+by embed model + dimension + a content hash of the sources.
 
 That gives one cheap operation: *given an embedding, which ontology terms is this
 about?* It is the same device the FrameNet layer uses, and it reuses the chunk
@@ -48,7 +49,9 @@ Per chunk:
 4. **Link.** `ENTITY-[:INSTANCE_OF]->ONTOLOGY_CLASS`, carrying the grounding's
    full provenance (`channel`, `version`, `matcher`, `score`, `rank`,
    `chunk_id`, `span`); `CHUNK-[:MATCHES_CLASS {sim}]->ONTOLOGY_CLASS`; and
-   `REL.ontology_property` / `REL.map_score`.
+   `REL.ontology_property` / `REL.map_score`. `version` is the loaded
+   ontology's content digest (`OntologyIndex.digest`), not its file path, so
+   replacing a file in place still produces a distinguishable version.
 
 ### Enrichment, not filtering
 
@@ -99,24 +102,39 @@ entire conversation.
 | `ONTOLOGY` | `id` (content digest), `source`, `term_count` |
 | `ONTOLOGY_CLASS` | `uri`, `label`, `definition`, `embedding` (LSM_VECTOR COSINE) |
 | `ONTOLOGY_PROPERTY` | `uri`, `label`, `definition`, `domain`, `range`, `embedding` |
+| `SOURCE` | `id` (`"<channel>@<version>"`), `channel`, `version`, `source_hash`, `imported_at`, `imported`, `dropped_expressions`, `dropped_fe_mappings` |
 
 Edges: `BROADER` (class → superclass — the SKOS-shaped subsumption taxonomy,
 walked one hop DOWN at a discount by the query-side subclass expansion),
 `INSTANCE_OF` (entity → class — `score`, plus the grounding provenance
-`channel`, `version`, `matcher`, `rank`, `chunk_id`, `span`), `MATCHES_CLASS`
-(chunk → class, `.sim`).
+`channel`, `version`, `matcher`, `rank`, `chunk_id`, `span`, and `superseded`
+once a rebind promotes a newer version), `MATCHES_CLASS` (chunk → class,
+`.sim`).
 
 Written once per namespace at schema-ensure time, count-guarded so a restart is
 a no-op. The DDL is unconditional and additive, so an existing namespace gains
 the types (empty) on its next `ensure_schema`.
+
+**Every ontology import mints a `SOURCE` vertex** recording the (channel,
+version) it produced, keyed so a re-import under a changed file MERGEs a new
+row rather than overwriting the one it replaces. `Memory.stats()` reports
+these under `"sources"`.
 
 **Changing `GRAPHKNOWS_ONTOLOGY` on an existing namespace accumulates rather
 than replaces.** Each ontology is keyed by a content digest, so pointing a
 namespace at a second one adds its terms alongside the first (one `ONTOLOGY`
 node each). This is deliberate: chunks already tagged under the old ontology
 keep valid `MATCHES_CLASS` edges, and distinct ontologies have distinct URIs.
-But it does mean `OntologyChannel` will vector-search *both* vocabularies. Drop
-and re-ingest the namespace if you want a clean switch.
+But it does mean `OntologyChannel` will vector-search *both* vocabularies.
+
+Two versions of the same channel's groundings coexist as separate
+`INSTANCE_OF` edges rather than one overwriting the other. To re-ground
+already-stored mentions against the ontology currently loaded — without
+dropping the namespace — call `Memory.rebind_memory(channel="ontology")`: it
+re-resolves each mention, writes the new groundings under the current
+version, and flags the superseded ones rather than deleting them. Drop and
+re-ingest the namespace instead if you want the old groundings gone, not just
+flagged.
 
 ## Folders and multiple ontologies
 

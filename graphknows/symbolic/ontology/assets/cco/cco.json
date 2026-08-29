@@ -16,13 +16,17 @@
   "https://www.commoncoreontologies.org/UnitsOfMeasureOntology": "https://www.commoncoreontologies.org/2026-04-04/UnitsOfMeasureOntology"
  },
  "imports_unresolved": [],
+ "dropped_expressions": 159,
  "classes": [
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000001",
    "label": "entity",
    "definition": "(Elucidation) An entity is anything that exists or has existed or will exist",
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "Julius Caesar; the Second World War; your body mass index; Verdi's Requiem"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000002",
@@ -31,7 +35,10 @@
    "parents": [
     "entity"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "A human being; a tennis ball; a cave; a region of space; someone's temperature"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000003",
@@ -40,7 +47,10 @@
    "parents": [
     "entity"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "As for process, history, process boundary, spatiotemporal region, zero-dimensional temporal region, one-dimensional temporal region, temporal interval, temporal instant."
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000004",
@@ -49,7 +59,10 @@
    "parents": [
     "continuant"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "An atom; a molecule; an organism; a heart; a chair; the bottom right portion of a human torso; a leg; the interior of your mouth; a spatial region; an orchestra"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000006",
@@ -58,7 +71,10 @@
    "parents": [
     "immaterial entity"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "As for zero-dimensional spatial region, one-dimensional spatial region, two-dimensional spatial region, three-dimensional spatial region"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000008",
@@ -67,7 +83,10 @@
    "parents": [
     "occurrent"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "As for zero-dimensional temporal region and one-dimensional temporal region"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000009",
@@ -76,7 +95,10 @@
    "parents": [
     "spatial region"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The surface of a sphere-shaped part of space; an infinitely thin plane in space"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000011",
@@ -85,7 +107,10 @@
    "parents": [
     "occurrent"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The spatiotemporal region occupied by the development of a cancer tumour; the spatiotemporal region occupied by an orbiting satellite"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000015",
@@ -94,7 +119,13 @@
    "parents": [
     "occurrent"
    ],
-   "module": ""
+   "module": "",
+   "altLabels": [
+    "event"
+   ],
+   "examples": [
+    "An act of selling; the life of an organism; a process of sleeping; a process of cell-division; a beating of the heart; a process of meiosis; the taxiing of an aircraft; the programming of a computer"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000016",
@@ -103,7 +134,13 @@
    "parents": [
     "realizable entity"
    ],
-   "module": ""
+   "module": "",
+   "altLabels": [
+    "internally-grounded realizable entity"
+   ],
+   "examples": [
+    "An atom of element X has the disposition to decay to an atom of element Y; the cell wall is disposed to transport cellular material through endocytosis and exocytosis; certain people have a predisposition to colon cancer; children are innately disposed to categorize objects in certain ways"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000017",
@@ -112,7 +149,10 @@
    "parents": [
     "specifically dependent continuant"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The role of being a doctor; the role of this boundary to delineate where Utah and Colorado meet; the function of your reproductive organs; the disposition of your blood to coagulate; the disposition of this piece of metal to conduct electricity"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000018",
@@ -121,7 +161,10 @@
    "parents": [
     "spatial region"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The spatial region occupied at some time instant by the North Pole"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000019",
@@ -130,7 +173,10 @@
    "parents": [
     "specifically dependent continuant"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The colour of a tomato; the ambient temperature of this portion of air; the length of the circumference of your waist; the shape of your nose; the shape of your nostril; the mass of this piece of gold"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000020",
@@ -139,7 +185,11 @@
    "parents": [
     "continuant"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "(with multiple bearers) John's love for Mary; the ownership relation between John and this statue; the relation of authority between John and his subordinates",
+    "(with one bearer) The mass of this tomato; the pink colour of a medium rare piece of grilled filet mignon at its centre; the smell of this portion of mozzarella; the disposition of this fish to decay; the role of being a doctor; the function of this heart to pump blood; the shape of this hole"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000023",
@@ -148,7 +198,13 @@
    "parents": [
     "realizable entity"
    ],
-   "module": ""
+   "module": "",
+   "altLabels": [
+    "externally-grounded realizable entity"
+   ],
+   "examples": [
+    "The priest role; the student role; the role of subject in a clinical trial; the role of a stone in marking a property boundary; the role of a boundary to demarcate two neighbouring administrative territories; the role of a building in serving as a military target"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000024",
@@ -157,7 +213,10 @@
    "parents": [
     "material entity"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The upper and lower lobes of the left lung; the dorsal and ventral surfaces of the body; the Western hemisphere of the Earth; the FMA:regional parts of an intact human body"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000026",
@@ -166,7 +225,10 @@
    "parents": [
     "spatial region"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "An edge of a cube-shaped portion of space; a line connecting two points; two parallel lines extended in space"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000027",
@@ -175,7 +237,10 @@
    "parents": [
     "material entity"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The aggregate of the musicians in a symphony orchestra and their instruments; the aggregate of bearings in a constant velocity axle joint; the nitrogen atoms in the atmosphere; a collection of cells in a blood biobank"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000028",
@@ -184,7 +249,10 @@
    "parents": [
     "spatial region"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "A cube-shaped region of space; a sphere-shaped region of space; the region of space occupied by all and only the planets in the solar system at some point in time"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000029",
@@ -193,7 +261,10 @@
    "parents": [
     "immaterial entity"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "A hole in a portion of cheese; a rabbit hole; the Grand Canyon; the Piazza San Marco; the kangaroo-joey-containing hole of a kangaroo pouch; your left nostril (a fiat part - the opening - of your left nasal cavity); the lumen of your gut; the hold of a ship; the interior of the trunk of your car; hole in an engineered floor joist"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000030",
@@ -202,7 +273,10 @@
    "parents": [
     "material entity"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "An organism; a fish tank; a planet; a laptop; a valve; a block of marble; an ice cube"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000031",
@@ -211,7 +285,13 @@
    "parents": [
     "continuant"
    ],
-   "module": ""
+   "module": "",
+   "altLabels": [
+    "g-dependent continuant"
+   ],
+   "examples": [
+    "The pdf file on your laptop; the pdf file that is a copy thereof on my laptop; the sequence of this protein molecule; the sequence that is a copy thereof in that protein molecule; the content that is shared by a string of dots and dashes written on a page and the transmitted Morse code signal; the content of a sentence; an engineering blueprint"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000034",
@@ -220,7 +300,10 @@
    "parents": [
     "disposition"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The function of a hammer to drive in nails; the function of a heart pacemaker to regulate the beating of a heart through electricity"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000035",
@@ -229,7 +312,10 @@
    "parents": [
     "occurrent"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The boundary between the 2nd and 3rd year of your life"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000038",
@@ -238,7 +324,10 @@
    "parents": [
     "temporal region"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The temporal region during which a process occurs"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000040",
@@ -247,7 +336,10 @@
    "parents": [
     "independent continuant"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "A human being; the undetached arm of a human being; an aggregate of human beings"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000140",
@@ -256,7 +348,10 @@
    "parents": [
     "immaterial entity"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "As for fiat point, fiat line, fiat surface"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000141",
@@ -265,7 +360,10 @@
    "parents": [
     "independent continuant"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "As for fiat point, fiat line, fiat surface, site"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000142",
@@ -274,7 +372,10 @@
    "parents": [
     "continuant fiat boundary"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The Equator; all geopolitical boundaries; all lines of latitude and longitude; the median sulcus of your tongue; the line separating the outer surface of the mucosa of the lower lip from the outer surface of the skin of the chin"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000144",
@@ -283,7 +384,10 @@
    "parents": [
     "occurrent"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "On a somewhat higher level of complexity are what we shall call rate process profiles, which are the targets of selective abstraction focused not on determinate quality magnitudes plotted over time, but rather on certain ratios between these magnitudes and elapsed times. A speed process profile, for example, is represented by a graph plotting against time the ratio of distance covered per unit of time. Since rates may change, and since such changes, too, may have rates of change, we have to deal here with a hierarchy of process profile universals at successive levels; One important sub-family of rate process profiles is illustrated by the beat or frequency profiles of cyclical processes, illustrated by the 60 beats per minute beating process of John’s heart, or the 120 beats per minute drumming process involved in one of John’s performances in a rock band, and so on. Each such process includes what we shall call a beat process profile instance as part, a subtype of rate process profile in which the salient ratio is not distance covered but rather number of beat cycles per unit of time. Each beat process profile instance instantiates the determinable universal beat process profile. But it also instantiates multiple more specialized universals at lower levels of generality, selected from rate process profilebeat process profileregular beat process profile3 bpm beat process profile4 bpm beat process profileirregular beat process profileincreasing beat process profileand so on.In the case of a regular beat process profile, a rate can be assigned in the simplest possible fashion by dividing the number of cycles by the length of the temporal region occupied by the beating process profile as a whole. Irregular process profiles of this sort, for example as identified in the clinic, or in the readings on an aircraft instrument panel, are often of diagnostic significance.; The simplest type of process profiles are what we shall call ‘quality process profiles’, which are the process profiles which serve as the foci of the sort of selective abstraction that is involved when measurements are made of changes in single qualities, as illustrated, for example, by process profiles of mass, temperature, aortic pressure, and so on."
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000145",
@@ -292,7 +396,10 @@
    "parents": [
     "quality"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "A marriage bond; an instance of love; an obligation between one person and another"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000146",
@@ -301,7 +408,10 @@
    "parents": [
     "continuant fiat boundary"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The surface of the Earth; the plane separating the smoking from the non-smoking zone in a restaurant"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000147",
@@ -310,7 +420,10 @@
    "parents": [
     "continuant fiat boundary"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The geographic North Pole; the quadripoint where the boundaries of Colorado, Utah, New Mexico and Arizona meet; the point of origin of some spatial coordinate system"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000148",
@@ -319,7 +432,10 @@
    "parents": [
     "temporal region"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "A temporal region that is occupied by a process boundary; the moment at which a finger is detached in an industrial accident"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000182",
@@ -328,7 +444,10 @@
    "parents": [
     "process"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The life of an organism from the beginning to the end of its existence"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000202",
@@ -337,7 +456,10 @@
    "parents": [
     "one-dimensional temporal region"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The year 2018."
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000203",
@@ -346,7 +468,10 @@
    "parents": [
     "zero-dimensional temporal region"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The millennium"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000001",
@@ -373,7 +498,10 @@
    "parents": [
     "Designative Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Name"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000004",
@@ -427,7 +555,10 @@
    "parents": [
     "quality"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Density"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000010",
@@ -436,7 +567,10 @@
    "parents": [
     "Organization"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "altLabels": [
+    "Corporation"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000011",
@@ -445,7 +579,10 @@
    "parents": [
     "Stasis of Specifically Dependent Continuant"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Nominal"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000012",
@@ -463,7 +600,10 @@
    "parents": [
     "Gain of Dependent Continuant"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "A Person forms a Plan, A Person is initiated into a Religion, A photgraphic image is produced."
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000015",
@@ -580,7 +720,10 @@
    "parents": [
     "Act of Communication by Movement of Information Bearing Artifact"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Mailing"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000028",
@@ -598,7 +741,10 @@
    "parents": [
     "Point Estimate Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Median"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000030",
@@ -841,7 +987,10 @@
    "parents": [
     "Engine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Reaction Motor"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000057",
@@ -868,7 +1017,10 @@
    "parents": [
     "Telecommunication Network Line"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Telephone Circuit"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000060",
@@ -913,7 +1065,10 @@
    "parents": [
     "Material Copy of a Document"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Book"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000065",
@@ -958,7 +1113,10 @@
    "parents": [
     "Material Copy of a Document"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Transcript"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000070",
@@ -994,7 +1152,10 @@
    "parents": [
     "Temporal Region Identifier"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "One-Dimensional Temporal Region Identifier"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000074",
@@ -1003,7 +1164,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "feet per second per second, kilometers per second per second"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000075",
@@ -1012,7 +1176,10 @@
    "parents": [
     "Microscope"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Light Microscope"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000076",
@@ -1030,7 +1197,12 @@
    "parents": [
     "Non-Name Identifier"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Code ID",
+    "ID Code",
+    "Identifier Code"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000078",
@@ -1039,7 +1211,16 @@
    "parents": [
     "Act of Measuring"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Approximation"
+   ],
+   "examples": [
+    "measuring how much time a train will add to your commute by measuring how long it takes for 10 train cars to pass a given point and then combining this information with an estimate of how many train cars are in a typical train based on your past experience",
+    "measuring the amount of time required to do a task based on how long it took to do a similar task in the past",
+    "measuring the height of a building by counting the number of floors and multiplying it by the height of an average floor in an average building",
+    "measuring the property value of a house based on its square footage and the average cost per square foot of other houses in the area"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000079",
@@ -1093,7 +1274,10 @@
    "parents": [
     "fiat object part"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "examples": [
+    "Bodily Components include anatomical structures, body flora, pathogens, toxins, and their combinations."
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000085",
@@ -1111,7 +1295,10 @@
    "parents": [
     "Vehicle Control System"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Autopilot"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000087",
@@ -1120,7 +1307,10 @@
    "parents": [
     "Decimal Date Identifier"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Ordinal Date"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000088",
@@ -1183,7 +1373,11 @@
    "parents": [
     "Government Building"
    ],
-   "module": "FacilityOntology"
+   "module": "FacilityOntology",
+   "examples": [
+    "Parliament of Canada",
+    "United States Capitol"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000095",
@@ -1210,7 +1404,10 @@
    "parents": [
     "Optical Lens"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Lens System"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000098",
@@ -1264,7 +1461,10 @@
    "parents": [
     "Material Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Compartment"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000104",
@@ -1336,7 +1536,10 @@
    "parents": [
     "Fluid Control Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Air Intake"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000112",
@@ -1408,7 +1611,10 @@
    "parents": [
     "relational quality"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Attitude"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000120",
@@ -1471,7 +1677,10 @@
    "parents": [
     "Government Domain"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "examples": [
+    "a state in the United States"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000127",
@@ -1480,7 +1689,10 @@
    "parents": [
     "Prescriptive Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "Maximum Speed at high altitude; Rate of Ascent at 10 degrees celsius with nominal payload."
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000128",
@@ -1597,7 +1809,14 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "altLabels": [
+    "Measurement Unit of Chemical Amount",
+    "Measurement Unit of Enplethy"
+   ],
+   "examples": [
+    "mole, pound-mole"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000141",
@@ -1651,7 +1870,11 @@
    "parents": [
     "Language"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "Esperanto",
+    "Python Programming Language"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000147",
@@ -1669,7 +1892,14 @@
    "parents": [
     "Rotational Motion"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "CW Rotational Motion",
+    "Clockwise Rotation"
+   ],
+   "examples": [
+    "the axial rotation of the Earth as seen from above the South Pole"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000149",
@@ -1678,7 +1908,11 @@
    "parents": [
     "Act of Communication Mediated by Artifact"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of IMing",
+    "Act of Instant Messaging"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000150",
@@ -1723,7 +1957,11 @@
    "parents": [
     "Point Estimate Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Mode",
+    "Statistical Mode"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000155",
@@ -1768,7 +2006,10 @@
    "parents": [
     "Information Bearing Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Timekeeping Instrument"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000160",
@@ -1777,7 +2018,10 @@
    "parents": [
     "Tool"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Hand Tool"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000161",
@@ -1858,7 +2102,10 @@
    "parents": [
     "Radio Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 8"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000170",
@@ -1885,7 +2132,10 @@
    "parents": [
     "Military Base"
    ],
-   "module": "FacilityOntology"
+   "module": "FacilityOntology",
+   "altLabels": [
+    "Main Operating Base"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000173",
@@ -1903,7 +2153,10 @@
    "parents": [
     "Telescope"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "UV Telescope"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000175",
@@ -2029,7 +2282,10 @@
    "parents": [
     "one-dimensional spatial region"
    ],
-   "module": "GeospatialOntology"
+   "module": "GeospatialOntology",
+   "altLabels": [
+    "Ground Trace"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000189",
@@ -2038,7 +2294,10 @@
    "parents": [
     "Information Bearing Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Certificate"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000190",
@@ -2119,7 +2378,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "decibels, sones"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000199",
@@ -2164,7 +2426,10 @@
    "parents": [
     "Nominal Measurement Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "proposed, approved, planned, in progress, completed, failed, or successful"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000204",
@@ -2227,7 +2492,10 @@
    "parents": [
     "Material Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Motor"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000211",
@@ -2290,7 +2558,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "square feet, square meters, acre, hectare"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000218",
@@ -2308,7 +2579,11 @@
    "parents": [
     "Optical Telescope"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Reflecting Telescope",
+    "Reflector"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000220",
@@ -2389,7 +2664,10 @@
    "parents": [
     "Act"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Intentional Act"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000229",
@@ -2398,7 +2676,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "watt, horsepower"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000230",
@@ -2479,7 +2760,10 @@
    "parents": [
     "Material Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Propelling Screw"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000239",
@@ -2488,7 +2772,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "ounce, gram, pound"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000240",
@@ -2596,7 +2883,11 @@
    "parents": [
     "object"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "IBE",
+    "Information Carrying Entity"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000254",
@@ -2632,7 +2923,10 @@
    "parents": [
     "Radiopacity"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Radiodense"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000259",
@@ -2641,7 +2935,10 @@
    "parents": [
     "Month"
    ],
-   "module": "TimeOntology"
+   "module": "TimeOntology",
+   "examples": [
+    "January; February; March; April; May; June; July; August; September; October; November; December"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000260",
@@ -2695,7 +2992,10 @@
    "parents": [
     "Social Act"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Political Election"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000266",
@@ -2758,7 +3058,11 @@
    "parents": [
     "Natural Process"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Burning Process",
+    "Combustion Process"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000273",
@@ -2785,7 +3089,12 @@
    "parents": [
     "Reference System"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Coordinate System",
+    "Spatial Coordinate System",
+    "Spatial Reference Frame"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000276",
@@ -2857,7 +3166,10 @@
    "parents": [
     "Three Dimensional Shape"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Columnar"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000284",
@@ -2893,7 +3205,10 @@
    "parents": [
     "Navigation System"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "INS"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000288",
@@ -2947,7 +3262,13 @@
    "parents": [
     "Measurement Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "The sentence \"January 20, 1985 was a cold day in Chicago, IL\" is the carrier of a nominal measurement.",
+    "a measurement that classifies automobiles as sedans, coupes, hatchbacks, or convertibles",
+    "a measurement that classifies military intelligence as strategic, operational, or tactical",
+    "a measurement that classifies rocks as igneous, sedimentary, or metamorphic"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000294",
@@ -2956,7 +3277,10 @@
    "parents": [
     "Jet Engine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Ducted Jet Engine"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000295",
@@ -2974,7 +3298,10 @@
    "parents": [
     "Velocity"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Rotational Velocity"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000297",
@@ -3019,7 +3346,11 @@
    "parents": [
     "Power Transmission Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Gearbox",
+    "Transmission"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000302",
@@ -3055,7 +3386,10 @@
    "parents": [
     "Pressure"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Acoustic Pressure"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000306",
@@ -3100,7 +3434,10 @@
    "parents": [
     "Explosive Weapon"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Hand Grenade"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000311",
@@ -3118,7 +3455,16 @@
    "parents": [
     "Natural Process"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "a twin-engine turboprop plane rotating both of its propellers against a portion of atmosphere to propel the plane forward",
+    "an apple falling to the ground under the power of Earth's gravitational force",
+    "burning a portion of fuel to produce exhaust that is ejected through a jet nozzle to propel a rocket and its payload",
+    "heat from a fire causing ashes to rise into the sky",
+    "launching a water balloon using a sling shot",
+    "the wind blowing leaves across a lawn",
+    "turning a paddle wheel against a portion of water to propel the paddle boat forward"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000313",
@@ -3136,7 +3482,10 @@
    "parents": [
     "quality"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "IQE"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000315",
@@ -3235,7 +3584,10 @@
    "parents": [
     "Radio Communication Instrument"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Transmitter-Responder"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000327",
@@ -3298,7 +3650,10 @@
    "parents": [
     "Internal Combustion Engine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Combustion Turbine"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000334",
@@ -3406,7 +3761,12 @@
    "parents": [
     "Planned Act"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "putting an object on a scale to measure its weight in kilograms",
+    "rating Hollywood movies on a 1 to 5 star scale",
+    "using a tape measure to determine the height and width of a doorway in inches"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000346",
@@ -3496,7 +3856,11 @@
    "parents": [
     "Optical Telescope"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Refracting Telescope",
+    "Refractor"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000356",
@@ -3541,7 +3905,10 @@
    "parents": [
     "Damaged Stasis"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Wounded"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000361",
@@ -3559,7 +3926,10 @@
    "parents": [
     "Jet Engine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Thruster"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000363",
@@ -3568,7 +3938,10 @@
    "parents": [
     "Telecommunication Network"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Wireless Network"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000364",
@@ -3577,7 +3950,11 @@
    "parents": [
     "Physically Powered Engine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Air Motor",
+    "Compressed Air Engine"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000365",
@@ -3613,7 +3990,10 @@
    "parents": [
     "Motion"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Rotation"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000369",
@@ -3622,7 +4002,15 @@
    "parents": [
     "Ordinal Measurement Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Criticality Measurement",
+    "Importance Measurement",
+    "Priority Measurement"
+   ],
+   "examples": [
+    "low, normal, high, urgent, or immediate priority"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000370",
@@ -3640,7 +4028,12 @@
    "parents": [
     "Planned Act"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "a chess master predicting the next 8 moves his opponent will make",
+    "predicting that a particular stock will double in value over the next fiscal quarter",
+    "using sample exit polls data to predict the winners of an election"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000372",
@@ -3649,7 +4042,10 @@
    "parents": [
     "Material Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "TRU"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000373",
@@ -3667,7 +4063,10 @@
    "parents": [
     "Measurement Unit of Flow"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "cubic metres per second, standard cubic centimeters per minute, cubic feet per second, gallons per minute"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000375",
@@ -3685,7 +4084,10 @@
    "parents": [
     "Portion of Material"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Portion of GaAs"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000377",
@@ -3739,7 +4141,10 @@
    "parents": [
     "Material Copy of a Document"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Spreadsheet"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000383",
@@ -3757,7 +4162,10 @@
    "parents": [
     "Translational Motion"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Linear Motion"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000385",
@@ -3766,7 +4174,11 @@
    "parents": [
     "Shape Quality"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Broad",
+    "Fat"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000386",
@@ -3775,7 +4187,10 @@
    "parents": [
     "Act of Communication Mediated by Artifact"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Webcasting"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000387",
@@ -3784,7 +4199,10 @@
    "parents": [
     "one-dimensional spatial region"
    ],
-   "module": "GeospatialOntology"
+   "module": "GeospatialOntology",
+   "altLabels": [
+    "Rotational Axis"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000388",
@@ -3820,7 +4238,12 @@
    "parents": [
     "Electromagnetic Radiation Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 12",
+    "Submillimeter Band Frequency",
+    "Terahertz Radiation Frequency"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000392",
@@ -3838,7 +4261,10 @@
    "parents": [
     "Axis of Rotation"
    ],
-   "module": "GeospatialOntology"
+   "module": "GeospatialOntology",
+   "altLabels": [
+    "Vertical Axis"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000394",
@@ -3856,7 +4282,10 @@
    "parents": [
     "Gain of Dependent Continuant"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "A Person becomes pregnant (gain of quality), A person becomes forgetful (gain of disposition), A vehicle becomes amphibious (gain of function), A Person becomes a Database Administrator (gain of role)."
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000396",
@@ -3865,7 +4294,10 @@
    "parents": [
     "Radio Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 1"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000397",
@@ -3874,7 +4306,12 @@
    "parents": [
     "Material Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Burner",
+    "Combustor",
+    "Flame Holder"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000398",
@@ -4288,7 +4725,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "ft-lbs, calorie, horsepower, kilowatt"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000445",
@@ -4432,7 +4872,10 @@
    "parents": [
     "Government Domain"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "altLabels": [
+    "Locality"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000462",
@@ -4504,7 +4947,10 @@
    "parents": [
     "Spatial Reference System"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Geographic Coordinate System"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000470",
@@ -4513,7 +4959,10 @@
    "parents": [
     "Material Copy of a Certificate"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Academic Degree"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000471",
@@ -4522,7 +4971,10 @@
    "parents": [
     "Material Copy of a Notification Message"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Warning Message"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000472",
@@ -4711,7 +5163,10 @@
    "parents": [
     "Act of Communication Mediated by Artifact"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Emailing"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000493",
@@ -4720,7 +5175,10 @@
    "parents": [
     "Material Copy of a List"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Code List"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000494",
@@ -4747,7 +5205,12 @@
    "parents": [
     "Language"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "English",
+    "Mandarin (Chinese)",
+    "Spanish"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000497",
@@ -4756,7 +5219,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "newton, dyne, pound force"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000498",
@@ -4801,7 +5267,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "altLabels": [
+    "Measurement Unit of Second Area Moment"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000503",
@@ -4900,7 +5369,10 @@
    "parents": [
     "Wave Process Profile"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Transverse Wave"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000515",
@@ -4936,7 +5408,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "CurrencyUnitOntology"
+   "module": "CurrencyUnitOntology",
+   "examples": [
+    "U.S. Dollar, Euro, Yuan, South African Rand"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000519",
@@ -4945,7 +5420,11 @@
    "parents": [
     "Microwave Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 11",
+    "Millimeter Band Frequency"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000520",
@@ -4972,7 +5451,11 @@
    "parents": [
     "Air-Breathing Jet Engine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Pulse Jet",
+    "Pulsejet"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000523",
@@ -4990,7 +5473,10 @@
    "parents": [
     "Cooling System"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "AC Unit"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000525",
@@ -5017,7 +5503,11 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "altLabels": [
+    "Measurement Unit of Moment of Inertia",
+    "Measurement Unit of Rotational Mass"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000528",
@@ -5035,7 +5525,10 @@
    "parents": [
     "Temporal Interval Identifier"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Day Identifier"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000530",
@@ -5044,7 +5537,10 @@
    "parents": [
     "Sound Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Audible Frequency"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000531",
@@ -5089,7 +5585,10 @@
    "parents": [
     "Decrease of Specifically Dependent Continuant"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "Weight Loss, Decreasing Temperature, decreasing color intensity, loss of structural integrity"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000536",
@@ -5134,7 +5633,10 @@
    "parents": [
     "Temporal Region Identifier"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Zero-Dimensional Temporal Region Identifier"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000541",
@@ -5179,7 +5681,11 @@
    "parents": [
     "Government Building"
    ],
-   "module": "FacilityOntology"
+   "module": "FacilityOntology",
+   "altLabels": [
+    "City Hall",
+    "Town Hall"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000546",
@@ -5188,7 +5694,10 @@
    "parents": [
     "Act"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Unintentional Act"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000547",
@@ -5269,7 +5778,10 @@
    "parents": [
     "Stasis of Specifically Dependent Continuant"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Enhanced"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000556",
@@ -5413,7 +5925,10 @@
    "parents": [
     "Wave Production"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Sound Production Process"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000573",
@@ -5476,7 +5991,11 @@
    "parents": [
     "Shape Quality"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Narrow",
+    "Slender"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000580",
@@ -5485,7 +6004,10 @@
    "parents": [
     "Waveform"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Sinusoidal Waveform"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000581",
@@ -5512,7 +6034,13 @@
    "parents": [
     "Act of Motion"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "a top spinning in place",
+    "adjusting your posture",
+    "raising your left arm",
+    "swivelling your office chair to face the window"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000585",
@@ -5530,7 +6058,10 @@
    "parents": [
     "Propeller"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Variable-Pitch Propeller"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000587",
@@ -5557,7 +6088,11 @@
    "parents": [
     "Decimal Time of Day Identifier"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Julian Date Time Identifier",
+    "Julian Day Fraction"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000590",
@@ -5584,7 +6119,12 @@
    "parents": [
     "Measurement Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Accuracy of Information",
+    "Trueness Measurement",
+    "Veracity Measurement"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000593",
@@ -5602,7 +6142,10 @@
    "parents": [
     "Natural Process"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Ignition"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000595",
@@ -5620,7 +6163,10 @@
    "parents": [
     "Information Bearing Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Instrument Display Panel"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000598",
@@ -5791,7 +6337,11 @@
    "parents": [
     "Camera"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Thermal Imaging Camera",
+    "Thermographic Camera"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000618",
@@ -5818,7 +6368,10 @@
    "parents": [
     "Opacity"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Radiodensity"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000621",
@@ -5854,7 +6407,10 @@
    "parents": [
     "Material Copy of a Document"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Report"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000625",
@@ -5872,7 +6428,11 @@
    "parents": [
     "Descriptive Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Prediction",
+    "Prediction Information Content Entity"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000627",
@@ -5962,7 +6522,12 @@
    "parents": [
     "Act of Measuring"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "a food critic rating the quality of a restaurant's ambiance, service, and food",
+    "a mechanic assessing whether a damaged vehicle is repairable",
+    "an insurance agent appraising the financial value of a building"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000637",
@@ -5998,7 +6563,10 @@
    "parents": [
     "Material Copy of a Message"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Email Message"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000641",
@@ -6016,7 +6584,10 @@
    "parents": [
     "Gain of Specifically Dependent Continuant"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "An informant becomes unreliable (disposition), A person begins to speak French (function), a person becomes a welder (role)."
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000643",
@@ -6025,7 +6596,10 @@
    "parents": [
     "Radio Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 5"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000644",
@@ -6034,7 +6608,10 @@
    "parents": [
     "Change"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Oscillation"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000645",
@@ -6070,7 +6647,10 @@
    "parents": [
     "Optical Property"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Color Intensity"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000649",
@@ -6079,7 +6659,11 @@
    "parents": [
     "Designative Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "ID",
+    "Identifier"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000650",
@@ -6169,7 +6753,11 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "altLabels": [
+    "Measurement Unit of Moment of Force",
+    "Measurement Unit of Rotational Force"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000660",
@@ -6178,7 +6766,10 @@
    "parents": [
     "process"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Consequence"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000661",
@@ -6232,7 +6823,10 @@
    "parents": [
     "Person"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "altLabels": [
+    "Unallied Person"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000667",
@@ -6286,7 +6880,10 @@
    "parents": [
     "Radio Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 2"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000673",
@@ -6349,7 +6946,10 @@
    "parents": [
     "Artifact Function"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Orientation Control Artifact Function"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000680",
@@ -6385,7 +6985,10 @@
    "parents": [
     "Abbreviated Name"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "Alex, Bob, Cathy"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000684",
@@ -6412,7 +7015,10 @@
    "parents": [
     "Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Designative ICE"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000687",
@@ -6466,7 +7072,11 @@
    "parents": [
     "Measurement Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Likelihood Measurement",
+    "Probability Measurement"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000693",
@@ -6493,7 +7103,11 @@
    "parents": [
     "Radiopacity"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Hypodense",
+    "Transradiance"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000696",
@@ -6520,7 +7134,11 @@
    "parents": [
     "Nozzle"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "CD Nozzle",
+    "de Laval Nozzle"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000699",
@@ -6538,7 +7156,10 @@
    "parents": [
     "Telecommunication Network"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Data Network"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000701",
@@ -6556,7 +7177,10 @@
    "parents": [
     "Information Bearing Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Image"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000703",
@@ -6565,7 +7189,10 @@
    "parents": [
     "Material Copy of a Timekeeping Instrument"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "System Clock"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000704",
@@ -6601,7 +7228,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "degrees, radians"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000708",
@@ -6619,7 +7249,10 @@
    "parents": [
     "Artificial Eye"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Bionic Eye"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000710",
@@ -6664,7 +7297,10 @@
    "parents": [
     "Radio Antenna"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Microwave Horn"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000715",
@@ -6682,7 +7318,10 @@
    "parents": [
     "Electrical Power Source"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Battery"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000717",
@@ -6754,7 +7393,11 @@
    "parents": [
     "Radio Antenna"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Dish Antenna",
+    "Parabolic Dish"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000725",
@@ -6763,7 +7406,10 @@
    "parents": [
     "Act of Ceremony"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Wedding Ceremony"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000726",
@@ -6790,7 +7436,10 @@
    "parents": [
     "Radio Telescope"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Microwave Telescope"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000729",
@@ -6817,7 +7466,18 @@
    "parents": [
     "Measurement Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Conformance Measurement",
+    "Degree of Conformance",
+    "Degree of Deviation",
+    "Deviation Measurement"
+   ],
+   "examples": [
+    "a missile impact deviates from its target location by 100 feet",
+    "a satellite deviaties from its predicted orbital path by 5 kilometers",
+    "an overweight piece of luggage deviates from an airline's maximum allowed weight by +10 pounds"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000732",
@@ -6844,7 +7504,10 @@
    "parents": [
     "Explosive Mine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Land Mine"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000735",
@@ -6871,7 +7534,10 @@
    "parents": [
     "Military Base"
    ],
-   "module": "FacilityOntology"
+   "module": "FacilityOntology",
+   "altLabels": [
+    "Forward Operating Base"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000738",
@@ -6898,7 +7564,15 @@
    "parents": [
     "continuant"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "examples": [
+    "a group of interns",
+    "a knowledge base",
+    "a plot of land",
+    "a software program",
+    "a sum of money",
+    "a vehicle"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000741",
@@ -6925,7 +7599,10 @@
    "parents": [
     "Material Copy of an Image"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Chart"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000744",
@@ -6943,7 +7620,12 @@
    "parents": [
     "Estimate Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Best Estimate",
+    "Point Estimate",
+    "Point Estimate Measurement Information Content Entity"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000746",
@@ -6988,7 +7670,11 @@
    "parents": [
     "Act of Communication Mediated by Artifact"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Text Messaging",
+    "Act of Texting"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000751",
@@ -6997,7 +7683,11 @@
    "parents": [
     "Process Regulation"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "altLabels": [
+    "Authorization",
+    "License"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000752",
@@ -7015,7 +7705,10 @@
    "parents": [
     "Radio Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 3"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000754",
@@ -7042,7 +7735,10 @@
    "parents": [
     "Information Bearing Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Database"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000757",
@@ -7078,7 +7774,13 @@
    "parents": [
     "Wave Process Profile"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Surface Wave"
+   ],
+   "examples": [
+    "the motion of an ocean wave"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000761",
@@ -7123,7 +7825,10 @@
    "parents": [
     "Natural Process"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Wave Production Process"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000766",
@@ -7186,7 +7891,12 @@
    "parents": [
     "Process Profile"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Imp",
+    "Impulse",
+    "J"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000773",
@@ -7195,7 +7905,10 @@
    "parents": [
     "Translational Motion"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Curved Motion"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000774",
@@ -7330,7 +8043,10 @@
    "parents": [
     "Steam Engine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Steam Turbine"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000789",
@@ -7366,7 +8082,10 @@
    "parents": [
     "Optical Telescope"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Catadioptric Telescope"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000793",
@@ -7420,7 +8139,10 @@
    "parents": [
     "Material Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Information Carrying Artifact"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000799",
@@ -7429,7 +8151,10 @@
    "parents": [
     "Information Bearing Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "List"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000800",
@@ -7465,7 +8190,10 @@
    "parents": [
     "Shape Quality"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Circular"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000804",
@@ -7546,7 +8274,11 @@
    "parents": [
     "Electromagnetic Wave Process"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "EMP",
+    "Transient Electromagnetic Disturbance"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000813",
@@ -7636,7 +8368,10 @@
    "parents": [
     "Radio Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 4"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000823",
@@ -7834,7 +8569,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "celsius, fahrenheit, kelvin"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000845",
@@ -7906,7 +8644,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "joule, erg, kilowatt hour"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000853",
@@ -7915,7 +8656,10 @@
    "parents": [
     "Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Descriptive ICE"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000854",
@@ -7969,7 +8713,10 @@
    "parents": [
     "Act of Communication Mediated by Artifact"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Television Broadcasting"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000860",
@@ -7996,7 +8743,10 @@
    "parents": [
     "Process Profile"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Sound Quality"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000863",
@@ -8032,7 +8782,10 @@
    "parents": [
     "Act of Communication Mediated by Artifact"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Radio Broadcasting"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000867",
@@ -8068,7 +8821,10 @@
    "parents": [
     "material entity"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Infrastructure"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000871",
@@ -8104,7 +8860,10 @@
    "parents": [
     "Information Bearing Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Video"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000875",
@@ -8140,7 +8899,10 @@
    "parents": [
     "Radio Transponder"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "IFF"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000879",
@@ -8203,7 +8965,10 @@
    "parents": [
     "Shape Quality"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Undulate"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000886",
@@ -8275,7 +9040,11 @@
    "parents": [
     "Material Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "examples": [
+    "A magnetic hard drive",
+    "A notebook"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000894",
@@ -8293,7 +9062,10 @@
    "parents": [
     "Stasis of Generically Dependent Continuant"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Married Stasis"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000896",
@@ -8302,7 +9074,12 @@
    "parents": [
     "Point Estimate Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Arithmetic Mean",
+    "Average",
+    "Mean"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000897",
@@ -8311,7 +9088,14 @@
    "parents": [
     "Portion of Material"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Portion of Oxidant",
+    "Portion of Oxidizing Agent"
+   ],
+   "examples": [
+    "oxygen, hydrogen peroxide, chlorine, sulfiric acid, potassium nitrate"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000898",
@@ -8392,7 +9176,10 @@
    "parents": [
     "Telecommunication Instrument"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Phone"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000908",
@@ -8464,7 +9251,10 @@
    "parents": [
     "Abbreviated Name"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "Wi-Fi, ASCII, OPSEC"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000916",
@@ -8536,7 +9326,10 @@
    "parents": [
     "Non-Name Identifier"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Arbitrary ID"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000924",
@@ -8581,7 +9374,10 @@
    "parents": [
     "Rail Transport Vehicle"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Railroad Car"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000929",
@@ -8599,7 +9395,10 @@
    "parents": [
     "Secondary Cell Electric Battery"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "NiMH Battery"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000932",
@@ -8626,7 +9425,10 @@
    "parents": [
     "First-Order Administrative Region"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "altLabels": [
+    "State"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000935",
@@ -8680,7 +9482,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "kg m/s, slug ft/s, g m/s"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000941",
@@ -8779,7 +9584,10 @@
    "parents": [
     "Wave Process"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Electromagnetic Radiation"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000952",
@@ -8788,7 +9596,10 @@
    "parents": [
     "Engine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Electric Engine"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000953",
@@ -8842,7 +9653,10 @@
    "parents": [
     "generically dependent continuant"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "ICE"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000959",
@@ -8851,7 +9665,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "hertz, revolutions per minute"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000960",
@@ -8896,7 +9713,10 @@
    "parents": [
     "Radio Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 6"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000965",
@@ -8905,7 +9725,10 @@
    "parents": [
     "Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Directive ICE"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000967",
@@ -8932,7 +9755,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "miles per hour, kilometers per hour, knot, mach"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000970",
@@ -8959,7 +9785,10 @@
    "parents": [
     "Time of Day Identifier"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Fractional Time of Day Identifier"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000974",
@@ -9103,7 +9932,10 @@
    "parents": [
     "Microwave Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 10"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000990",
@@ -9112,7 +9944,10 @@
    "parents": [
     "Designative Name"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "Ike, Chief, P-Fox"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000991",
@@ -9121,7 +9956,11 @@
    "parents": [
     "Shape Quality"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Angular",
+    "Kinked"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000992",
@@ -9166,7 +10005,10 @@
    "parents": [
     "Air-Breathing Jet Engine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Ramjet"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00000997",
@@ -9220,7 +10062,10 @@
    "parents": [
     "Information Bearing Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Message"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001003",
@@ -9238,7 +10083,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "volt, ampere, coulomb"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001005",
@@ -9256,7 +10104,12 @@
    "parents": [
     "role"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "examples": [
+    "the role of driving a car",
+    "the role of flying an airplane",
+    "the role of operating a crane"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001007",
@@ -9292,7 +10145,12 @@
    "parents": [
     "Measurement Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "The sentence \"The coldest day in history in Chicago, IL. is January 20, 1985.\" is the carrier of an ordinal measurment.",
+    "a measurement that places Geospatial Regions into a rank order of small, medium, large",
+    "a measurement that places military units onto a readiness rank order of red, yellow, green"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001011",
@@ -9328,7 +10186,12 @@
    "parents": [
     "Highway"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Expressway",
+    "Freeway",
+    "Motorway"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001016",
@@ -9391,7 +10254,13 @@
    "parents": [
     "Measurement Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "The sentence \"The temperature reached 240.372 degrees Kelvin on January 20, 1985 in Chicago, IL.\" is the carrier of a ratio measurement as 0 degrees on the Kelvin scale does describe absolute zero.",
+    "a measurement of the barometric pressure at 1,000 feet above sea level",
+    "a measurement of the measure of air temperature on the Kelvin scale",
+    "a measurement of the number of members in an Organization"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001023",
@@ -9427,7 +10296,10 @@
    "parents": [
     "Spatial Orientation"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Facing Orientation"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001027",
@@ -9454,7 +10326,10 @@
    "parents": [
     "Portion of Ammunition"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Rocket"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001030",
@@ -9463,7 +10338,11 @@
    "parents": [
     "Rail Transport Vehicle"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Railroad Train",
+    "Railway Train"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001031",
@@ -9472,7 +10351,11 @@
    "parents": [
     "Act of Commissive Communication"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "entering into military service voluntarily",
+    "rendering a service voluntarily"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001032",
@@ -9508,7 +10391,10 @@
    "parents": [
     "Axis of Rotation"
    ],
-   "module": "GeospatialOntology"
+   "module": "GeospatialOntology",
+   "altLabels": [
+    "Lateral Axis"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001036",
@@ -9535,7 +10421,10 @@
    "parents": [
     "Secondary Cell Electric Battery"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "NiCad Battery"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001039",
@@ -9607,7 +10496,10 @@
    "parents": [
     "Material Copy of a Message"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Notification Message"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001047",
@@ -9616,7 +10508,10 @@
    "parents": [
     "Process Profile"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Temporal Frequency"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001048",
@@ -9643,7 +10538,10 @@
    "parents": [
     "Electric Battery"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Primary Cell Battery"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001051",
@@ -9742,7 +10640,10 @@
    "parents": [
     "Ground Motor Vehicle"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Motorbike"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001062",
@@ -9760,7 +10661,10 @@
    "parents": [
     "Shape Quality"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Linear"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001064",
@@ -9769,7 +10673,10 @@
    "parents": [
     "Information Bearing Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Barcode"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001065",
@@ -9778,7 +10685,10 @@
    "parents": [
     "Size Quality"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Area"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001066",
@@ -9805,7 +10715,10 @@
    "parents": [
     "Gain of Specifically Dependent Continuant"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "A person becoming pregnant."
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001069",
@@ -9814,7 +10727,12 @@
    "parents": [
     "Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "the content of a court transcript represents a courtroom proceeding",
+    "the content of a photograph of the Statue of Liberty represents the Statue of Liberty",
+    "the content of a video of a sporting event represents that sporting event"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001070",
@@ -9841,7 +10759,10 @@
    "parents": [
     "Very High Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Frequency Modulation Radio Broadcast Frequency"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001073",
@@ -9850,7 +10771,10 @@
    "parents": [
     "Financial Value"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "altLabels": [
+    "Property Value"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001074",
@@ -9877,7 +10801,10 @@
    "parents": [
     "Facility"
    ],
-   "module": "FacilityOntology"
+   "module": "FacilityOntology",
+   "altLabels": [
+    "Power Plant"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001077",
@@ -9976,7 +10903,10 @@
    "parents": [
     "Observation Artifact Function"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Attitude Observation Artifact Function"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001088",
@@ -10003,7 +10933,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "pascal, atmosphere, pound-force per square inch"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001091",
@@ -10021,7 +10954,10 @@
    "parents": [
     "Electrical Artifact Function"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Capacitance"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001093",
@@ -10048,7 +10984,11 @@
    "parents": [
     "Wireless Telecommunication Network"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Cellular Network",
+    "Mobile Telecommunication Network"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001096",
@@ -10102,7 +11042,11 @@
    "parents": [
     "Estimate Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Interval Estimate",
+    "Interval Estimate Measurement Information Content Entity"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001102",
@@ -10138,7 +11082,11 @@
    "parents": [
     "Electric Battery"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Rechargeable Battery",
+    "Secondary Cell Battery"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001106",
@@ -10147,7 +11095,10 @@
    "parents": [
     "Axis of Rotation"
    ],
-   "module": "GeospatialOntology"
+   "module": "GeospatialOntology",
+   "altLabels": [
+    "Longitudinal Axis"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001107",
@@ -10165,7 +11116,10 @@
    "parents": [
     "Microwave Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 9"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001109",
@@ -10174,7 +11128,15 @@
    "parents": [
     "Rotational Motion"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Anti-Clockwise Rotation",
+    "CCW Rotational Motion",
+    "Counter-Clockwise Rotation"
+   ],
+   "examples": [
+    "the axial rotation of the Earth as seen from above the North Pole"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001110",
@@ -10219,7 +11181,10 @@
    "parents": [
     "Geospatial Region"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "examples": [
+    "Flatbush, French Quarter, Western New York, Texas Panhandle, Greater Montreal Area of Quebec, Pacific Northwest, southwest area of Al Anbar Province, Northern Iraq."
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001115",
@@ -10228,7 +11193,10 @@
    "parents": [
     "Telephone Call"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Private Branch Exchange Call"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001116",
@@ -10237,7 +11205,12 @@
    "parents": [
     "temporal instant"
    ],
-   "module": "TimeOntology"
+   "module": "TimeOntology",
+   "altLabels": [
+    "Epoch",
+    "Epoch Time",
+    "Reference Date"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001117",
@@ -10246,7 +11219,10 @@
    "parents": [
     "Nozzle"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Jet Nozzle"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001118",
@@ -10264,7 +11240,14 @@
    "parents": [
     "Material Copy of a Document"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Document Form"
+   ],
+   "examples": [
+    "A spreadsheet template",
+    "A survey"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001120",
@@ -10282,7 +11265,11 @@
    "parents": [
     "Air-Breathing Jet Engine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Scramjet",
+    "Supersonic Combusting Ramjet"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001122",
@@ -10471,7 +11458,11 @@
    "parents": [
     "Act of Communication Mediated by Artifact"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Facsimile Transmission",
+    "Act of Faxing"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001144",
@@ -10588,7 +11579,15 @@
    "parents": [
     "Information Bearing Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Information Line"
+   ],
+   "examples": [
+    "a line in a computer file that bears a portion of code for some computer program",
+    "a line of data in a database",
+    "a line of text in a book"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001157",
@@ -10651,7 +11650,10 @@
    "parents": [
     "Descriptive Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Measurement ICE"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001164",
@@ -10696,7 +11698,10 @@
    "parents": [
     "material entity"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Working Mass"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001169",
@@ -10723,7 +11728,10 @@
    "parents": [
     "Telephone Call"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Mobile Network Telephone Call"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001172",
@@ -10768,7 +11776,12 @@
    "parents": [
     "Measurement Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Estimate",
+    "Estimate Measurement Information Content Entity",
+    "Estimated Value"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001177",
@@ -10777,7 +11790,10 @@
    "parents": [
     "Spatial Orientation"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Roll"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001178",
@@ -10786,7 +11802,10 @@
    "parents": [
     "Land Transportation Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Level Crossing"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001179",
@@ -10795,7 +11814,11 @@
    "parents": [
     "Information Medium Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "examples": [
+    "A computer's Hard Disk Drive",
+    "A portable USB Drive"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001180",
@@ -10813,7 +11836,10 @@
    "parents": [
     "Inertial Navigation System"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Triple INS"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001182",
@@ -10822,7 +11848,10 @@
    "parents": [
     "relational quality"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Orbital Phase Angle"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001183",
@@ -10894,7 +11923,10 @@
    "parents": [
     "Act of Communication Mediated by Artifact"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Telephone Calling"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001191",
@@ -10948,7 +11980,10 @@
    "parents": [
     "Act of Material Artifact Processing"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "putting together a piece of furniture purchased from Ikea"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001197",
@@ -11047,7 +12082,10 @@
    "parents": [
     "Optical Instrument"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Lens"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001208",
@@ -11056,7 +12094,10 @@
    "parents": [
     "Radio Frequency"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "ITU Band Number 7"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001210",
@@ -11110,7 +12151,10 @@
    "parents": [
     "Act of Ceremony"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Act of Funeral Ceremony"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001216",
@@ -11146,7 +12190,11 @@
    "parents": [
     "Process Profile"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Change in Velocity",
+    "DeltaV"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001220",
@@ -11164,7 +12212,10 @@
    "parents": [
     "Engine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Physical Engine"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001222",
@@ -11173,7 +12224,11 @@
    "parents": [
     "Electrical Power Source"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Photovoltaic System",
+    "Solar Array"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001223",
@@ -11191,7 +12246,11 @@
    "parents": [
     "Process Regulation"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "altLabels": [
+    "Duty",
+    "Obligation"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001225",
@@ -11218,7 +12277,11 @@
    "parents": [
     "Wave Process Profile"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Compression Wave",
+    "Longitudinal Wave"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001228",
@@ -11227,7 +12290,10 @@
    "parents": [
     "Material Copy of a Document"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Journal Article"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001229",
@@ -11299,7 +12365,10 @@
    "parents": [
     "Act of Violence"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Suicide"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001237",
@@ -11317,7 +12386,10 @@
    "parents": [
     "Abbreviated Name"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "USA, CPU, BBC"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001239",
@@ -11470,7 +12542,11 @@
    "parents": [
     "Measurement Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Accuracy of Process",
+    "Reliability Measurement"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001257",
@@ -11515,7 +12591,10 @@
    "parents": [
     "Animal"
    ],
-   "module": "AgentOntology"
+   "module": "AgentOntology",
+   "altLabels": [
+    "Human"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001263",
@@ -11533,7 +12612,10 @@
    "parents": [
     "Communication System"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "PA System"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001266",
@@ -11641,7 +12723,12 @@
    "parents": [
     "Motion"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Mechanical Oscillation",
+    "Oscillation Motion",
+    "Vibration"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001280",
@@ -11731,7 +12818,12 @@
    "parents": [
     "Stasis of Specifically Dependent Continuant"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Compromised",
+    "Damaged",
+    "Injured"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001290",
@@ -11740,7 +12832,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "foot, meter, kilometer, mile"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001291",
@@ -11776,7 +12871,10 @@
    "parents": [
     "Size Quality"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Volume"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001295",
@@ -11794,7 +12892,10 @@
    "parents": [
     "Spatial Orientation"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Pitch"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001297",
@@ -11812,7 +12913,10 @@
    "parents": [
     "Information Bearing Artifact"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Document"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001299",
@@ -11830,7 +12934,11 @@
    "parents": [
     "Radio Antenna"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Microstrip Patch Antenna",
+    "Rectangular Microstrip Antenna"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001301",
@@ -11893,7 +13001,10 @@
    "parents": [
     "Measurement Unit of Flow"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "kilogram per second, slug per second, pound per second"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001308",
@@ -11983,7 +13094,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "cubic feet, cubic meter, quart, liter"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001318",
@@ -11992,7 +13106,10 @@
    "parents": [
     "Spatial Orientation"
    ],
-   "module": "QualityOntology"
+   "module": "QualityOntology",
+   "altLabels": [
+    "Yaw"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001319",
@@ -12082,7 +13199,11 @@
    "parents": [
     "Reference System"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Temporal Reference Frame",
+    "Time Scale"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001329",
@@ -12100,7 +13221,11 @@
    "parents": [
     "Mechanical Process"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "examples": [
+    "using a GPS tag to track a shark's migratory pattern",
+    "using a portable cardiac monitor to remotely collect data on a patient's heart activity (biotelemetry)"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001331",
@@ -12190,7 +13315,10 @@
    "parents": [
     "Date Identifier"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "January 1, 2018; 1 January 2018; 01/01/18; 01Jan18"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001341",
@@ -12235,7 +13363,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "N s, dyne second"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001346",
@@ -12289,7 +13420,10 @@
    "parents": [
     "Spatial Reference System"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Rectangular Coordinate System"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001352",
@@ -12325,7 +13459,10 @@
    "parents": [
     "Train Car"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Freight Car"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001356",
@@ -12343,7 +13480,10 @@
    "parents": [
     "Measurement Unit"
    ],
-   "module": "UnitsOfMeasureOntology"
+   "module": "UnitsOfMeasureOntology",
+   "examples": [
+    "second, minute, hour, day"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001358",
@@ -12406,7 +13546,10 @@
    "parents": [
     "Measurement Information Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "The sentence \"The temperature reached -27 degrees Fahrenheit on January 20, 1985 in Chicago, IL.\" is the carrier of an interval measurement as 0 degrees on the Fahrenheit scale does not describe absolute zero."
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001365",
@@ -12514,7 +13657,10 @@
    "parents": [
     "Force"
    ],
-   "module": "EventOntology"
+   "module": "EventOntology",
+   "altLabels": [
+    "Moment of Force"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001377",
@@ -12577,7 +13723,11 @@
    "parents": [
     "Public Safety Facility"
    ],
-   "module": "FacilityOntology"
+   "module": "FacilityOntology",
+   "altLabels": [
+    "Fire Hall",
+    "Fire House"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001384",
@@ -12739,7 +13889,12 @@
    "parents": [
     "Media Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "a line in a computer file that bears a portion of code for some computer program",
+    "a line of data in a database",
+    "a line of text in a book"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00002038",
@@ -12748,7 +13903,10 @@
    "parents": [
     "Media Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Document Field"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00002039",
@@ -12757,7 +13915,10 @@
    "parents": [
     "Media Content Entity"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "altLabels": [
+    "Document"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00002040",
@@ -12820,7 +13981,11 @@
    "parents": [
     "Explosive Weapon"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Mine",
+    "Mine Weapon"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00002067",
@@ -12829,7 +13994,11 @@
    "parents": [
     "Explosive Mine"
    ],
-   "module": "ArtifactOntology"
+   "module": "ArtifactOntology",
+   "altLabels": [
+    "Naval Mine",
+    "Sea Mine"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00002068",
@@ -12961,7 +14130,13 @@
     "process"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "altLabels": [
+    "realized in"
+   ],
+   "examples": [
+    "As for realizes"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000055",
@@ -12974,7 +14149,10 @@
     "realizable entity"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "A balding process realizes a disposition to go bald; a studying process realizes a student role; a process of pumping blood realizes the pumping function of a heart"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000056",
@@ -13045,7 +14223,10 @@
     "occurrent"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The temporal region occupied by the second half of the match is preceded by the temporal region occupied by the first half of the match"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000063",
@@ -13058,7 +14239,10 @@
     "occurrent"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "The temporal region occupied by Mary's birth precedes the temporal region occupied by Mary's death."
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000066",
@@ -13073,7 +14257,10 @@
     "site"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "A process of digestion occurs in the interior of an organism; a process of loading artillery rounds into a tank cannon occurs in the interior of the tank"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000084",
@@ -13086,7 +14273,10 @@
     "independent continuant"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "altLabels": [
+    "g-depends on"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000101",
@@ -13112,7 +14302,10 @@
     "temporal region"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "First World War exists at 1914-1916; Mexico exists at January 1, 2000"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000115",
@@ -13140,7 +14333,10 @@
     "occurrent"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "Mary's life has occurrent part Mary's 5th birthday"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000121",
@@ -13155,7 +14351,10 @@
    "parents": [
     "has occurrent part"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "Your life has temporal part the first year of your life"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000124",
@@ -13209,7 +14408,10 @@
     "occurrent"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "Mary's 5th birthday is an occurrent part of Mary's life; the first set of the tennis match is an occurrent part of the tennis match"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000139",
@@ -13224,7 +14426,10 @@
    "parents": [
     "occurrent part of"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "Your heart beating from 4pm to 5pm today is a temporal part of the process of your heart beating; the 4th year of your life is a temporal part of your life, as is the process boundary which separates the 3rd and 4th years of your life; the first quarter of a game of football is a temporal part of the whole game"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000153",
@@ -13238,7 +14443,10 @@
    ],
    "parents": [],
    "module": "",
-   "functional": true
+   "functional": true,
+   "examples": [
+    "The world line of a particle temporally projects onto the temporal region extending from the beginning to the end of the existence of the particle"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000171",
@@ -13264,7 +14472,10 @@
     "continuant"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "Milk teeth continuant part of human; surgically removed tumour continuant part of organism"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000178",
@@ -13292,7 +14503,13 @@
     "process boundary"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "altLabels": [
+    "contains process"
+   ],
+   "examples": [
+    "Mouth environs process of mastication; city environs traffic"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000184",
@@ -13306,7 +14523,10 @@
    ],
    "parents": [],
    "module": "",
-   "functional": true
+   "functional": true,
+   "examples": [
+    "This life is the history of this organism"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000185",
@@ -13319,7 +14539,10 @@
     "history"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "This organism has history this life"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000194",
@@ -13333,7 +14556,13 @@
     "specifically dependent continuant"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "altLabels": [
+    "s-depended on by"
+   ],
+   "examples": [
+    "Coloured object specifically depended on by colour"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000195",
@@ -13347,7 +14576,13 @@
     "specifically dependent continuant"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "altLabels": [
+    "s-depends on"
+   ],
+   "examples": [
+    "A shape specifically depends on the shaped object; hue, saturation and brightness of a colour sample specifically depends on each other"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000196",
@@ -13362,7 +14597,10 @@
    "parents": [
     "specifically depended on by"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "A patch of ink is the bearer of a colour quality; an organism is the bearer of a temperature quality"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000197",
@@ -13377,7 +14615,10 @@
    "parents": [
     "specifically depends on"
    ],
-   "module": ""
+   "module": "",
+   "examples": [
+    "A shape inheres in a shaped object; a mass inheres in a material entity"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000199",
@@ -13392,7 +14633,10 @@
    ],
    "parents": [],
    "module": "",
-   "functional": true
+   "functional": true,
+   "examples": [
+    "The Second World War occupies the temporal region September 1, 1939 - September 2, 1945"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000200",
@@ -13407,7 +14651,10 @@
    ],
    "parents": [],
    "module": "",
-   "functional": true
+   "functional": true,
+   "examples": [
+    "A particle emitted by a nuclear reactor occupies the spatiotemporal region which is its trajectory"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000210",
@@ -13459,7 +14706,10 @@
     "temporal region"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "An hour starting at midnight yesterday has first instant midnight yesterday"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000222",
@@ -13473,7 +14723,10 @@
    ],
    "parents": [],
    "module": "",
-   "functional": true
+   "functional": true,
+   "examples": [
+    "The first hour of a year has first instant midnight on December 31"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000223",
@@ -13486,7 +14739,10 @@
     "temporal region"
    ],
    "parents": [],
-   "module": ""
+   "module": "",
+   "examples": [
+    "Last midnight is the last instant of yesterday"
+   ]
   },
   {
    "uri": "http://purl.obolibrary.org/obo/BFO_0000224",
@@ -13500,7 +14756,10 @@
    ],
    "parents": [],
    "module": "",
-   "functional": true
+   "functional": true,
+   "examples": [
+    "The last hour of a year has last instant midnight December 31"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001774",
@@ -15005,7 +16264,10 @@
    "parents": [
     "is a measurement of"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "a measurement of air temperature on the Celsius scale."
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001878",
@@ -15586,7 +16848,12 @@
    "parents": [
     "is about"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "a URL designates the location of a Web Page on the internet",
+    "a person's name designates that person",
+    "a vehicle identification number designates some vehicle"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001917",
@@ -15970,7 +17237,12 @@
    "parents": [
     "is about"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "A blueprint prescribes some artifact or facility by being a model for it.",
+    "A professional code of conduct prescribes some realizations of a profession (role) by giving rules for how the bearer should act in those realizations.",
+    "An operations plan prescribes an operation by enumerating the tasks that need to be performed in order to achieve the objectives of the operation."
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001943",
@@ -16546,7 +17818,12 @@
    "parents": [
     "is about"
    ],
-   "module": "InformationEntityOntology"
+   "module": "InformationEntityOntology",
+   "examples": [
+    "the content of a newspaper article describes some current event",
+    "the content of a visitor's log describes some facility visit",
+    "the content of an accident report describes some accident"
+   ]
   },
   {
    "uri": "https://www.commoncoreontologies.org/ont00001983",

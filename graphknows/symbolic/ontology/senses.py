@@ -86,9 +86,9 @@ def sense_lemmas(word: str, pos: str, text: str, offset: int, surface: str) -> f
     direction (see the module docstring). The mention's own sentence, with the
     trigger starred (:func:`graphknows.symbolic.framenet.srl.marked_line`), is
     embedded and ranked against each candidate synset's gloss (definition plus
-    examples, since a bare definition is often too short to embed well); the
-    winner is accepted only above both a similarity floor and a margin over the
-    runner-up.
+    examples plus lemma names, since a bare definition is often too short to
+    embed well); the winner is accepted only above both a similarity floor and
+    a margin over the runner-up.
     """
     wn = _wordnet()
     if wn is None:
@@ -108,7 +108,16 @@ def sense_lemmas(word: str, pos: str, text: str, offset: int, surface: str) -> f
         return frozenset()
 
     ids = [synset.name() for synset in synsets]
-    glosses = [" ".join([synset.definition(), *synset.examples()]) for synset in synsets]
+    glosses = [
+        " ".join(
+            [
+                synset.definition(),
+                *synset.examples(),
+                *(lemma.name().replace("_", " ") for lemma in synset.lemmas()),
+            ]
+        )
+        for synset in synsets
+    ]
     mat = np.array([embed_one(gloss) for gloss in glosses], dtype=np.float32)
     norms = np.linalg.norm(mat, axis=1, keepdims=True)
     norms[norms == 0.0] = 1.0

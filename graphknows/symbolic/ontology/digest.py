@@ -197,6 +197,22 @@ class _Reader:
         # the vector the whole match is decided on.
         return " ".join(re.sub(r"https?://\S+", "", f"{text} {note}").split())
 
+    def alt_labels(self, subject: Any) -> list[str]:
+        """``skos:altLabel`` values — synonyms a mention may use instead of the label.
+
+        CCO does carry these (e.g. "Corporation" for Organization), just
+        sparsely; sorted for a build-order-independent digest.
+        """
+        from rdflib.namespace import SKOS
+
+        return sorted({str(v) for v in self.g.objects(subject, SKOS.altLabel)})
+
+    def examples(self, subject: Any) -> list[str]:
+        """``skos:example`` usage text, verbatim — the richest signal a terse term has."""
+        from rdflib.namespace import SKOS
+
+        return sorted({str(v) for v in self.g.objects(subject, SKOS.example)})
+
     def named(self, node: Any, depth: int = 0) -> set[str]:
         """Class labels ``node`` denotes, unwrapping anonymous class expressions.
 
@@ -325,6 +341,17 @@ def build(sources: Sequence[Path]) -> dict[str, Any]:
     }
     r = _Reader(graph, labels)
 
+    # Anonymous class/property expressions (blank-node subjects typed
+    # owl:Class/owl:ObjectProperty, e.g. inline equivalentClass definitions)
+    # never carry a label and are dropped by the `if lbl` filters below --
+    # tallied here so a digest import reports the same "what did this lose"
+    # number the RDF-parse path already does, instead of a hardcoded 0.
+    from rdflib import BNode
+
+    class_subjects = set(graph.subjects(RDF.type, OWL.Class))
+    prop_subjects = set(graph.subjects(RDF.type, OWL.ObjectProperty))
+    dropped_expressions = sum(1 for s in (*class_subjects, *prop_subjects) if isinstance(s, BNode))
+
     classes = [
         {
             "uri": str(s),
@@ -338,13 +365,15 @@ def build(sources: Sequence[Path]) -> dict[str, Any]:
             # dead weight in a file that ships in the wheel.
             **({"parents_nontransitive": b} if (b := r.refs(s, SKOS.broader)) else {}),
             "module": r.module(s),
+            **({"altLabels": a} if (a := r.alt_labels(s)) else {}),
+            **({"examples": e} if (e := r.examples(s)) else {}),
         }
-        for s in sorted(graph.subjects(RDF.type, OWL.Class), key=str)
+        for s in sorted(class_subjects, key=str)
         if (lbl := r.label(s))
     ]
 
     properties = []
-    for s in sorted(graph.subjects(RDF.type, OWL.ObjectProperty), key=str):
+    for s in sorted(prop_subjects, key=str):
         if not (lbl := r.label(s)):
             continue
         mod = r.module(s)
@@ -362,6 +391,8 @@ def build(sources: Sequence[Path]) -> dict[str, Any]:
                 **({"parents_nontransitive": b} if (b := r.refs(s, SKOS.broader)) else {}),
                 "module": mod,
                 **({"functional": True} if (s, RDF.type, OWL.FunctionalProperty) in graph else {}),
+                **({"altLabels": a} if (a := r.alt_labels(s)) else {}),
+                **({"examples": e} if (e := r.examples(s)) else {}),
             }
         )
 
@@ -372,6 +403,7 @@ def build(sources: Sequence[Path]) -> dict[str, Any]:
         # any one file, and it is unanswerable once the terms are flattened.
         "ontologies": closure.version_iris,
         "imports_unresolved": list(closure.unresolved),
+        "dropped_expressions": dropped_expressions,
         "classes": classes,
         "properties": properties,
     }

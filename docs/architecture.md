@@ -28,8 +28,9 @@ Async methods on the facade:
 | `flush_memory` | Consolidate one session in place: entity resolution, analytics, `raw` → `consolidated`. |
 | `purge_memory` | Delete the namespace's data (all, or one session). |
 | `drop_namespace` | Drop the whole namespace database (refused for the default namespace). |
-| `stats` | Node counts for the namespace, chunks split by lifecycle state. |
+| `stats` | Node counts for the namespace, chunks split by lifecycle state, plus the `SOURCE` rows recording which (channel, version) resources this namespace holds. |
 | `doctor` | Backend connectivity check for the namespace database. |
+| `rebind_memory` | Re-ground a channel's stored mentions against the currently loaded resource: new groundings under the current version, old ones flagged `superseded` rather than deleted. |
 | `corpus_ingest` | Batch-ingest documents into one session, then consolidate it. |
 | `ltm_topics` / `ltm_entity` / `ltm_entities` | Read-only graph browsing helpers. |
 
@@ -89,7 +90,10 @@ they match the configured embedder.
   `FRAME_INSTANCE`, `FE` (one vertex per FrameNet `(frame, frame element)`
   pair, carrying its coreness — Core, Peripheral, Extra-Thematic or
   Core-Unexpressed — plus its CoreSet index and Requires/Excludes targets),
-  `SEMTYPE` (FrameNet semantic types), `ONTOLOGY`, `ONTOLOGY_CLASS`.
+  `SEMTYPE` (FrameNet semantic types), `ONTOLOGY`, `ONTOLOGY_CLASS`, `SOURCE`
+  (one vertex per `(channel, version)` resource import — ontology or
+  FrameNet — with its source hash and import counts; see
+  [ontology.md](ontology.md#schema)).
 - Edges: `IN_SESSION` (FILE→SESSION), `PART_OF` (CHUNK→FILE), `MENTIONS`
   (CHUNK→ENTITY), `MENTIONS_DATE` (CHUNK→TEMPORAL),
   `IN_TOPIC` (ENTITY→TOPIC, with a
