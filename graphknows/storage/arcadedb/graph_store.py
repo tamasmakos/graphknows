@@ -1739,6 +1739,173 @@ class GraphStore(ArcadeStoreBase):
         )
         return int(rows[0].get("c") or 0) if rows else 0
 
+    # Full provenance block a WordNet grounding row must carry -- asserted
+    # complete at the single write choke point, same contract as
+    # ``_GROUNDING_FIELDS``.
+    _SENSE_FIELDS = (
+        "name",
+        "synset_id",
+        "synset_name",
+        "pos",
+        "definition",
+        "sense_id",
+        "sense_key",
+        "lemma",
+        "chunk_id",
+        "span",
+        "channel",
+        "version",
+        "matcher",
+        "score",
+        "rank",
+    )
+
+    async def write_senses(self, rows: list[dict[str, Any]]) -> int:
+        """MERGE one WordNet grounding: SYNSET, SENSE and the HAS_SENSE edge.
+
+        The single choke point for a WordNet sense grounding. This MINTS the
+        SYNSET and SENSE lazily -- install never walks the ~117k-synset
+        corpus; a synset/sense exists in the graph only once something
+        actually grounds to it (issue #142).
+
+        Each row must carry the full provenance block (``name, synset_id,
+        synset_name, pos, definition, sense_id, sense_key, lemma, chunk_id,
+        span, channel, version, matcher, score, rank``); a row missing any
+        field raises immediately -- a provenance gap that only surfaces
+        months later as a missing property is exactly the silent failure
+        this guards against, same contract as :meth:`write_groundings`.
+
+        ``chunk_id``, ``span`` and ``synset`` sit INSIDE the ``HAS_SENSE``
+        pattern braces, not only in the SET clause: that is what makes the
+        same entity grounded to two different senses in two different chunks
+        two edges rather than one row where the second write clobbers the
+        first. Returns the number of rows written.
+        """
+        if not rows:
+            return 0
+        for row in rows:
+            missing = [f for f in self._SENSE_FIELDS if row.get(f) is None]
+            if missing:
+                raise ValueError(f"sense row missing provenance field(s) {missing}: {row}")
+        merged = [
+            {
+                "nn": _name_norm(str(r["name"])),
+                "synset_id": r["synset_id"],
+                "synset_name": r["synset_name"],
+                "pos": r["pos"],
+                "definition": r["definition"],
+                "sense_id": r["sense_id"],
+                "sense_key": r["sense_key"],
+                "lemma": r["lemma"],
+                "chunk_id": r["chunk_id"],
+                "span": str(r["span"]),
+                "channel": r["channel"],
+                "version": r["version"],
+                "matcher": r["matcher"],
+                "score": float(r["score"]),
+                "rank": int(r["rank"]),
+            }
+            for r in rows
+        ]
+        await self.command(
+            "UNWIND $rows AS r MERGE (y:SYNSET {id: r.synset_id}) "
+            "SET y.name = r.synset_name, y.pos = r.pos, y.definition = r.definition",
+            rows=merged,
+        )
+        await self.command(
+            "UNWIND $rows AS r MERGE (s:SENSE {id: r.sense_id}) "
+            "SET s.sense_key = r.sense_key, s.lemma = r.lemma, s.synset = r.synset_id",
+            rows=merged,
+        )
+        await self.command(
+            "UNWIND $rows AS r MATCH (s:SENSE {id: r.sense_id}), (y:SYNSET {id: r.synset_id}) "
+            "MERGE (s)-[:IN_SYNSET]->(y)",
+            rows=merged,
+        )
+        await self.command(
+            "UNWIND $rows AS r "
+            "MATCH (e:ENTITY {name_norm: r.nn}), (s:SENSE {id: r.sense_id}) "
+            "MERGE (e)-[h:HAS_SENSE {chunk_id: r.chunk_id, span: r.span, synset: r.synset_id}]->(s) "
+            "SET h.channel = r.channel, h.version = r.version, h.matcher = r.matcher, "
+            "h.score = r.score, h.rank = r.rank",
+            rows=merged,
+        )
+        return len(merged)
+
+    async def write_synset_hypernyms(self, rows: list[dict[str, Any]]) -> int:
+        """MERGE a synset's shortest hypernym chain as BROADER edges.
+
+        Rows: ``{"child", "parent", "parent_name", "parent_definition", "rel",
+        "transitive"}``, as produced by :func:`graphknows.symbolic.wordnet.ancestors`.
+        The parent SYNSET is MERGEd here too -- ``ancestors()`` mints only the
+        one shortest path from a grounded synset to its root, so a parent may
+        not have been written by :meth:`write_senses` yet.
+        """
+        if not rows:
+            return 0
+        await self.command(
+            "UNWIND $rows AS r MERGE (p:SYNSET {id: r.parent}) "
+            "SET p.name = r.parent_name, p.definition = r.parent_definition",
+            rows=rows,
+        )
+        await self.command(
+            "UNWIND $rows AS r "
+            "MATCH (c:SYNSET {id: r.child}), (p:SYNSET {id: r.parent}) "
+            "MERGE (c)-[b:BROADER {rel: r.rel}]->(p) "
+            "SET b.transitive = r.transitive",
+            rows=rows,
+        )
+        return len(rows)
+
+    async def write_sense_relations(self, rows: list[dict[str, Any]]) -> int:
+        """MERGE SENSE-[:SENSE_REL {rel}]->SENSE edges.
+
+        Rows: ``{"src", "dst", "rel"}``. Matching ``:SENSE`` on BOTH endpoints
+        is the enforcement, not a convention: a sense-level relation
+        (antonym, derivationally_related_form, pertainym, participle) simply
+        cannot land on a SYNSET vertex through this writer.
+        """
+        if not rows:
+            return 0
+        await self.command(
+            "UNWIND $rows AS r MATCH (a:SENSE {id: r.src}), (b:SENSE {id: r.dst}) "
+            "MERGE (a)-[x:SENSE_REL {rel: r.rel}]->(b)",
+            rows=rows,
+        )
+        return len(rows)
+
+    async def synsets_missing_parents(
+        self, synset_ids: list[str] | None = None
+    ) -> list[dict[str, str]]:
+        """``{"id", "name"}`` of SYNSET vertices with no outgoing BROADER edge.
+
+        What the flush-time ancestor backfill (``WordNetChannel.populate()``)
+        consumes: a synset minted by :meth:`write_senses` has no hypernym
+        chain yet until :meth:`write_synset_hypernyms` runs for it.
+
+        ``synset_ids`` scopes the scan to one flushed session's synsets
+        instead of the whole namespace: passing ``None`` checks every SYNSET
+        vertex, which a per-session caller should not do once the namespace
+        has accumulated many sessions. Passing ``[]`` short-circuits to no
+        rows rather than issuing a query that would (via ``IN []``) also
+        match none, since an empty scope means the session grounded nothing.
+        """
+        if synset_ids is not None:
+            if not synset_ids:
+                return []
+            rows = await self.query(
+                "MATCH (y:SYNSET) WHERE y.id IN $ids "
+                "OPTIONAL MATCH (y)-[b:BROADER]->() "
+                "WITH y, b WHERE b IS NULL RETURN y.id AS id, y.name AS name",
+                ids=synset_ids,
+            )
+        else:
+            rows = await self.query(
+                "MATCH (y:SYNSET) OPTIONAL MATCH (y)-[b:BROADER]->() "
+                "WITH y, b WHERE b IS NULL RETURN y.id AS id, y.name AS name"
+            )
+        return [{"id": str(r["id"]), "name": str(r["name"])} for r in rows]
+
     async def write_source(self, row: dict[str, Any]) -> str:
         """MERGE the SOURCE vertex for one (channel, version) import (issue #145).
 

@@ -1156,6 +1156,7 @@ class _STMIngestHandler:
         # entity to its class. Both are additive: an entity that maps to nothing
         # keeps its extracted type and is written exactly as before.
         await self._link_ontology(chunk_id, filtered, ontology_classes or [], typed)
+        await self._link_senses(chunk_id, filtered)
 
         # FRAME layer — match the chunk's embedding against FrameNet definitions
         # (top-k + min-sim floor, reusing the embedding already computed above; no
@@ -1805,6 +1806,48 @@ class _STMIngestHandler:
                 )
         if mappings:
             await self._store.write_groundings(mappings)
+
+    async def _link_senses(self, chunk_id: str, entities: list[dict[str, Any]]) -> None:
+        """Ground each entity to its WordNet most-frequent-sense (MFS), lazily.
+
+        Sibling of :meth:`_link_ontology`: the per-chunk write seam for the
+        WordNet plane (issue #142). Purely additive enrichment — a WSD miss
+        or corpus error must never make an entity un-writable, so failures
+        here are swallowed and counted, not raised.
+        """
+        from graphknows.symbolic.wordnet import WN_VERSION, most_frequent_sense
+
+        try:
+            rows: list[dict[str, Any]] = []
+            for ent in entities:
+                name = str(ent.get("name", ""))
+                sense = most_frequent_sense(name)
+                if sense is None:
+                    self._abstentions["senses_ungrounded"] += 1
+                    continue
+                self._abstentions["senses_grounded"] += 1
+                score = float(ent.get("confidence", ent.get("score", 1.0)) or 0.0)
+                rows.append(
+                    {
+                        "name": name,
+                        **sense,
+                        "channel": "wordnet",
+                        "version": WN_VERSION,
+                        "matcher": "mfs",
+                        "score": score,
+                        "rank": 0,
+                        "chunk_id": chunk_id,
+                        # ponytail: surface name as span, same convention
+                        # _link_ontology uses; a character offset is the
+                        # upgrade path if two occurrences of one surface in
+                        # a single chunk ever need distinguishing.
+                        "span": name,
+                    }
+                )
+            if rows:
+                await self._store.write_senses(rows)
+        except Exception:
+            log.exception("WordNet sense grounding failed for chunk %s", chunk_id)
 
     async def _definition_typing(self, text: str) -> dict[str, tuple[str, float]]:
         """``{casefolded surface: (class label, confidence)}`` for this chunk, or ``{}``.

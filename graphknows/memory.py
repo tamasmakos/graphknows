@@ -712,7 +712,17 @@ class Memory:
             # entity resolution and the topic build see the finished graph.
             # Each channel soft-fails under its own name — one broken extension
             # must not cost the consolidation the rest of the flush does.
-            for channel in self._channels:
+            #
+            # Settings-gated defaults (frames/ontology/wordnet) go through the
+            # same loop as caller-supplied channels: default_channels() is
+            # also what build_retriever() uses for the read side (see
+            # ``_build_retriever``), so a channel registered there is active
+            # on both paths from one registration. Only ``WordNetChannel``
+            # implements ``populate`` today; the others inherit the no-op
+            # default, so this adds no new write work for them.
+            from graphknows.channels.registry import default_channels
+
+            for channel in [*default_channels(self.settings), *self._channels]:
                 await step(
                     f"populate:{getattr(channel, 'name', type(channel).__name__)}",
                     channel.populate(store, session_id),
