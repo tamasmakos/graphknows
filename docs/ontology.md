@@ -215,6 +215,13 @@ Setting the variable **replaces** that default with your own file or folder.
 | `cco-imports/`, `cco-extensions/` | Import closure and governance-board extensions. |
 | `personal/personal-profile.json` | The default relation vocabulary — 9 classes, 25 object properties, every one domain- and range-typed, sized to be offered whole. |
 
+Its classes and properties are named schema.org-style, in camelCase
+(`worksFor`, `EducationalOrganization`). `content_tokens` splits a label on
+its case boundaries before lowercasing, so `worksFor` contributes `works` as
+a lexical surface rather than the unreadable `worksfor` — the same content-word
+matching described above then reaches these labels from ordinary text instead
+of only from their literal concatenated spelling.
+
 There is no by-name registry — point `GRAPHKNOWS_ONTOLOGY` at a path, exactly as
 you would at your own file:
 
