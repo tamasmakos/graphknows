@@ -215,6 +215,24 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY ONTOLOGY_PROPERTY.functional IF NOT EXISTS BOOLEAN"),
     ("sql", "CREATE INDEX ON ONTOLOGY_PROPERTY(uri) UNIQUE"),
     ("sql", "CREATE INDEX IF NOT EXISTS ON ONTOLOGY_PROPERTY(label) NOTUNIQUE"),
+    # One vertex per (channel, version) resource import (issue #145). Without
+    # this a channel upgrade is invisible: nothing records which version a
+    # namespace was populated from, so a corpus reimport silently keeps the
+    # old plane forever and two versions of a grounding are indistinguishable.
+    # `id` is the merge key ("<channel>@<version>") so two versions of one
+    # channel are two vertices, not one overwritten row. Import counts are
+    # supplied by the caller, which already computed them while writing.
+    ("sql", "CREATE VERTEX TYPE SOURCE IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY SOURCE.id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SOURCE.channel IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SOURCE.version IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SOURCE.source_hash IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SOURCE.imported_at IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SOURCE.imported IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE PROPERTY SOURCE.dropped_expressions IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE PROPERTY SOURCE.dropped_fe_mappings IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE INDEX ON SOURCE(id) UNIQUE"),
+    ("sql", "CREATE INDEX ON SOURCE(channel) NOTUNIQUE"),
     # ---- Edge types -------------------------------------------------------
     ("sql", "CREATE EDGE TYPE PART_OF IF NOT EXISTS"),  # CHUNK -> FILE
     ("sql", "CREATE EDGE TYPE IN_SESSION IF NOT EXISTS"),  # FILE|TURN -> SESSION
@@ -278,6 +296,11 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY INSTANCE_OF.rank IF NOT EXISTS INTEGER"),
     ("sql", "CREATE PROPERTY INSTANCE_OF.chunk_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY INSTANCE_OF.span IF NOT EXISTS STRING"),
+    # Set true by supersede_groundings when a rebind promotes a newer version;
+    # absent (not false) means "not superseded" for every edge written before
+    # this property existed, so an old namespace's groundings are not
+    # retroactively flagged.
+    ("sql", "CREATE PROPERTY INSTANCE_OF.superseded IF NOT EXISTS BOOLEAN"),
     ("sql", "CREATE EDGE TYPE MATCHES_CLASS IF NOT EXISTS"),  # CHUNK -> ONTOLOGY_CLASS
     ("sql", "CREATE PROPERTY MATCHES_CLASS.sim IF NOT EXISTS DOUBLE"),
     # The ontology property a relation's predicate mapped onto, read back by

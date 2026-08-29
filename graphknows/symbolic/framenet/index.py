@@ -1,10 +1,12 @@
 """Frame-definition embedding index — cosine-match an embedding to FrameNet frames.
 
-Embeds every FrameNet frame once as ``"Frame Name. definition"``, L2-normalizes
-the definitions into a matrix, and caches that matrix to disk (``.npy`` + names
-``.json``) keyed by the embed model + dimension, so the ~1221 definitions are
-embedded once and reused across process starts (re-embedding them on every ingest
-via the remote embedder would be prohibitive).
+Embeds every FrameNet frame once as its name, definition, frame-element names
+and definitions, and lexical-unit names and definitions (see
+:func:`_embed_frames`), L2-normalizes the result into a matrix, and caches that
+matrix to disk (``.npy`` + names ``.json``) keyed by the embed model + dimension
++ text recipe, so the ~1221 frames are embedded once and reused across process
+starts (re-embedding them on every ingest via the remote embedder would be
+prohibitive).
 
 ``match_frames`` takes a PRE-COMPUTED embedding (a chunk's ingest embedding, or a
 query embedding) and returns the top-k frames by cosine. Absolute cosines are low
@@ -34,7 +36,17 @@ _matrix: np.ndarray | None = None  # (N, dim) float32, L2-normalized rows
 
 
 def _cache_key() -> str:
-    return cache_key("frames")
+    # "fe_lu2" names the text recipe: frame name + definition + LU WORDS + FE
+    # text (see _embed_frames). Bumped from "fe_lu" when the LU words moved
+    # ahead of the FE definitions in the assembled text (they used to be last
+    # and were silently cut for most frames) -- a stale disk cache built under
+    # either older recipe must not be reused against this one.
+    return cache_key("frames", "fe_lu2")
+
+
+# Ceiling on the assembled text so the tail (later FEs/LUs) is not silently
+# dropped by the encoder's own token limit before it ever sees it.
+_MAX_EMBED_CHARS = 1200
 
 
 # Query widths a forced rebuild already failed to reconcile; see match_frames.
@@ -53,10 +65,44 @@ def _frame_names() -> list[str]:
     return [f.name for f in _framenet().frames()]
 
 
-def _embed_frames(names: list[str]) -> np.ndarray:
-    from graphknows.symbolic.framenet.framenet import _embed_norm, _frame_def
+def _frame_embed_text(name: str) -> str:
+    """Name + definition + this frame's LU words + its FE names/definitions.
 
-    texts = [f"{n.replace('_', ' ')}. {_frame_def(n)}" for n in names]
+    LU words come right after the definition, not last: they are a single
+    compact line (bare words, not each LU's own definition), so they survive
+    the char cap below for virtually every frame, whereas the FE definitions
+    that follow are the part actually meant to be sacrificed when a frame has
+    too many of them. Putting the verbose part last is what used to drop LU
+    signal entirely for 933 of 1221 frames (issue #145) -- the fix is ordering
+    the cheap, high-signal part first, not raising the cap.
+
+    Deliberately NOT ``fn.exemplars()`` — a multi-second full-corpus load — and
+    the frame/FE/LU definitions already carry the ``<ex>`` example text FrameNet
+    embeds inline, so this loses little of what exemplars would add.
+    """
+    from graphknows.symbolic.framenet.fe import frame_elements
+    from graphknows.symbolic.framenet.framenet import _frame_def, _framenet
+
+    parts = [f"{name.replace('_', ' ')}. {_frame_def(name)}"]
+    try:
+        lex_units = _framenet().frame(name).lexUnit
+    except Exception:
+        lex_units = {}
+    words = sorted({lu_name.rpartition(".")[0] or lu_name for lu_name in lex_units})
+    if words:
+        parts.append("Lexical units: " + ", ".join(words) + ".")
+    for fe in frame_elements(name).values():
+        parts.append(f"{fe.name}: {fe.definition}")
+    # ponytail: hard char cap instead of pulling real exemplar sentences via
+    # fn.exemplars() (a multi-second full-corpus load); upgrade to that if
+    # frame reranking quality demands richer examples than defs already carry.
+    return " ".join(p.strip() for p in parts if p.strip())[:_MAX_EMBED_CHARS]
+
+
+def _embed_frames(names: list[str]) -> np.ndarray:
+    from graphknows.symbolic.framenet.framenet import _embed_norm
+
+    texts = [_frame_embed_text(n) for n in names]
     log.info("Building frame-definition index: embedding %d frames", len(texts))
     return _embed_norm(texts)  # (N, dim) float32, already L2-normalized
 

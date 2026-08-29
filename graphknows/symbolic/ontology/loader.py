@@ -80,11 +80,24 @@ class OntologyTerm:
     # lets an invalidation pass tombstone the older assertion instead of keeping
     # both. Always False for classes.
     functional: bool = False
+    # skos:altLabel — synonyms a mention may use instead of the preferred label
+    # ("purchase" for "Buying"). Sorted at harvest time so row order (and the
+    # digest) stay stable across processes.
+    alt_labels: tuple[str, ...] = ()
+    # skos:example — usage text embedded straight from the source vocabulary,
+    # often the richest signal a term has when its definition is terse.
+    examples: tuple[str, ...] = ()
 
     @property
     def index_text(self) -> str:
-        """The string that represents this term in the embedding catalog."""
-        return f"{self.label}. {self.definition}".strip().rstrip(".")
+        """The string that represents this term in the embedding catalog.
+
+        Alt labels and examples are appended after the definition: they widen
+        what a chunk can match on without displacing the definition, which
+        stays first and therefore dominates the embedding least-lossily.
+        """
+        parts = [self.label, self.definition, *self.alt_labels, *self.examples]
+        return ". ".join(p.strip().rstrip(".") for p in parts if p and p.strip())
 
 
 def _text_value(graph: Any, node: Any, *predicates: Any) -> str:
@@ -112,19 +125,25 @@ def _collect_terms(
     kind: str,
     source: str,
     functional_nodes: frozenset[Any] = frozenset(),
-) -> list[OntologyTerm]:
+) -> tuple[list[OntologyTerm], int]:
     """Build :class:`OntologyTerm` records for one kind of subject.
 
     ``functional_nodes`` is only ever non-empty for properties; classes never
     match it, so they always come out with ``functional=False``.
+
+    Returns the terms plus a count of blank-node subjects skipped (anonymous
+    restrictions/unions) — an import tally the caller aggregates, since those
+    subjects never become an addressable term.
     """
     from rdflib import RDFS  # type: ignore
     from rdflib.namespace import DCTERMS, SKOS  # type: ignore
 
     terms: list[OntologyTerm] = []
+    dropped = 0
     for node in subjects:
         # Blank nodes are anonymous restrictions/unions, not addressable terms.
         if not str(node).startswith(("http://", "https://", "urn:")):
+            dropped += 1
             continue
         label = _text_value(graph, node, SKOS.prefLabel, RDFS.label) or _local_name(node)
         if not label:
@@ -152,15 +171,21 @@ def _collect_terms(
                 parents_nontransitive=tuple(
                     sorted(_local_name(p) for p in graph.objects(node, SKOS.broader))
                 ),
+                alt_labels=tuple(
+                    sorted(str(a).strip() for a in graph.objects(node, SKOS.altLabel) if a)
+                ),
+                examples=tuple(
+                    sorted(str(e).strip() for e in graph.objects(node, SKOS.example) if e)
+                ),
                 source=source,
                 functional=node in functional_nodes,
             )
         )
-    return terms
+    return terms, dropped
 
 
-def _rdf_terms(graph: Any, source: str) -> list[OntologyTerm]:
-    """Every class and property term in an already-parsed graph."""
+def _rdf_terms(graph: Any, source: str) -> tuple[list[OntologyTerm], int]:
+    """Every class and property term in an already-parsed graph, plus dropped-node count."""
     from rdflib import OWL, RDF, RDFS  # type: ignore
 
     class_nodes = set(graph.subjects(RDF.type, OWL.Class)) | set(
@@ -176,15 +201,16 @@ def _rdf_terms(graph: Any, source: str) -> list[OntologyTerm]:
     # order, and rdflib subject sets iterate differently between processes
     # (randomized string hashing). An unstable order silently pairs a cached
     # matrix with a different term list.
-    return [
-        *_collect_terms(graph, sorted(class_nodes, key=str), "class", source),
-        *_collect_terms(
-            graph, sorted(property_nodes, key=str), "property", source, functional_nodes
-        ),
-    ]
+    class_terms, class_dropped = _collect_terms(
+        graph, sorted(class_nodes, key=str), "class", source
+    )
+    prop_terms, prop_dropped = _collect_terms(
+        graph, sorted(property_nodes, key=str), "property", source, functional_nodes
+    )
+    return [*class_terms, *prop_terms], class_dropped + prop_dropped
 
 
-def _terms_from_rdf(path: Path) -> list[OntologyTerm]:
+def _terms_from_rdf(path: Path) -> tuple[list[OntologyTerm], int]:
     """Parse one local RDF file into terms. Empty when it will not parse.
 
     Permissive about CONTENT — this is the folder-walking path, where a source
@@ -204,7 +230,7 @@ def _terms_from_rdf(path: Path) -> list[OntologyTerm]:
         raise
     except Exception as exc:
         log.debug("Not parseable as RDF (%s): %s", path.name, exc)
-        return []
+        return [], 0
     return _rdf_terms(graph, str(path))
 
 
@@ -235,13 +261,19 @@ def _digest_payload(path: Path) -> dict[str, Any] | None:
     return data
 
 
-def _terms_from_digest(path: Path) -> list[OntologyTerm]:
-    """Parse a pre-built ontology digest. Pure ``json`` — never imports rdflib."""
+def _terms_from_digest(path: Path) -> tuple[list[OntologyTerm], int]:
+    """Parse a pre-built ontology digest. Pure ``json`` — never imports rdflib.
+
+    Returns the terms plus the digest's own ``dropped_expressions`` count
+    (anonymous class/property expressions the digest builder saw but could
+    not name), so a digest-sourced ``SOURCE`` row reports the real tally
+    instead of the RDF-path-only 0 every digest import used to report.
+    """
     data = _digest_payload(path)
     if data is None:
-        return []
+        return [], 0
     source = str(path)
-    return [
+    terms = [
         OntologyTerm(
             uri=str(entry["uri"]),
             label=str(entry["label"]),
@@ -254,10 +286,13 @@ def _terms_from_digest(path: Path) -> list[OntologyTerm]:
             source=source,
             module=str(entry.get("module") or ""),
             functional=bool(entry.get("functional")),
+            alt_labels=tuple(entry.get("altLabels") or ()),
+            examples=tuple(entry.get("examples") or ()),
         )
         for kind, key in (("class", "classes"), ("property", "properties"))
         for entry in data.get(key) or []
     ]
+    return terms, int(data.get("dropped_expressions") or 0)
 
 
 def _terms_from_summary_json(path: Path) -> list[OntologyTerm]:
@@ -302,7 +337,17 @@ def _ontology_files(source: Path) -> list[Path]:
     )
 
 
-def load_ontology_terms(source: str | Path) -> list[OntologyTerm]:
+@dataclass(frozen=True)
+class LoadedOntology:
+    """A load's terms plus the import tallies the SOURCE vertex later records."""
+
+    terms: list[OntologyTerm]
+    # Blank-node subjects (anonymous restrictions/unions) seen across every RDF
+    # file in the source: addressable in the ontology, but never a term.
+    dropped_expressions: int = 0
+
+
+def load_ontology(source: str | Path) -> LoadedOntology:
     """Load every class and property, with definitions, from a file or folder.
 
     Unlike :func:`load_rdf_ontology_file` this is *permissive*: a folder may mix
@@ -320,7 +365,8 @@ def load_ontology_terms(source: str | Path) -> list[OntologyTerm]:
         source: An RDF/OWL/TTL/JSON-LD file, or a folder containing them.
 
     Returns:
-        Class and property terms, ordered classes-then-properties by file.
+        The merged terms (classes-then-properties by file) plus the count of
+        blank-node expressions the RDF path dropped along the way.
 
     Raises:
         FileNotFoundError: When ``source`` does not exist.
@@ -333,13 +379,20 @@ def load_ontology_terms(source: str | Path) -> list[OntologyTerm]:
         raise FileNotFoundError(f"Ontology source not found: {resolved}")
 
     merged: dict[tuple[str, str], OntologyTerm] = {}
+    dropped_expressions = 0
     for path in _ontology_files(resolved):
         # Digest first — it is the only path that avoids importing rdflib, and
         # rdflib happily "parses" it as JSON-LD into zero terms. A summary
         # digest is only consulted when the file is not real RDF either.
-        for term in (
-            _terms_from_digest(path) or _terms_from_rdf(path) or _terms_from_summary_json(path)
-        ):
+        digest_terms, digest_dropped = _terms_from_digest(path)
+        if digest_terms:
+            found = digest_terms
+            dropped_expressions += digest_dropped
+        else:
+            rdf_terms, dropped = _terms_from_rdf(path)
+            dropped_expressions += dropped
+            found = rdf_terms or _terms_from_summary_json(path)
+        for term in found:
             key = (term.kind, term.label.casefold())
             existing = merged.get(key)
             if existing is None or (not existing.definition and term.definition):
@@ -354,7 +407,12 @@ def load_ontology_terms(source: str | Path) -> list[OntologyTerm]:
         sum(1 for t in merged.values() if t.kind == "property"),
         resolved,
     )
-    return list(merged.values())
+    return LoadedOntology(terms=list(merged.values()), dropped_expressions=dropped_expressions)
+
+
+def load_ontology_terms(source: str | Path) -> list[OntologyTerm]:
+    """Thin wrapper over :func:`load_ontology` for callers that only want terms."""
+    return load_ontology(source).terms
 
 
 def _manifest_from_terms(path: Path, terms: list[OntologyTerm]) -> RdfOntologyManifest:
@@ -398,6 +456,8 @@ def load_rdf_ontology_file(path: str | Path) -> RdfOntologyManifest:
     if not resolved.is_file():
         raise ValueError(f"RDF ontology path is not a file: {resolved}")
 
-    if terms := _terms_from_digest(resolved):
+    terms, _dropped = _terms_from_digest(resolved)
+    if terms:
         return _manifest_from_terms(resolved, terms)
-    return _manifest_from_terms(resolved, _rdf_terms(rdf_io.parse_file(resolved), str(resolved)))
+    rdf_terms, _dropped = _rdf_terms(rdf_io.parse_file(resolved), str(resolved))
+    return _manifest_from_terms(resolved, rdf_terms)

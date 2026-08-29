@@ -177,6 +177,15 @@ def to_digest(
         # listed here came from `skos:broader`, which may not.
         if nontransitive := parents_of(key, transitive=False):
             row["parents_nontransitive"] = nontransitive
+        # `taxon.aliases` is exactly skos:altLabel (and its CCO/OBO synonyms) —
+        # `Taxon.absorb` already carries it, this just stops discarding it.
+        if alt_labels := sorted(taxon.aliases):
+            row["altLabels"] = alt_labels
+        # ponytail: skos:example lands in projection.py's "note" role
+        # (bundled with scopeNote/IAO_0000112), but Taxon never absorbs it —
+        # only definition/aliases/deprecated/types survive the projection ->
+        # taxonomy step. No "examples" can be emitted here until that plumbing
+        # (projection.NodeMeta -> taxonomy.Taxon) carries the note role too.
         return row
 
     # Everything that is not a property is a class: `concept` (SKOS) and the

@@ -17,7 +17,7 @@ from graphknows.symbolic.ontology.catalog import (
     load_ontology_index,
     reset_ontology_indexes,
 )
-from graphknows.symbolic.ontology.loader import OntologyTerm, load_ontology_terms
+from graphknows.symbolic.ontology.loader import OntologyTerm, load_ontology, load_ontology_terms
 
 ASSETS = Path(__file__).resolve().parents[1] / "fixtures" / "ontology"
 PERSONAL_TTL = ASSETS / "personal.ttl"
@@ -78,6 +78,30 @@ class TestLoadOntologyTerms:
         term = OntologyTerm(uri="u", label="Place", definition="A named location.", kind="class")
         assert term.index_text == "Place. A named location"
 
+    def test_digest_dropped_expressions_reach_the_loaded_ontology(self, tmp_path: Path) -> None:
+        """A digest's own ``dropped_expressions`` count must survive the load.
+
+        Before this, the digest path always reported 0 regardless of what its
+        builder actually dropped, so a SOURCE row built from the bundled CCO
+        digest claimed a lossless import the underlying vocabulary never was.
+        """
+        import json
+
+        digest = tmp_path / "mini.json"
+        digest.write_text(
+            json.dumps(
+                {
+                    "classes": [{"uri": "u:Thing", "label": "Thing", "definition": "A thing."}],
+                    "properties": [],
+                    "dropped_expressions": 7,
+                }
+            ),
+            encoding="utf-8",
+        )
+        loaded = load_ontology(digest)
+        assert loaded.dropped_expressions == 7
+        assert [t.label for t in loaded.terms] == ["Thing"]
+
 
 class TestOntologyIndex:
     @pytest.fixture(autouse=True)
@@ -98,6 +122,36 @@ class TestOntologyIndex:
         a = load_ontology_index(str(PERSONAL_TTL))
         b = load_ontology_index(str(PERSONAL_TTL))
         assert a is b
+
+    def test_in_place_upgrade_invalidates_the_cache(self, tmp_path: Path) -> None:
+        """A same-path content upgrade must not keep resolving to the OLD index.
+
+        This is the scenario ``Memory.rebind_memory`` exists for (issue #145):
+        a long-lived process has already cached the ontology at this path, an
+        operator replaces the file in place, and a rebind must see the new
+        content rather than silently re-grounding against the old one.
+        """
+        import shutil
+        import time
+
+        path = tmp_path / "personal.ttl"
+        shutil.copyfile(PERSONAL_TTL, path)
+        before = load_ontology_index(str(path))
+        assert before is not None
+
+        # Same path, new content: append a new class so the term count changes.
+        time.sleep(0.01)  # ensure the filesystem mtime actually advances
+        addition = (
+            "\n<https://example.org/personal#UpgradeMarker> a owl:Class ;\n"
+            '    rdfs:label "Upgrade Marker" ;\n'
+            '    skos:definition "Proves the reload saw new content." .\n'
+        )
+        path.write_text(path.read_text(encoding="utf-8") + addition, encoding="utf-8")
+
+        after = load_ontology_index(str(path))
+        assert after is not None
+        assert after is not before
+        assert len(after.terms) == len(before.terms) + 1
 
     def test_classes_and_properties_are_separate_matrices(self) -> None:
         idx = load_ontology_index(str(PERSONAL_TTL))

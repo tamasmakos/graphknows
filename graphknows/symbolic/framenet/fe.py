@@ -278,6 +278,26 @@ def fe_rows() -> tuple[_FeRow, ...]:
 
 
 @lru_cache(maxsize=1)
+def fe_mapping_drops() -> int:
+    """Count of ``requires``/``excludes`` targets that name an FE no row supplies.
+
+    ``GraphStore.write_frame_elements``'s ``requires``/``excludes`` edges MATCH
+    ``(b:FE {id: target})`` — a target this corpus never wrote as a row is a
+    silently dropped edge today. This is that count, computed the same way
+    ``fe_rows`` already builds ids (``f"{frame}:{name}"``), so the graph writer's
+    later SOURCE tally can report exactly what its own MATCH will fail to find.
+    """
+    rows = fe_rows()
+    ids = {row.id for row in rows}
+    return sum(
+        1
+        for row in rows
+        for target in (row.requires, row.excludes)
+        if target and f"{row.frame}:{target}" not in ids
+    )
+
+
+@lru_cache(maxsize=1)
 def semtype_rows() -> tuple[_SemtypeRow, ...]:
     """Every FrameNet semantic type as a flat write row. 109 on the shipped corpus."""
     from graphknows.symbolic.framenet.framenet import _framenet

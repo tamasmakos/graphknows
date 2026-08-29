@@ -1469,7 +1469,11 @@ class GraphStore(ArcadeStoreBase):
         return len(pairs)
 
     async def write_frame_elements(
-        self, fe_rows: Sequence[Any], semtype_rows: Sequence[Any] = ()
+        self,
+        fe_rows: Sequence[Any],
+        semtype_rows: Sequence[Any] = (),
+        *,
+        version: str = "",
     ) -> int:
         """Persist FrameNet's frame-element (FE) plane (issue #143).
 
@@ -1484,16 +1488,32 @@ class GraphStore(ArcadeStoreBase):
         Reference data, written once per namespace like ``write_ontology``:
         rows are duck-typed (dict or attribute access) since storage sits
         below symbolic in the import-linter layer contract and cannot import
-        ``symbolic.framenet.fe`` to build them itself. Count-guarded against
-        FE alone, so a reconnect costs one query, not a 25k-row rewrite.
-        Batched UNWINDs throughout, no per-row statements. Returns 0 and
-        writes nothing on empty input.
+        ``symbolic.framenet.fe`` to build them itself. Batched UNWINDs
+        throughout, no per-row statements. Returns 0 and writes nothing on
+        empty input.
+
+        Guarded by IDENTITY, not presence, when ``version`` is given: the
+        write is skipped only if :meth:`sources` already lists that exact
+        (channel="framenet", version) pair, so a corpus upgrade — same FE
+        count, different content — re-imports instead of a stale namespace
+        keeping FrameNet 1.7's plane forever against a later corpus (the
+        defect issue #145 names). The import counts (source hash included) are
+        recorded on the SOURCE row via ``write_source``, which this method
+        does not write (it knows only the FE rows, not the import
+        counts). When ``version`` is empty, callers get today's presence
+        guard unchanged: skip once at least as many FE vertices exist as rows
+        given, so a reconnect costs one query, not a 25k-row rewrite.
         """
         if not fe_rows:
             return 0
-        existing = await self.query("MATCH (n:FE) RETURN count(n) AS c")
-        if existing and int(existing[0].get("c") or 0) >= len(fe_rows):
-            return len(fe_rows)
+        if version:
+            have_versions = {s.get("version") for s in await self.sources("framenet")}
+            if version in have_versions:
+                return len(fe_rows)
+        else:
+            existing = await self.query("MATCH (n:FE) RETURN count(n) AS c")
+            if existing and int(existing[0].get("c") or 0) >= len(fe_rows):
+                return len(fe_rows)
 
         def _get(row: Any, *names: str, default: Any = "") -> Any:
             for name in names:
@@ -1638,6 +1658,14 @@ class GraphStore(ArcadeStoreBase):
         mention rather than the latest, so the stored score does not depend on
         chunk order.
 
+        ``version`` is part of the MERGE pattern, not just a SET property: a
+        resource upgrade (issue #145) writes new groundings under a new
+        version string, and without version in the key the second write
+        overwrites the first on the same (entity, class) pair — the old and
+        new versions could never coexist. Keying on it means two versions of
+        one grounding are two edges; :meth:`supersede_groundings` is how the
+        older one gets flagged, never overwritten.
+
         Callers pass only the accepted candidate (``rank`` 0): nothing reads
         INSTANCE_OF at retrieval today (the ENTITY route through it was
         measured byte-identical to the direct CHUNK->MATCHES_CLASS route and
@@ -1668,16 +1696,76 @@ class GraphStore(ArcadeStoreBase):
         await self.command(
             "UNWIND $rows AS r "
             "MATCH (e:ENTITY {name_norm: r.nn}), (o:ONTOLOGY_CLASS {uri: r.uri}) "
-            "MERGE (e)-[i:INSTANCE_OF]->(o) "
+            "MERGE (e)-[i:INSTANCE_OF {version: r.version}]->(o) "
             "SET i.score = CASE "
             "    WHEN r.score > coalesce(i.score, 0) THEN r.score "
             "    ELSE i.score "
             "END, "
-            "i.channel = r.channel, i.version = r.version, i.matcher = r.matcher, "
+            "i.channel = r.channel, i.matcher = r.matcher, "
             "i.rank = r.rank, i.chunk_id = r.chunk_id, i.span = r.span",
             rows=merged,
         )
         return len(merged)
+
+    async def supersede_groundings(self, channel: str, keep_version: str) -> int:
+        """Flag every ``channel`` grounding NOT on ``keep_version`` as superseded.
+
+        Never DELETEs: the point of keying INSTANCE_OF on version (see
+        :meth:`write_groundings`) is that a rebind is a dual-write, not data
+        loss — an evaluated graph keeps its old groundings, flagged, right
+        alongside the new ones. Returns how many edges were flagged.
+        """
+        rows = await self.command(
+            "MATCH (:ENTITY)-[i:INSTANCE_OF]->(:ONTOLOGY_CLASS) "
+            "WHERE i.channel = $channel AND i.version <> $keep_version "
+            "SET i.superseded = true "
+            "RETURN count(i) AS c",
+            channel=channel,
+            keep_version=keep_version,
+        )
+        return int(rows[0].get("c") or 0) if rows else 0
+
+    async def write_source(self, row: dict[str, Any]) -> str:
+        """MERGE the SOURCE vertex for one (channel, version) import (issue #145).
+
+        Keyed on ``"<channel>@<version>"`` so a channel upgrade MERGEs a new
+        vertex rather than overwriting the record of the version it replaces
+        — the same identity gap ``write_groundings`` closes for INSTANCE_OF.
+        ``imported_at`` defaults to now when the caller does not supply one;
+        missing counts default to 0 rather than raising, since a channel that
+        drops nothing has no reason to compute a zero itself. Returns the id.
+        """
+        channel = str(row["channel"])
+        version = str(row["version"])
+        source_id = f"{channel}@{version}"
+        await self.command(
+            "MERGE (s:SOURCE {id: $id}) "
+            "SET s.channel = $channel, s.version = $version, s.source_hash = $source_hash, "
+            "s.imported_at = $imported_at, s.imported = $imported, "
+            "s.dropped_expressions = $dropped_expressions, "
+            "s.dropped_fe_mappings = $dropped_fe_mappings",
+            id=source_id,
+            channel=channel,
+            version=version,
+            source_hash=row.get("source_hash", ""),
+            imported_at=row.get("imported_at") or datetime.now(UTC).isoformat(),
+            imported=int(row.get("imported") or 0),
+            dropped_expressions=int(row.get("dropped_expressions") or 0),
+            dropped_fe_mappings=int(row.get("dropped_fe_mappings") or 0),
+        )
+        return source_id
+
+    async def sources(self, channel: str = "") -> list[dict[str, Any]]:
+        """Enumerate SOURCE rows, newest ``imported_at`` first.
+
+        The reader that makes SOURCE more than a write-only ledger: it is how
+        :meth:`write_frame_elements` asks "is this version already imported?"
+        and how a facade reports what a namespace currently holds.
+        """
+        match = "MATCH (s:SOURCE)"
+        if channel:
+            match += f" WHERE s.channel = {quote(channel)}"
+        return await self.query(f"{match} RETURN s ORDER BY s.imported_at DESC")
 
     async def search_ontology_classes(
         self,
