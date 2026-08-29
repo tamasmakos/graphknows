@@ -132,6 +132,16 @@ they match the configured embedder.
   second lookup; frame facts otherwise reach the fact sheet through the
   `FRAME_INSTANCE`/`PLAYS_ROLE` layer, not through these edges.
 
+No edge joins the FrameNet vertices (`FRAME`, `FE`, `SEMTYPE`) to the ontology
+vertices (`ONTOLOGY`, `ONTOLOGY_CLASS`, `ONTOLOGY_PROPERTY`). The two are
+independent signals with no direct edge between them: a frame evoked on a
+chunk and an ontology class matched on the same chunk share nothing beyond
+that chunk. The one indirect path is
+`FRAME_INSTANCE-[:PLAYS_ROLE]->ENTITY-[:INSTANCE_OF]->ONTOLOGY_CLASS`, but
+that types the *entity*, not the role — an entity is ontologically typed only
+by its own `INSTANCE_OF` edge, never by the role it fills in a frame
+instance.
+
 Schema conventions are `type` not `label`, `confidence` not `score`, and
 `valid_at` / `invalid_at` / `is_current` for bi-temporal relation edges.
 
@@ -207,6 +217,8 @@ Both paths converge on the same write helper, which per chunk:
    `GRAPHKNOWS_ENABLE_FE_TYPE_GATE` (default off) adds a further veto: a role
    filler whose graph entity type conflicts with the frame element's
    FrameNet semantic type is dropped and counted under `frame_semtype_veto`;
+   the comparison is a fixed equivalence table between the graph's own entity
+   types and FrameNet semantic types, and consults no ontology class;
 7. resolves dates (`resolve_temporal` in `graphknows/temporal.py`) into
    `TEMPORAL` nodes and `MENTIONS_DATE` edges.
 
