@@ -32,6 +32,10 @@ about?* It is the same device the FrameNet layer uses, and it reuses the chunk
 embedding already computed at ingest, so injection adds no embedding call on the
 chunk path.
 
+Sharing the device is not sharing meaning: the ontology and FrameNet each produce
+a separate, unjoined signal from it, and nothing in the graph maps a FrameNet
+frame or frame element onto an ontology class.
+
 ## What happens at ingest
 
 Per chunk:
