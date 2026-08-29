@@ -290,6 +290,9 @@ _CORE_DDL: list[tuple[str, str]] = [
     # CREATE EDGE TYPE DDL round-trip on the ingest hot path) while readers already
     # keyed off r.predicate — the type name was never authoritative, because
     # reserved-word predicates had to be escaped (find -> REL_FIND).
+    # `predicate` carries two vocabularies: a frame-derived value is prefixed
+    # `fn:` (e.g. `fn:Giving`), a relation-vocabulary value is the bare label
+    # (`owns`); the bare frame name itself always lives in `REL.frame`.
     ("sql", "CREATE EDGE TYPE REL IF NOT EXISTS"),  # ENTITY -> ENTITY
     ("sql", "CREATE PROPERTY REL.predicate IF NOT EXISTS STRING"),
     # Where the edge came from. 'frame' marks co-role adjacency projected from a

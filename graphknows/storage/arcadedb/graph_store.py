@@ -2075,9 +2075,13 @@ class GraphStore(ArcadeStoreBase):
 
         The reified (FRAME_INSTANCE)-[:PLAYS_ROLE {role}]->(ENTITY) form remains
         the primary representation. Alongside it, co-role fillers are also linked
-        ENTITY->ENTITY as ``REL {predicate: frame, source: 'frame'}`` — an
+        ENTITY->ENTITY as ``REL {predicate: "fn:{frame}", source: 'frame'}`` — an
         entity-adjacency projection, so a frame fact is walkable between the
-        things it relates and not only through its instance node.
+        things it relates and not only through its instance node. The ``fn:``
+        prefix marks the predicate as frame-vocabulary so it self-identifies
+        next to relation-vocabulary predicates (``owns``, ``plans to``) that
+        share the same column; the bare frame name is unchanged in
+        ``REL.frame``, and ``canonical_predicate`` is unchanged.
 
         PROVENANCE CONTRACT (identical to ``write_relation``, deliberately): the
         projected REL edges carry ``chunk_id`` in ``r.evidence`` via the shared
@@ -2240,7 +2244,8 @@ class GraphStore(ArcadeStoreBase):
                     {
                         "h": hnn,
                         "t": tnn,
-                        "p": frame,
+                        "p": f"fn:{frame}",
+                        "f": frame,
                         "hr": hr,
                         "tr": tr,
                         # Tier 1 of the stability ladder: a frame + its two role
@@ -2413,7 +2418,7 @@ class GraphStore(ArcadeStoreBase):
                 # projected edge under the very key written here.
                 f"MERGE (a)-[r:REL {{predicate: row.p, {frame_key_sql}}}]->(b) "
                 "SET r.source = 'frame', r.is_current = true, "
-                "    r.canonical_predicate = row.cp, r.frame = row.p, "
+                "    r.canonical_predicate = row.cp, r.frame = row.f, "
                 f"    {_evidence_set(chunk_id)}"
                 "    r.frame_instance_id = row.fid, r.reified = true, r.anchor = 'frame', "
                 "    r.epistemic = row.epi, r.hedged = row.hed",

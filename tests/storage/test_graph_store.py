@@ -2267,6 +2267,43 @@ async def test_carrying_columns_targets_one_edge_not_every_shared_predicate() ->
 
 
 @pytest.mark.asyncio
+async def test_frame_projection_marks_predicate_with_its_vocabulary() -> None:
+    """Issue #159: predicate must announce which vocabulary it comes from.
+
+    REL.predicate is shared by two vocabularies: binary-relation labels (e.g.
+    "owns") and, from this projection, bare FrameNet frame names (e.g.
+    "Travel"). Unmarked, a raw predicate census can't tell them apart. The
+    fix is the same `fn:` tier prefix evaluation/audit/core.py already uses,
+    on the same field a reader is already looking at -- no second lookup.
+    """
+    client = _mock_client()
+    client.query = AsyncMock(return_value=[{"nn": "melanie"}, {"nn": "banff"}])
+    store = GraphStore(client=client)
+    await store.write_frame_instances(
+        session_id="s1",
+        chunk_id="c1",
+        instances=[{"frame": "Travel", "roles": {"Traveler": ["Melanie"], "Goal": ["Banff"]}}],
+    )
+
+    call = next(
+        c
+        for c in client.command.await_args_list
+        if "MERGE (a)-[r:REL" in c.args[1] and "row.p" in c.args[1]
+    )
+    stmt = call.args[1]
+    rows = call.kwargs["params"]["rows"]
+    assert len(rows) == 1
+    row = rows[0]
+
+    assert row["p"] == "fn:Travel"
+    assert row["cp"] == "fn:Travel:Goal->Traveler"
+
+    assert "r.frame = row.p" not in stmt
+    assert "r.frame = row.f" in stmt
+    assert row["f"] == "Travel"
+
+
+@pytest.mark.asyncio
 async def test_a_repointed_frame_edge_can_re_merge_with_the_projection() -> None:
     """DEFECT 2: the replay must land under the key the projection MERGEs on.
 
