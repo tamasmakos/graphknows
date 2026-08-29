@@ -317,9 +317,10 @@ def _lexical_candidates(
 
         wanted = set(content_tokens(entity_type))
         for pref in lex_index.get(key, ()):
-            if not set(content_tokens(pref)) <= wanted:
-                continue
             concept = scheme.get(pref) if scheme is not None else None
+            pref_tokens = set(concept.tokens) if concept is not None else set(content_tokens(pref))
+            if not pref_tokens <= wanted:
+                continue
             uri2 = concept.uri if concept is not None else ""
             if not uri2:
                 uri2 = next((t.uri for t in classes if t.label.casefold() == pref.casefold()), "")

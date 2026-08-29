@@ -24,7 +24,7 @@ score threshold instead.
 from __future__ import annotations
 
 from graphknows.symbolic.ontology.lexical import evoked
-from graphknows.symbolic.ontology.skos import Concept, _upper_ontology_property, ancestors
+from graphknows.symbolic.ontology.skos import Concept, ancestors
 
 # The measured-good coarse types. Three of these are NOT CCO class labels
 # verbatim (event, occupation, product) — they reach CCO through the overlay's
@@ -89,7 +89,7 @@ def relation_labels(
         if (
             concept.kind != "property"
             or concept.pref_label in lexical
-            or _upper_ontology_property(concept)
+            or concept.upper_ontology
             or not (concept.domain and concept.range)
             or not ({d.casefold() for d in concept.domain} & satisfied)
             or not ({r.casefold() for r in concept.range} & satisfied)

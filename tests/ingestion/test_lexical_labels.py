@@ -152,6 +152,16 @@ class TestDomainRangeSatisfaction:
                 alt_labels={"require"},
                 domain=("process",),
                 range=("process",),
+                # `evoked`'s STRONG match reads the stamped `tokens` field, not
+                # a recomputed `content_tokens(label)` — a synthetic scheme
+                # built outside `build_scheme`/`lexicalize` must stamp it too.
+                tokens=("requires",),
+                # Stamped True so this test actually exercises "the guard
+                # would have blocked this, but the literal-match branch in
+                # `relation_labels` bypasses it" — left at the `False`
+                # default, the guard is never active and the test would stay
+                # green even if that bypass were deleted by mistake.
+                upper_ontology=True,
             )
         }
         nlp = spacy.load(GraphKnowsSettings().spacy_model)

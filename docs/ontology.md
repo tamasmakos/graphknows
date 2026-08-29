@@ -222,6 +222,14 @@ a lexical surface rather than the unreadable `worksfor` — the same content-wor
 matching described above then reaches these labels from ordinary text instead
 of only from their literal concatenated spelling.
 
+Which classes count as scaffolding rather than a concrete kind — CCO's
+`continuant`/`process`, this profile's `Thing` — is derived from the loaded
+ontology's own class hierarchy (near a root, subsuming a large share of its
+classes), not hand-listed per vocabulary, so a scaffolding-typed property such
+as `permits` or `requires` is excluded from domain/range-driven relation
+matching automatically, for CCO, the bundled profile, or your own ontology
+alike, with no code change.
+
 There is no by-name registry — point `GRAPHKNOWS_ONTOLOGY` at a path, exactly as
 you would at your own file:
 
