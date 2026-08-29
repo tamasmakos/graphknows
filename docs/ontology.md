@@ -37,10 +37,12 @@ chunk path.
 Per chunk:
 
 1. **Select.** Top-k classes and properties by cosine against the chunk's
-   embedding. Gated by top-k alone, not an absolute threshold — matching a
-   concrete utterance to an abstract class definition is a weak signal (top-1
-   cosine median ≈ 0.20 on conversational text with bge-small), and an
-   over-broad candidate list costs nothing.
+   embedding, gated by a similarity floor (`ontology_hint_min_sim`) rather than
+   top-k alone — needed once the class space grew from a handful of bundled
+   classes to CCO's 1437, where an unfloored top-12 hands twelve arbitrary
+   labels to a chunk that says "Thanks, Gina!". These are candidate labels
+   offered to the extractor, not a persisted claim; the stricter, separately
+   anchored decision that IS persisted is `MATCHES_CLASS` in step 4.
 2. **Inject.** Those labels are **unioned into** the spaCy-mined label space
    handed to the extractor. Never substituted: the mined vocabulary keeps
    precedence, so injection can only add candidates.
@@ -52,6 +54,23 @@ Per chunk:
    `REL.ontology_property` / `REL.map_score`. `version` is the loaded
    ontology's content digest (`OntologyIndex.digest`), not its file path, so
    replacing a file in place still produces a distinguishable version.
+
+   `MATCHES_CLASS` obeys the anchor law, not plain cosine: a class is tagged
+   onto a chunk only when the chunk's own text lexically EVOKES it
+   (`lexical.evoked`, the same mechanism `INSTANCE_OF` typing anchors on), and
+   cosine is then used only to RANK the classes lexis already admitted, over
+   the ontology's whole vocabulary rather than an unanchored top-k (the
+   anchored class is almost never in the top-k of a whole-vocabulary cosine
+   lookup). This matters because absolute cosine over CCO's 1437 class
+   definitions is uncalibrated — 20 real conv-30 turns put the whole class
+   space at median 0.409 / p95 0.493 — and unanchored, every accepted tag
+   landed in a near-uniform 0.557-0.590 band where a BFO upper class like
+   `Curvilinear Motion` could outscore `Dance Studio` on a chunk that shares no
+   vocabulary with it at all. A chunk that evokes no class is tagged with
+   nothing rather than the top cosine hit, and counted as the
+   `unanchored_class_tag` abstention; the accepted sims for the run are logged
+   as one INFO line (count, min, max, spread) so a degenerate band — spread
+   under ~0.05 — is visible without re-running the bug.
 
 ### Enrichment, not filtering
 
