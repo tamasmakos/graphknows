@@ -88,30 +88,175 @@ _LU_POS = {"VERB": "v", "NOUN": "n", "ADJ": "a"}
 
 _MAIN_VERB_DEPS = {"ROOT", "conj", "xcomp", "ccomp", "advcl", "acl", "relcl"}
 
+# Light-verb constructions: the verb is a detector, not the predicate — the
+# NOUN object carries the frame ('make a decision' -> Deciding, not Building).
+# Mirror image of the LIGHT_VERBS drop-list in graphknows/symbolic/framenet/framenet.py
+# (that one strips these verbs from query targets; here they're read as pointers).
+LVC_VERBS = frozenset({"have", "take", "make", "give", "do", "get"})
 
-def lu_candidate_frames(
+# Suffixes of eventive/deverbal nouns ("decision", "destruction", "acquisition")
+# vs concrete ones ("book", "letter", "medicine"). A light verb only pointer-fires
+# at its dobj when the noun looks eventive -- otherwise "gave a book"/"took the
+# medicine" are ordinary transitive uses and must keep their own verb frame.
+_EVENTIVE_NOUN_SUFFIXES = (
+    "tion",
+    "sion",
+    "ment",
+    "ance",
+    "ence",
+    "ing",
+    "age",
+    "al",
+    "ure",
+)
+
+
+def _looks_eventive(lemma: str) -> bool:
+    """Cheap deverbal-noun heuristic: does the lemma end like a nominalisation?"""
+    return lemma.lower().endswith(_EVENTIVE_NOUN_SUFFIXES)
+
+
+@dataclass(frozen=True)
+class FrameTrigger:
+    """One frame-evoking element with its ranked candidate frames."""
+
+    candidates: tuple[tuple[str, float], ...]
+    lvc: bool = False
+    # The sentence the trigger sits in, when known (spaCy ``token.sent.text``);
+    # empty means "use the whole chunk" (verb-group/fallback triggers, or a
+    # duck-typed token without ``.sent``). Scopes role-filling so a multi-sentence
+    # chunk's second trigger doesn't have its roles filled from the first's clause.
+    context: str = ""
+
+
+def _lvc_targets(
+    doc: Any, lui: dict[tuple[str, str], list[str]]
+) -> tuple[list[tuple[int, set[str], Any]], set[Any], set[Any]]:
+    """LVC triggers: an LVC_VERBS verb's eventive dobj NOUN child.
+
+    Returns ``(triggers, lvc_verb_toks, lvc_noun_toks)`` — the verb/noun token
+    sets let the caller exclude them from the ordinary verb group and
+    nominalisation sweep below.
+    """
+    triggers: list[tuple[int, set[str], Any]] = []
+    lvc_verb_toks: set[Any] = set()
+    lvc_noun_toks: set[Any] = set()
+    for v_idx, v in enumerate(doc):
+        if v.pos_ != "VERB" or v.lemma_.lower() not in LVC_VERBS:
+            continue
+        for child in v.children:
+            if child.dep_ != "dobj" or child.pos_ != "NOUN":
+                continue
+            if not _looks_eventive(child.lemma_):
+                continue
+            cand = set(lui.get((child.lemma_.lower(), "n"), ()))
+            if not cand:
+                continue
+            triggers.append((v_idx, cand, child))
+            lvc_verb_toks.add(v)
+            lvc_noun_toks.add(child)
+    return triggers, lvc_verb_toks, lvc_noun_toks
+
+
+def _nominalisation_targets(
+    doc: Any, lui: dict[tuple[str, str], list[str]], skip: set[Any]
+) -> list[tuple[int, set[str], Any]]:
+    """NOUN/ADJ triggers with LU frames AND argument structure (prep/poss child)."""
+    triggers: list[tuple[int, set[str], Any]] = []
+    for t_idx, t in enumerate(doc):
+        pos = {"NOUN": "n", "ADJ": "a"}.get(t.pos_)
+        if pos is None or t in skip:
+            continue
+        cand = set(lui.get((t.lemma_.lower(), pos), ()))
+        if not cand or not any(c.dep_ in ("prep", "poss") for c in t.children):
+            continue
+        triggers.append((t_idx, cand, t))
+    return triggers
+
+
+def _verb_group(
+    doc: Any, lui: dict[tuple[str, str], list[str]], lvc_verb_toks: set[Any]
+) -> tuple[list[Any], set[str]]:
+    """The clause MAIN verbs (or all verbs, if none match), minus LVC detectors."""
+    verbs = [t for t in doc if t.pos_ == "VERB" and t.dep_ in _MAIN_VERB_DEPS]
+    if not verbs:
+        verbs = [t for t in doc if t.pos_ == "VERB"]
+    cand: set[str] = set()
+    for v in verbs:
+        if v not in lvc_verb_toks:
+            cand |= set(lui.get((v.lemma_.lower(), "v"), ()))
+    return verbs, cand
+
+
+def _fallback_sweep(doc: Any, lui: dict[tuple[str, str], list[str]]) -> set[str]:
+    """The old all-content-word sweep — last resort when nothing else fired."""
+    cand: set[str] = set()
+    for t in doc:
+        pos = _LU_POS.get(t.pos_)
+        if pos:
+            cand |= set(lui.get((t.lemma_.lower(), pos), ()))
+    return cand
+
+
+def _sent_text(tok: Any) -> str:
+    """The sentence containing ``tok`` (spaCy ``.sent.text``), or "" if unknown.
+
+    "" tells the caller to fall back to the whole chunk -- true for duck-typed
+    test tokens with no ``.sent`` and for any doc with no sentence boundaries.
+    """
+    sent = getattr(tok, "sent", None)
+    if sent is None:
+        return ""
+    try:
+        return str(sent.text).strip()
+    except Exception:
+        return ""
+
+
+def lu_triggers(
     text: str,
     nlp: Any,
     top_k: int = 4,
     embedding: list[float] | None = None,
     doc: Any | None = None,
-) -> list[tuple[str, float]]:
-    """Candidate frames = the CLAUSE MAIN VERB's LU frames, ranked by embedding fit.
+) -> list[FrameTrigger]:
+    """Every frame-evoking element in the text, each with its own ranked candidates.
+
+    A chunk can evoke more than one frame: a nominalisation ("the destruction of
+    the bridge") sitting next to a verb ("...happened") must not be masked by the
+    verb, and a light verb ("made a decision") should point at its noun object
+    instead of contributing its own irrelevant LU frames. So triggers are
+    enumerated, not chosen one-at-a-time:
+
+    1. LVC triggers — an LVC_VERBS verb's dobj NOUN child, when that child also
+       *looks* eventive/deverbal (``_looks_eventive``, a nominalisation-suffix
+       heuristic) — one trigger each (``lvc=True``); only then is the verb
+       excluded from the verb group below. A concrete dobj ("gave a book",
+       "took the medicine") is an ordinary transitive use, not a light-verb
+       construction, so the verb keeps its own frame.
+    2. Nominalisation triggers — a remaining NOUN or ADJ with LU frames AND
+       argument structure (a ``prep``/``poss`` child). Argument structure is
+       required so this doesn't turn every noun/adjective in a chunk into an
+       extra GLiNER2 pass.
+    3. The verb group — the clause MAIN verbs (dependency root + coordinated/
+       subordinate verbs), falling back to all verbs when none match, minus any
+       verb consumed as an LVC detector — union of their LU frames as ONE trigger
+       (unchanged arity from the old verb-only path).
+    4. Last-resort fallback — the old all-content-word sweep, run only when 1-3
+       together found nothing (not merely when the verb set was empty, or it
+       would re-import the junk frames the LVC rule just removed).
 
     Frame identification is hard zero-shot: definition-embedding alone picks
     plausible-but-wrong frames ('nurse' -> Law_enforcement_agency); any-content-word
     LU lookup lets a secondary trigger win ('named' beats 'adopted'). Combining the
-    two precisely works best: the clause MAIN verbs (dependency root + coordinated/
-    subordinate verbs) are the primary frame-evoking elements, so we take only their
-    LU-triggered frames (precision), then rank those candidates by how well the frame
-    DEFINITION embeds against the sentence (semantic fit) — the intersection of
-    "the verb evokes it" and "it fits the sentence". Falls back to all verbs, then
-    all content words, when the parse yields no main verb.
+    two precisely works best: take only LU-triggered frames per trigger (precision),
+    then rank by how well the frame DEFINITION embeds against the sentence (semantic
+    fit) — computed ONCE and shared across every trigger (no extra embedding call
+    per trigger).
 
-    ``embedding`` (the chunk's already-computed vector) is used for the ranking so
-    ingest never re-embeds the same text; only when it is None do we embed ``text``.
-    ``doc`` does the same for the parse — pass the segment's shared Doc and this
-    never runs ``en_core_web_lg`` over a window a caller has already parsed.
+    ``embedding``/``doc`` are reused exactly as before: pass the chunk's precomputed
+    vector and shared parse so this never re-embeds or re-parses what a caller
+    already computed.
     """
     from graphknows.symbolic.framenet.framenet import _lus
     from graphknows.symbolic.framenet.index import match_frames, match_frames_text
@@ -119,29 +264,59 @@ def lu_candidate_frames(
     if doc is None:
         doc = nlp(text)
     lui = _lus()
-    verbs = [t for t in doc if t.pos_ == "VERB" and t.dep_ in _MAIN_VERB_DEPS]
-    if not verbs:
-        verbs = [t for t in doc if t.pos_ == "VERB"]
-    cand: set[str] = set()
-    for v in verbs:
-        cand |= set(lui.get((v.lemma_.lower(), "v"), ()))  # type: ignore[arg-type]
-    if not cand:  # no verb triggers — fall back to noun/adj LUs
-        for t in doc:
-            pos = _LU_POS.get(t.pos_)
-            if pos:
-                cand |= set(lui.get((t.lemma_.lower(), pos), ()))  # type: ignore[arg-type]
-    if not cand:
+
+    lvc_triggers, lvc_verb_toks, lvc_noun_toks = _lvc_targets(doc, lui)  # type: ignore[arg-type]
+    nominal_triggers = _nominalisation_targets(doc, lui, lvc_noun_toks)  # type: ignore[arg-type]
+    # (doc index, is_lvc, candidate frames, trigger token) — sorted below.
+    noun_raw: list[tuple[int, bool, set[str], Any]] = [
+        (idx, True, cand, tok) for idx, cand, tok in lvc_triggers
+    ] + [(idx, False, cand, tok) for idx, cand, tok in nominal_triggers]
+    noun_raw.sort(key=lambda item: item[0])
+    # ponytail: cap noun/LVC triggers per chunk at 4 to bound GLiNER2 calls on a
+    # chunk with many nominalisations; raise it if an audit shows real
+    # nominalisations being cut.
+    noun_raw = noun_raw[:4]
+
+    verbs, verb_cand = _verb_group(doc, lui, lvc_verb_toks)  # type: ignore[arg-type]
+
+    # Nothing found yet — last-resort sweep (not run merely when verbs are absent,
+    # or it would re-import the junk frames the LVC rule just removed).
+    fallback_cand = _fallback_sweep(doc, lui) if not noun_raw and not verb_cand else set()  # type: ignore[arg-type]
+
+    if not noun_raw and not verb_cand and not fallback_cand:
         return []
-    # Rank the LU-valid candidates by embedding fit — reuse the precomputed chunk
-    # embedding when available (no re-embed), else embed the text once.
+
+    # Rank every candidate frame by embedding fit, once, reusing the precomputed
+    # chunk embedding when available (no re-embed), else embedding the text once.
     ranked = (
         match_frames(embedding, top_k=200, min_sim=0.0)
         if embedding is not None
         else match_frames_text(text, top_k=200, min_sim=0.0)
     )
     order = {name: sim for name, sim in ranked}
-    scored = sorted(cand, key=lambda f: -order.get(f, 0.0))[:top_k]
-    return [(f, order.get(f, 0.0)) for f in scored]
+
+    def _rank(cand: set[str]) -> tuple[tuple[str, float], ...]:
+        scored = sorted(cand, key=lambda f: -order.get(f, 0.0))[:top_k]
+        return tuple((f, order.get(f, 0.0)) for f in scored)
+
+    triggers: list[FrameTrigger] = []
+    for _, is_lvc, cand, tok in noun_raw:
+        ranked_cand = _rank(cand)
+        if ranked_cand:
+            triggers.append(
+                FrameTrigger(candidates=ranked_cand, lvc=is_lvc, context=_sent_text(tok))
+            )
+    if verb_cand:
+        ranked_cand = _rank(verb_cand)
+        if ranked_cand:
+            triggers.append(
+                FrameTrigger(candidates=ranked_cand, lvc=False, context=_sent_text(verbs[0]))
+            )
+    if not triggers and fallback_cand:
+        ranked_cand = _rank(fallback_cand)
+        if ranked_cand:
+            triggers.append(FrameTrigger(candidates=ranked_cand, lvc=False))
+    return triggers
 
 
 @dataclass
@@ -156,6 +331,9 @@ class FrameInstance:
     # Carried so nesting — which is computed over trigger offsets — survives the
     # fillability gate dropping some instances.
     trigger_offset: int = -1
+    # Trigger was a light-verb construction's noun object (e.g. "make a decision"
+    # -> Deciding), not the frame's own lexical unit.
+    lvc: bool = False
 
     @property
     def filled_core(self) -> int:
@@ -274,7 +452,7 @@ def extract_frame_instances(
     speaker: str,
     speakers: list[str],
     gliner: Any,
-    candidate_frames: Callable[[str], list[tuple[str, float]]],
+    triggers: Callable[[str], list[FrameTrigger]],
     top_k: int = 3,
 ) -> list[FrameInstance]:
     """Frame-guided role extraction for one chunk/sentence.
@@ -284,20 +462,41 @@ def extract_frame_instances(
         speaker: the current utterance's speaker, for pronoun resolution.
         speakers: all speakers in the session, for pronoun resolution.
         gliner: the shared extraction model (``inference``); see _fill_roles.
-        candidate_frames: fn(text) -> [(frame_name, cosine)], the embedding matcher
-            (top frames the text evokes). Trying the top-k lets the best-filling
-            frame win when the single best-cosine frame is wrong.
-        top_k: how many candidate frames to attempt.
+        triggers: fn(text) -> [FrameTrigger, ...] (see :func:`lu_triggers`) — every
+            frame-evoking element in the text, each with its own ranked candidates.
+        top_k: how many of a trigger's candidate frames to attempt.
 
-    Returns the kept FrameInstances (role-fillability gate applied): the best
-    candidate by filled-core-role count, kept only if it fills >= MIN_CORE_ROLES
-    with a fill at/above ROLE_CONF_FLOOR. Usually 0 or 1 per short text.
+    A chunk can now contribute one instance per trigger, not exactly one: a
+    nominalisation next to a verb, or a light verb's noun object, each gets its
+    own independent shot. Per trigger, the existing best-of-top_k logic picks
+    the candidate with the most filled core roles, then the role-fillability
+    gate (>= MIN_CORE_ROLES filled, one fill >= ROLE_CONF_FLOOR) decides whether
+    it survives. Usually 0 or 1 instance per trigger, 0+ per chunk.
+
+    Role filling runs over ``trig.context`` (the trigger's own sentence) when
+    known, not the whole chunk -- otherwise a multi-sentence chunk lets one
+    trigger's roles fill from another clause entirely, and the arity change
+    that makes each trigger its own instance turns that from a capped single
+    error into one per trigger. Falls back to the whole chunk when the trigger
+    carries no sentence (a verb group's representative token or a duck-typed
+    token without ``.sent``).
     """
-    cands = candidate_frames(text)[:top_k]
-    best: FrameInstance | None = None
-    for frame, sim in cands:
-        roles, max_conf = _fill_roles(text, frame, gliner, speaker, speakers)
-        inst = FrameInstance(frame=frame, roles=roles, match_sim=sim, role_confidence=max_conf)
-        if best is None or inst.filled_core > best.filled_core:
-            best = inst
-    return [best] if best is not None and _passes_gate(best) else []
+    out: list[FrameInstance] = []
+    for trig in triggers(text):
+        context = trig.context or text
+        best: FrameInstance | None = None
+        for frame, sim in trig.candidates[:top_k]:
+            # A frame with fewer than MIN_CORE_ROLES core FEs can never clear the
+            # gate below — skip the GLiNER2 call rather than pay for a fill that
+            # is mathematically incapable of passing.
+            if len(_role_schema(frame)) < MIN_CORE_ROLES:
+                continue
+            roles, max_conf = _fill_roles(context, frame, gliner, speaker, speakers)
+            inst = FrameInstance(
+                frame=frame, roles=roles, match_sim=sim, role_confidence=max_conf, lvc=trig.lvc
+            )
+            if best is None or inst.filled_core > best.filled_core:
+                best = inst
+        if best is not None and _passes_gate(best):
+            out.append(best)
+    return out
