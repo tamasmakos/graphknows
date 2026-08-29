@@ -171,4 +171,8 @@ async def test_ingest_file_result_carries_the_tally() -> None:
     )
     result = await handler.ingest_parsed(parsed, session_id="s1")
 
-    assert result.abstentions == {"entities": 1, "untyped_entities": 1}
+    assert result.abstentions == {
+        "entities": 1,
+        "untyped_entities": 1,
+        "senses_ungrounded": 1,
+    }

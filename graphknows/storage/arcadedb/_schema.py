@@ -233,6 +233,34 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY SOURCE.dropped_fe_mappings IF NOT EXISTS INTEGER"),
     ("sql", "CREATE INDEX ON SOURCE(id) UNIQUE"),
     ("sql", "CREATE INDEX ON SOURCE(channel) NOTUNIQUE"),
+    # WordNet's synset plane (issue #142). Deliberately NOT eager: WordNet 3.0
+    # has ~117k synsets and embedding all of them would put ~180MB into every
+    # namespace for a corpus most namespaces never fully touch. Instead this
+    # plane is minted LAZILY -- one SYNSET per grounding plus its shortest
+    # hypernym chain (GraphStore.write_senses / write_synset_hypernyms) -- the
+    # same precedent as SEMTYPE and ONTOLOGY_PROPERTY: no `embedding` property,
+    # no LSM_VECTOR index, because nothing vector-searches it. PPR-based WSD
+    # stays stubbed until this sense layer proves it has a reader.
+    ("sql", "CREATE VERTEX TYPE SYNSET IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY SYNSET.id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SYNSET.name IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SYNSET.pos IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SYNSET.definition IF NOT EXISTS STRING"),
+    ("sql", "CREATE INDEX ON SYNSET(id) UNIQUE"),
+    # `id` is `wn30:`-prefixed and built from the synset's numeric OFFSET+pos
+    # (``synset_id()`` in graphknows/symbolic/wordnet.py), NOT its NAME
+    # ("dog.n.01") -- the release prefix, not the name, is what is meant to
+    # survive a corpus upgrade; `name` is carried separately for readability
+    # and lookup only. `sense_key` is the stable cross-release bridge for the
+    # sense itself (WordNet sense keys, unlike synset offsets, are guaranteed
+    # stable across releases).
+    ("sql", "CREATE VERTEX TYPE SENSE IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY SENSE.id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SENSE.sense_key IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SENSE.lemma IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SENSE.synset IF NOT EXISTS STRING"),
+    ("sql", "CREATE INDEX ON SENSE(id) UNIQUE"),
+    ("sql", "CREATE INDEX ON SENSE(synset) NOTUNIQUE"),
     # ---- Edge types -------------------------------------------------------
     ("sql", "CREATE EDGE TYPE PART_OF IF NOT EXISTS"),  # CHUNK -> FILE
     ("sql", "CREATE EDGE TYPE IN_SESSION IF NOT EXISTS"),  # FILE|TURN -> SESSION
@@ -352,4 +380,35 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY CONTRADICTS.reason IF NOT EXISTS STRING"),  # 'polarity' | 'functional'
     ("sql", "CREATE PROPERTY CONTRADICTS.current_tail IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY CONTRADICTS.created_at IF NOT EXISTS STRING"),
+    # BROADER stays ONE edge type across every taxonomy channel that feeds it
+    # (FrameNet Inheritance/Using/Perspective_on, CCO subClassOf, and now
+    # WordNet hypernymy), discriminated by `rel`. `transitive` is what a
+    # closure query must check before following an edge: WordNet's
+    # instance_hypernym relation (an individual's link to its class, e.g.
+    # Mount Everest -> mountain) is written with `rel = 'instance_hypernym'`
+    # and `transitive = false` so it is never chained past its one hop, unlike
+    # ordinary `hypernym` edges.
+    ("sql", "CREATE PROPERTY BROADER.rel IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY BROADER.transitive IF NOT EXISTS BOOLEAN"),
+    ("sql", "CREATE EDGE TYPE IN_SYNSET IF NOT EXISTS"),  # SENSE -> SYNSET
+    # Sense-level relations (antonym, derivationally_related_form, pertainym,
+    # participle) live ONLY here, never on BROADER: the writer
+    # (write_sense_relations) MATCHes `:SENSE` on both endpoints, so a
+    # sense-level relation landing on a synset node is structurally
+    # impossible rather than merely undocumented.
+    ("sql", "CREATE EDGE TYPE SENSE_REL IF NOT EXISTS"),  # SENSE -> SENSE
+    ("sql", "CREATE PROPERTY SENSE_REL.rel IF NOT EXISTS STRING"),
+    # One WordNet grounding, in full provenance. The merge key is (entity,
+    # chunk_id, span, synset) -- token-level, not (entity, synset) -- so the
+    # same entity legitimately holds DIFFERENT senses in different chunks
+    # instead of the second grounding overwriting the first.
+    ("sql", "CREATE EDGE TYPE HAS_SENSE IF NOT EXISTS"),  # ENTITY -> SENSE
+    ("sql", "CREATE PROPERTY HAS_SENSE.channel IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY HAS_SENSE.version IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY HAS_SENSE.matcher IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY HAS_SENSE.score IF NOT EXISTS DOUBLE"),
+    ("sql", "CREATE PROPERTY HAS_SENSE.rank IF NOT EXISTS INTEGER"),
+    ("sql", "CREATE PROPERTY HAS_SENSE.chunk_id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY HAS_SENSE.span IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY HAS_SENSE.synset IF NOT EXISTS STRING"),
 ]

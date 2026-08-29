@@ -91,9 +91,15 @@ they match the configured embedder.
   pair, carrying its coreness — Core, Peripheral, Extra-Thematic or
   Core-Unexpressed — plus its CoreSet index and Requires/Excludes targets),
   `SEMTYPE` (FrameNet semantic types), `ONTOLOGY`, `ONTOLOGY_CLASS`, `SOURCE`
-  (one vertex per `(channel, version)` resource import — ontology or
-  FrameNet — with its source hash and import counts; see
-  [ontology.md](ontology.md#schema)).
+  (one vertex per `(channel, version)` resource import — ontology, FrameNet or
+  WordNet — with its source hash and import counts; see
+  [ontology.md](ontology.md#schema)), `SYNSET` (a WordNet concept, `id`
+  `wn30:`-prefixed and built from the synset's offset+pos, which survives a
+  release upgrade — its `name`, e.g. `dog.n.01`, is carried separately for
+  readability only) and `SENSE` (a WordNet word sense, `id` built from its
+  sense key, the bridge that stays stable across a WordNet release upgrade
+  where synset offsets do not). Both are minted lazily — one SYNSET/SENSE
+  pair per grounding, not the whole ~117k-synset corpus up front.
 - Edges: `IN_SESSION` (FILE→SESSION), `PART_OF` (CHUNK→FILE), `MENTIONS`
   (CHUNK→ENTITY), `MENTIONS_DATE` (CHUNK→TEMPORAL),
   `IN_TOPIC` (ENTITY→TOPIC, with a
@@ -101,13 +107,22 @@ they match the configured embedder.
   topic edge), `EVOKED_BY`
   (FRAME→CHUNK, with the per-chunk `confidence` — a canonical FRAME carries no
   chunk or session of its own, so everything per-evocation lives here),
-  `BROADER` (the subsumption taxonomy, FRAME→FRAME and
-  ONTOLOGY_CLASS→ONTOLOGY_CLASS), `FRAME_EVOKED_IN` (FRAME_INSTANCE→CHUNK),
-  `PLAYS_ROLE` (FRAME_INSTANCE→ENTITY, with a `role` property), `HAS_FE`
-  (FRAME→FE), `HAS_SEMTYPE` (FE→SEMTYPE), `REQUIRES_FE` and `EXCLUDES_FE`
-  (FE→FE, FrameNet's own role-configuration constraints), `EVOKES`
-  (FRAME_INSTANCE→FRAME, the fact plane's link into the frame taxonomy, since
-  `BROADER` hangs off the canonical FRAME vertex), and `REL`.
+  `BROADER` (the subsumption taxonomy, FRAME→FRAME, ONTOLOGY_CLASS→ONTOLOGY_CLASS
+  and SYNSET→SYNSET hypernymy, discriminated by a `rel` property; a WordNet
+  `instance_hypernym` edge — an individual's link to its class, e.g. Mount
+  Everest → mountain — carries `transitive = false` so a closure query never
+  chains past it, unlike an ordinary `hypernym` edge), `FRAME_EVOKED_IN`
+  (FRAME_INSTANCE→CHUNK), `PLAYS_ROLE` (FRAME_INSTANCE→ENTITY, with a `role`
+  property), `HAS_FE` (FRAME→FE), `HAS_SEMTYPE` (FE→SEMTYPE), `REQUIRES_FE`
+  and `EXCLUDES_FE` (FE→FE, FrameNet's own role-configuration constraints),
+  `EVOKES` (FRAME_INSTANCE→FRAME, the fact plane's link into the frame
+  taxonomy, since `BROADER` hangs off the canonical FRAME vertex), `IN_SYNSET`
+  (SENSE→SYNSET), `SENSE_REL` (SENSE→SENSE, WordNet's lexical relations —
+  antonym, derivationally_related_form, pertainym, participle — which hold
+  only between senses and never between synsets), `HAS_SENSE` (ENTITY→SENSE,
+  the WordNet grounding itself: token-level, keyed on `chunk_id` + `span` +
+  `synset` so the same entity can hold different senses in different
+  chunks instead of one grounding overwriting another), and `REL`.
 - `REL` carries **every** ENTITY→ENTITY fact; the predicate is the `predicate`
   property, not the edge type name. The vocabulary is open and mostly single-use,
   so a type-per-predicate minted hundreds of near-empty types plus a DDL
@@ -145,12 +160,20 @@ Both paths converge on the same write helper, which per chunk:
    as a predication rather than a name; the ingest result's `abstentions`
    reports the `entities` written and the `untyped_entities` share among them
    (a generic `ENTITY`/`EVENT` type with no relation domain/range to match);
-3. writes the extractor's open-vocabulary relations as `REL` edges with
+3. grounds each entity to its WordNet most-frequent-sense (MFS baseline —
+   supervised WSD and PPR re-ranking are stubbed until this plane proves it
+   has a reader) via `_link_senses`, writing a `SYNSET` / `SENSE` pair and a
+   token-level `HAS_SENSE` edge keyed on `chunk_id` + `span`; a WSD miss or
+   unprovisioned corpus abstains rather than failing the chunk
+   (`abstentions.senses_grounded` / `senses_ungrounded`). The synset's
+   hypernym chain and cross-sense relations are not written here — that is a
+   flush-time backfill, see `WordNetChannel` below;
+4. writes the extractor's open-vocabulary relations as `REL` edges with
    chunk-level evidence provenance (no ontology filter — it would reject every
    open-vocab label);
-4. in `llm_assisted`, additionally runs the injected DSPy relation extractor and
+5. in `llm_assisted`, additionally runs the injected DSPy relation extractor and
    writes its triplets as `REL` edges with `source='dspy'`;
-5. when `enable_frames` is on, matches FrameNet frames by embedding
+6. when `enable_frames` is on, matches FrameNet frames by embedding
    (`graphknows/frames/index.py`) into `FRAME` / `EVOKED_BY`, and
    role-fills `FRAME_INSTANCE` / `PLAYS_ROLE` via
    `graphknows/ingestion/extraction/relations/frame_srl.py`. A chunk can evoke
@@ -180,7 +203,7 @@ Both paths converge on the same write helper, which per chunk:
    `GRAPHKNOWS_ENABLE_FE_TYPE_GATE` (default off) adds a further veto: a role
    filler whose graph entity type conflicts with the frame element's
    FrameNet semantic type is dropped and counted under `frame_semtype_veto`;
-6. resolves dates (`resolve_temporal` in `graphknows/temporal.py`) into
+7. resolves dates (`resolve_temporal` in `graphknows/temporal.py`) into
    `TEMPORAL` nodes and `MENTIONS_DATE` edges.
 
 `OntologyPredicateMapper` (`graphknows/ingestion/extraction/relations/filter.py`)
@@ -194,25 +217,34 @@ no promotion pipeline and nothing is copied between databases. Each step is
 awaited through a local `step()` helper that records a named error instead of
 aborting, so an analytics failure never skips the state flip:
 
-1. **Entity resolution** — `resolve_entities`
+1. **Channel populate** — every default channel's `populate(store, session_id)`
+   runs first, soft-failing under its own name so one broken extension does
+   not cost the rest of the flush. `WordNetChannel` (`graphknows/channels/wordnet.py`)
+   is the one that does anything today: scoped to this session's chunks, it
+   mints the shortest hypernym chain (`BROADER`) for any `SYNSET` this
+   session grounded that is still missing one, and `SENSE_REL` edges among
+   this session's grounded senses — the per-chunk write only mints the
+   `SYNSET`/`SENSE` pair and the `HAS_SENSE` edge, so this backfill is what
+   attaches a grounding to the wider taxonomy.
+2. **Entity resolution** — `resolve_entities`
    (`graphknows/ingestion/consolidation/entity_resolution.py`), a layered
    most-confident-first resolver: junk/hub filter, name-standardization merge for
    non-person entities, then person-nickname merge. Embedding similarity is
    deliberately not the primary mechanism (a true nickname pair scores below two
    distinct co-occurring people).
-2. **Analytical view** — `GraphStore._ensure_analytical_view` is rebuilt once and
+3. **Analytical view** — `GraphStore._ensure_analytical_view` is rebuilt once and
    shared by the three algorithms below (`skip_view_ensure=True`), since rebuilding
    is not free.
-3. **PageRank** — `compute_and_persist_pagerank`, native ArcadeDB `algo.*` with a
+4. **PageRank** — `compute_and_persist_pagerank`, native ArcadeDB `algo.*` with a
    numpy power-iteration fallback; persisted onto `ENTITY.pagerank`.
-4. **Graph embeddings** — `compute_graph_embeddings` → `ENTITY.graph_embedding`.
-5. **Communities** — `compute_communities` → `ENTITY.community_id`.
-6. **Community quality** — `compute_community_quality`, writing modularity /
+5. **Graph embeddings** — `compute_graph_embeddings` → `ENTITY.graph_embedding`.
+6. **Communities** — `compute_communities` → `ENTITY.community_id`.
+7. **Community quality** — `compute_community_quality`, writing modularity /
    conductance metrics onto `COMMUNITY` vertices.
-7. **State flip** — `consolidate_session(session_id)` moves the session's chunks
+8. **State flip** — `consolidate_session(session_id)` moves the session's chunks
    from `raw` to `consolidated`. Nothing is deleted; relation canonicalization and
    topic summarization are not part of this path.
-8. **Entity coverage audit** — `GraphStore.entity_coverage()` counts, over the
+9. **Entity coverage audit** — `GraphStore.entity_coverage()` counts, over the
    whole namespace, `ENTITY` nodes with no `REL` edge in either direction and no
    incoming `PLAYS_ROLE`; returned as `entity_coverage: {total, connected,
    isolated}` in the flush result, since isolation is a property of the
@@ -279,7 +311,12 @@ store:
 Only the optional signals are `Channel`s: `FrameChannel`
 (`graphknows/channels/frames.py`, name `frame`) when `settings.enable_frames`,
 and `OntologyChannel` (`graphknows/channels/ontology.py`, name `ontology`) when
-`settings.enable_ontology_channel`. A graph-traversal channel (`ppr`) and a
+`settings.enable_ontology_channel`. `WordNetChannel`
+(`graphknows/channels/wordnet.py`, name `wordnet`) is also registered
+unconditionally, but implements only `populate` (the flush-time hypernym/
+sense-relation backfill described under Flush above) and not `collect` — it
+contributes no leg to the RRF fusion below and does not affect retrieval.
+A graph-traversal channel (`ppr`) and a
 `topic` channel both existed and were removed — `ppr` returned the worst
 gold-hit ratio of six channels, and nothing on the read path consumed what the
 topic stage wrote. See the `registry.py` docstring for the measurements,
@@ -340,10 +377,12 @@ flowchart TD
     E --> G[frames: FRAME / FRAME_INSTANCE / PLAYS_ROLE]
     E --> H[TEMPORAL + MENTIONS_DATE]
     E --> I[llm_assisted: DSPy triplets -> REL]
-    F & G & H & I --> DB[(GraphStore: one ArcadeDB db 'mem_ns', state=raw)]
+    E --> N[MFS grounding: SYNSET / SENSE / HAS_SENSE]
+    F & G & H & I & N --> DB[(GraphStore: one ArcadeDB db 'mem_ns', state=raw)]
 
     DB --> J[flush_memory]
-    J --> K[resolve_entities: junk filter, standardize, nickname merge]
+    J --> W[WordNetChannel: backfill BROADER chain + SENSE_REL]
+    W --> K[resolve_entities: junk filter, standardize, nickname merge]
     K --> L[analytical view -> pagerank / graph embeddings / communities / quality]
     L --> M[consolidate_session: state raw -> consolidated]
     M --> DB

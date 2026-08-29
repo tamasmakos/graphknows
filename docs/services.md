@@ -65,7 +65,7 @@ Text or a message list is parsed and chunked, then per chunk: embed → match th
 embedding against ontology term definitions for label hints → extract entities
 and relations → normalise dates → let each active channel tag the chunk →
 write the `CHUNK` spine, `ENTITY` + `MENTIONS`, relation edges with chunk-level
-evidence, and the temporal/frame/ontology layers.
+evidence, and the temporal/frame/ontology/WordNet layers.
 
 Everything lands at `state='raw'`.
 
