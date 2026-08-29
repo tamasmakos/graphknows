@@ -1928,6 +1928,11 @@ class GraphStore(ArcadeStoreBase):
                     "ten": str(inst.get("tense") or ""),
                     "att": str(inst.get("attributed_to") or ""),
                     "mru": str(inst.get("modality_rules") or ""),
+                    # Provenance about HOW the trigger was found (a light-verb
+                    # construction's noun object vs. the frame's own LU) — not
+                    # part of the fact's identity, so it plays no role in `sig`
+                    # / the content hash above, and never gates or projects.
+                    "lvc": bool(inst.get("lvc") or False),
                 }
             )
             ordered = sorted(persistable)
@@ -2041,7 +2046,8 @@ class GraphStore(ArcadeStoreBase):
             "                              THEN row.rc ELSE fi.role_confidence END, "
             "    fi.polarity = row.pol, fi.modality = row.mod, fi.epistemic = row.epi, "
             "    fi.hedged = row.hed, fi.voice = row.voi, fi.tense = row.ten, "
-            "    fi.attributed_to = row.att, fi.modality_rules = row.mru "
+            "    fi.attributed_to = row.att, fi.modality_rules = row.mru, "
+            "    fi.lvc = row.lvc "
             "MERGE (fi)-[:FRAME_EVOKED_IN]->(c) "
             "RETURN count(fi) AS n",
             rows=inst_rows,

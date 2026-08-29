@@ -149,7 +149,14 @@ Both paths converge on the same write helper, which per chunk:
 5. when `enable_frames` is on, matches FrameNet frames by embedding
    (`graphknows/frames/index.py`) into `FRAME` / `EVOKED_BY`, and
    role-fills `FRAME_INSTANCE` / `PLAYS_ROLE` via
-   `graphknows/ingestion/extraction/relations/frame_srl.py` — role filling is
+   `graphknows/ingestion/extraction/relations/frame_srl.py`. A chunk can evoke
+   more than one frame: each clause's main verb(s), each nominalisation with
+   argument structure ("the acquisition of X by Y"), and each light-verb
+   construction ("made a decision") is its own trigger and can produce its own
+   instance, so a nominalisation next to a verb in the same sentence is no
+   longer masked by it. A light-verb trigger is read as a detector pointing at
+   its noun object's frame rather than contributing the verb's own frames, and
+   the resulting `FRAME_INSTANCE` carries `lvc = true`. Role filling is
    scoped to the trigger's sentence, not its whole chat turn, so two events on
    one turn don't share fillers; an instance is written only once at least two
    role fillers resolve to an `ENTITY`, and a same-chunk sibling with a strict

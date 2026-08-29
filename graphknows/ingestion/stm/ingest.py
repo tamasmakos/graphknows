@@ -1101,12 +1101,14 @@ class _STMIngestHandler:
             await self._write_frame_tags(chunk_id, matches)
             tagged_frames = {name for name, _ in matches}
 
-        # FRAME_INSTANCE layer — frame-guided semantic role labeling. The chunk's
-        # top FrameNet frames (main-verb LUs, embedding-ranked) become a GLiNER2
-        # core-FE schema; the role-fillability gate keeps 0-1 filled instances per
-        # short text. Reuses the extractor's spaCy + GLiNER2 (no second load); a
-        # second GLiNER2 schema pass, so only on fact-bearing chunks. Distinct from
-        # the FRAME chunk-tag layer above.
+        # FRAME_INSTANCE layer — frame-guided semantic role labeling. Each
+        # trigger in the chunk (a verb group, a nominalisation, or a light-verb
+        # construction) gets its own ranked FrameNet frames (LU lookup,
+        # embedding-ranked) as a GLiNER2 core-FE schema; the role-fillability
+        # gate keeps 0-1 filled instances per trigger. Reuses the extractor's
+        # spaCy + GLiNER2 (no second load); a second GLiNER2 schema pass per
+        # trigger, so only on fact-bearing chunks. Distinct from the FRAME
+        # chunk-tag layer above.
         if self._enable_frames:
             # {name.casefold(): type} from this chunk's own already-typed
             # entities — the type veto's filler type comes from the graph's
@@ -1128,7 +1130,7 @@ class _STMIngestHandler:
                 # embedding work for frames already materialised this process,
                 # so re-tagging an already-tagged frame is cheap.
                 # Unlike the SRL trigger above, these frames come from
-                # lu_candidate_frames and can rank below _FRAME_MIN_SIM — use
+                # lu_triggers and can rank below _FRAME_MIN_SIM — use
                 # the instance's own match_sim as the tag confidence rather
                 # than the trigger's 1.0, so the embedding guess the tag layer
                 # already rejected doesn't outrank a real cosine match.
@@ -1941,9 +1943,10 @@ class _STMIngestHandler:
         load) and the chunk's already-computed ``embedding`` for frame ranking (no
         re-embed). Speaker/speakers come from the chunk's turn-lines (same logic the
         SVO pass uses), falling back to the passed ``speaker``. Returns
-        ``([{frame, match_sim, role_confidence, roles}], nesting)`` — 0-1 items per
-        short text on the default path, one per parsed trigger on the SRL one, per
-        the role-fillability gate; the FRAME_INSTANCE id is content-hashed at write
+        ``([{frame, match_sim, role_confidence, roles, lvc}], nesting)`` — one item
+        per trigger (a verb group, a nominalisation, or a light-verb construction)
+        on the default path, one per parsed trigger on the SRL one, per the
+        role-fillability gate; the FRAME_INSTANCE id is content-hashed at write
         time. ``nesting`` is ``(parent, role, child)`` indexed into the returned
         list, empty unless the SRL path ran. Empty if the extractor doesn't expose
         reusable models. ``entity_types`` (``{name.casefold(): type}``, built from
@@ -1958,7 +1961,7 @@ class _STMIngestHandler:
         from graphknows.ingestion.extraction.relations.frame_srl import (
             extract_frame_instances,
             extract_frame_instances_srl,
-            lu_candidate_frames,
+            lu_triggers,
         )
         from graphknows.linguistics import analyse
 
@@ -1984,9 +1987,7 @@ class _STMIngestHandler:
                 primary,
                 speakers,
                 gliner,
-                lambda t: lu_candidate_frames(
-                    t, nlp, embedding=embedding, doc=doc if t == text else None
-                ),
+                lambda t: lu_triggers(t, nlp, embedding=embedding, doc=doc if t == text else None),
             )
         # Role fillers become ENTITY nodes, so they must clear the SAME junk gate
         # every other minting path uses. This was the one path that did not call
@@ -2084,6 +2085,7 @@ class _STMIngestHandler:
                     "match_sim": inst.match_sim,
                     "role_confidence": inst.role_confidence,
                     "roles": roles,
+                    "lvc": bool(inst.lvc),
                     **props,
                 }
             )

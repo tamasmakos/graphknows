@@ -1,10 +1,8 @@
 """Transformer frame identification: FrameNet triggers + FE spans, per sentence.
 
-The alternative to :func:`~graphknows.ingestion.extraction.relations.frame_srl.lu_candidate_frames`,
-which *guesses* a chunk's frames from its clause main verbs ranked by
-definition-embedding fit. That guess is per CHUNK, so the role-fillability gate
-downstream keeps at most one instance for a five-turn window — a chunk stating
-five facts contributes one.
+The alternative to :func:`~graphknows.ingestion.extraction.relations.frame_srl.lu_triggers`,
+which *guesses* a chunk's frames from its clause main verbs, nominalisations and
+light-verb constructions ranked by definition-embedding fit.
 
 This parses instead: a seq2seq FrameNet parser (frame-semantic-transformer)
 returns every frame-evoking trigger in a sentence with its own frame and frame
