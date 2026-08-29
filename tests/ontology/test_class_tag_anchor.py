@@ -34,7 +34,7 @@ from graphknows.ingestion.stm.ingest import _STMIngestHandler
 from graphknows.settings import GraphKnowsSettings
 from graphknows.symbolic.ontology import OntologyTerm
 from graphknows.symbolic.ontology.lexical import usable_index
-from graphknows.symbolic.ontology.skos import Concept
+from graphknows.symbolic.ontology.skos import Concept, lexicalize
 
 _CURVILINEAR = OntologyTerm(
     uri="u:CurvilinearMotion", label="Curvilinear Motion", definition="", kind="class"
@@ -96,15 +96,20 @@ def handler(nlp: Any) -> _STMIngestHandler:
     )
     # Inject a tiny scheme instead of loading CCO: fast, deterministic, and
     # `_ensure_scheme` short-circuits to it because `_corpus_seen` is empty.
+    # `lexicalize` (bare, no profile) stamps `tokens`/`alt_labels` the way
+    # `build_scheme` would — `evoked`/`usable_index` read those fields, not
+    # the raw label, so an unlexicalized `Concept` would never match at all.
     scheme = {
-        "Curvilinear Motion": Concept(
-            uri="u:CurvilinearMotion",
-            pref_label="Curvilinear Motion",
-            definition="",
-            kind="class",
+        "Curvilinear Motion": lexicalize(
+            Concept(
+                uri="u:CurvilinearMotion",
+                pref_label="Curvilinear Motion",
+                definition="",
+                kind="class",
+            )
         ),
-        "Dance Studio": Concept(
-            uri="u:DanceStudio", pref_label="Dance Studio", definition="", kind="class"
+        "Dance Studio": lexicalize(
+            Concept(uri="u:DanceStudio", pref_label="Dance Studio", definition="", kind="class")
         ),
     }
     h._scheme = scheme

@@ -30,7 +30,7 @@ import math
 from collections import Counter, defaultdict
 
 from graphknows.symbolic.ontology import senses
-from graphknows.symbolic.ontology.skos import Concept, content_tokens
+from graphknows.symbolic.ontology.skos import Concept
 
 # A lemma occurring in more than this fraction of chunks carries no information
 # about any individual chunk. 0.15 is deliberately aggressive: the failure being
@@ -128,7 +128,7 @@ def _sense_anchored_matches(
                 # — a mention whose in-context WordNet sense anchors it to
                 # "requires"/"permits" IS the spoken word asserting the
                 # property, same as the STRONG branch above.
-                if concept is None or concept.kind != kind or len(content_tokens(label)) != 1:
+                if concept is None or concept.kind != kind or len(concept.tokens) != 1:
                     continue
                 scores[label] += 1.0
     return scores
@@ -209,7 +209,7 @@ def evoked(
             if hits:
                 scores[label] += 3.0 * hits
             continue
-        tokens = content_tokens(label)
+        tokens = concept.tokens
         if not tokens:
             continue
         # STRONG: every content word of the label is in the chunk. This is the

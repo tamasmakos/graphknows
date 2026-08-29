@@ -5,7 +5,7 @@ Issue #141 deleted synonym expansion from ``lexicalize`` entirely — a content
 word's WordNet expansion is now a MATCH-TIME decision anchored to a mention's
 context (``senses.sense_lemmas`` + ``lexical.evoked``), never a build-time one.
 This file now covers the two things that survive that change: the
-``_upper_ontology_property`` blocklist (still applied, now at the expansion
+``_is_upper_ontology_property`` blocklist (still applied, now at the expansion
 site instead of here — see ``lexical._sense_anchored_matches``) and
 ``ancestors``, the ``broader`` closure. It also keeps the missing-corpus
 regression coverage for ``lexicalize`` itself, which is not really exercising
@@ -14,15 +14,30 @@ WordNet at all any more — see ``TestMissingWordnetCorpus``.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from graphknows.symbolic.ontology.skos import (
     Concept,
-    _upper_ontology_property,
+    _is_upper_ontology_property,
     ancestors,
     content_tokens,
     lexicalize,
+    vocabulary_profile,
 )
+
+CCO_DIGEST = (
+    Path(__file__).resolve().parents[2]
+    / "graphknows"
+    / "symbolic"
+    / "ontology"
+    / "assets"
+    / "cco"
+    / "cco.json"
+)
+_CCO_PROFILE = vocabulary_profile(json.loads(CCO_DIGEST.read_text(encoding="utf-8")))
 
 
 def _prop(label: str, domain: tuple[str, ...], rng: tuple[str, ...]) -> Concept:
@@ -37,6 +52,17 @@ def _prop(label: str, domain: tuple[str, ...], rng: tuple[str, ...]) -> Concept:
 
 
 class TestUpperOntologyDetection:
+    """Hand-built ``Concept``s have no scheme behind them (unstamped
+    ``upper_ontology`` defaults ``False``), so the real CCO-derived profile
+    (``_CCO_PROFILE``, computed above from the shipped digest) is passed in
+    explicitly — exactly the "profile the test supplies" seam
+    ``_is_upper_ontology_property`` exists for. A hand-written profile would pin
+    whatever the test author typed rather than what ``vocabulary_profile``
+    actually derives from CCO's own shape.
+    """
+
+    _PROFILE = _CCO_PROFILE
+
     @pytest.mark.parametrize(
         ("label", "domain", "rng"),
         [
@@ -50,7 +76,7 @@ class TestUpperOntologyDetection:
     def test_bfo_typed_properties_are_upper_ontology(
         self, label: str, domain: tuple[str, ...], rng: tuple[str, ...]
     ) -> None:
-        assert _upper_ontology_property(_prop(label, domain, rng))
+        assert _is_upper_ontology_property(_prop(label, domain, rng), self._PROFILE)
 
     @pytest.mark.parametrize(
         ("label", "domain", "rng"),
@@ -64,12 +90,12 @@ class TestUpperOntologyDetection:
     def test_concrete_properties_are_not(
         self, label: str, domain: tuple[str, ...], rng: tuple[str, ...]
     ) -> None:
-        assert not _upper_ontology_property(_prop(label, domain, rng))
+        assert not _is_upper_ontology_property(_prop(label, domain, rng), self._PROFILE)
 
     def test_classes_are_never_upper_ontology_properties(self) -> None:
         """The guard is about PROPERTIES; a class keeps its synonyms regardless."""
         cls = Concept(uri="cco:X", pref_label="Grocery Store", definition="", kind="class")
-        assert not _upper_ontology_property(cls)
+        assert not _is_upper_ontology_property(cls, self._PROFILE)
 
 
 def _cls(label: str, broader: tuple[str, ...] = ()) -> Concept:
@@ -149,7 +175,9 @@ class TestCamelCaseLabelsSplit:
     def test_camel_case_label_splits_into_lowercase_tokens(
         self, label: str, expected: list[str]
     ) -> None:
-        assert content_tokens(label) == expected
+        # "has" (in "hasOccupation") is structural through the CCO-derived
+        # profile (28% of CCO's property labels), not a global constant.
+        assert content_tokens(label, _CCO_PROFILE.structural_tokens) == expected
 
     def test_has_prefix_is_structural(self) -> None:
         """``has`` is a spaCy stopword ``lexical.lemma_view`` never emits, so a
@@ -158,13 +186,23 @@ class TestCamelCaseLabelsSplit:
         ``lexical.evoked``'s STRONG all-tokens-present rule or the WEAK
         branch's single-token gate. Stripping it collapses these to their one
         real content word, restoring both paths.
+
+        ``has`` is 28% of CCO's property labels, so the CCO-derived profile
+        (not a global constant any more) flags it structural.
         """
-        assert content_tokens("has brother") == ["brother"]
+        assert content_tokens("has brother", _CCO_PROFILE.structural_tokens) == ["brother"]
 
     def test_cco_title_case_labels_are_unchanged(self) -> None:
-        """No-regression half of the fix: CCO has zero camelCase labels."""
-        assert content_tokens("Act of Employment") == ["employment"]
-        assert content_tokens("Commercial Organization") == ["commercial", "organization"]
+        """No-regression half of the fix: CCO has zero camelCase labels.
+
+        ``act`` comes from CCO's own upper-ontology class labels (``Act``'s
+        descendants), so it is now derived rather than assumed.
+        """
+        assert content_tokens("Act of Employment", _CCO_PROFILE.structural_tokens) == ["employment"]
+        assert content_tokens("Commercial Organization", _CCO_PROFILE.structural_tokens) == [
+            "commercial",
+            "organization",
+        ]
 
     def test_camel_case_class_reaches_its_parts_through_lexicalize(self) -> None:
         c = lexicalize(
