@@ -303,13 +303,21 @@ assert.deepEqual(cyc.cyclic.sort(), [1, 2], 'a cycle must be named, not silently
 // The reduced scrutiny this lane buys is only defensible while the changes really are tiny,
 // so the rule has to be strict AND it has to fail closed. Every branch below is a way the
 // batch could quietly acquire a change that deserved its own review.
-const tiny = (over = {}) => car(9, { expected_lines: 8, files_named: ['pyproject.toml'], ...over })
+const tiny = (over = {}) => car(9, { sizing: 'stated', expected_lines: 8, files_named: ['pyproject.toml'], ...over })
 
-assert.equal(isExpress(tiny(), [9]), '', 'a two-file, eight-line ticket is exactly what this lane is for')
-// Absence of an estimate is not smallness. A hand-filed ticket has no line and takes the
-// long road -- the failure that matters is a big change riding a lane that reviews once.
-assert.match(isExpress(tiny({ expected_lines: 0 }), [9]), /no size estimate/)
-assert.match(isExpress(car(9, {}), [9]), /no size estimate/, 'a car with no field at all is not express')
+assert.equal(isExpress(tiny(), [9]), '', 'a stated two-file, eight-line ticket is exactly what this lane is for')
+// Absence of a size is not smallness. An unsized ticket fails closed and takes the long
+// road -- the failure that matters is a big change riding a lane that reviews once.
+assert.match(isExpress(tiny({ sizing: undefined }), [9]), /could not be sized/)
+assert.match(isExpress(car(9, {}), [9]), /could not be sized/, 'a car with no field at all is not express')
+assert.match(isExpress(tiny({ expected_lines: 0 }), [9]), /no usable size/)
+// A measured size has to be defended: files read and evidence cited, or it is a guess.
+assert.match(isExpress(tiny({ sizing: 'measured', sizing_evidence: '' }), [9]), /cites no evidence/)
+assert.equal(
+  isExpress(tiny({ sizing: 'measured', sizing_evidence: 'read pyproject.toml: one table row moves' }), [9]),
+  '',
+  'a measured size backed by evidence rides',
+)
 assert.match(isExpress(tiny({ expected_lines: 31 }), [9]), /over the 30/)
 assert.equal(isExpress(tiny({ expected_lines: 30 }), [9]), '', '30 is the ceiling, not over it')
 assert.match(isExpress(tiny({ files_named: ['a.py', 'b.py', 'c.py'] }), [9]), /over 2/)

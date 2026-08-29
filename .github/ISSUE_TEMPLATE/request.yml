@@ -1,0 +1,103 @@
+name: Request
+description: Ask for a change — a feature, a business outcome, a bug fix, or a chore. This is the entry point to the prepare-tickets pipeline.
+title: "[request] "
+labels: ["request", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form is read by a machine as well as by a person. The pipeline that turns it into
+        tickets will **mark what it cannot infer rather than guess it** — so a field you leave
+        thin comes back as a question, not as a wrong assumption.
+
+        Say the problem, not the solution. If you already know the solution, say it under
+        **Constraints** — naming an approach there tells the pipeline to skip its research and
+        design stages and go straight to specifying the work.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      description: Drives the labels applied and how much investigation the request earns.
+      options:
+        - feature — new behaviour that does not exist yet
+        - business — an outcome to reach; the how is open
+        - bug — something behaves wrongly today
+        - chore — maintenance with no user-visible change
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: The situation as it is today. What is painful, missing, or wrong — not what should be built.
+      placeholder: Building the dev image takes four minutes and half of it is a model bake that CI already does.
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired_outcome
+    attributes:
+      label: Desired outcome
+      description: What must be true when this is done. One or two sentences.
+    validations:
+      required: true
+
+  - type: input
+    id: who_for
+    attributes:
+      label: Who is this for
+      description: The actor who feels the difference — a contributor, an installing user, an operator, CI. Leave blank if there is no distinct one; do not invent a persona.
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints and decisions already made
+      description: >
+        Anything the implementer cannot work out by reading the code — a settled approach, a
+        library that must or must not be used, a boundary you have already argued about.
+        Naming the approach here is what makes the pipeline skip research and design, so put a
+        settled decision here rather than leaving it to be rediscovered.
+      placeholder: |
+        - The PyPI wheel is the product; Docker is dev-only.
+        - Do not touch [project.dependencies] or the ArcadeDB requirement.
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Explicitly out of scope
+      description: What this request does NOT cover. Stating it is what stops the work sprawling; an empty box means the pipeline decides the boundary for you.
+
+  - type: textarea
+    id: done_when
+    attributes:
+      label: Done when
+      description: >
+        Your own success test, in observable terms — something you could watch happen. Every
+        ticket the pipeline files will end in a command someone can run; this is where that
+        starts.
+      placeholder: A fresh clone can `make dev` and get a working container in under 90 seconds.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity (bugs only)
+      description: >
+        Chosen from the consequence, not from how it feels. Leave as "not a bug" for anything
+        else. See docs/agents/triage-labels.md for the full table.
+      options:
+        - not a bug
+        - S1 — data loss, corruption, or the tool is unusable, with no workaround
+        - S2 — a documented capability is broken and the workaround is unreasonable
+        - S3 — broken but a reasonable workaround exists
+        - S4 — cosmetic, or wrong only in a way nobody acts on
+      default: 0
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence (bugs only)
+      description: What you ran, what happened, what you expected. Paste the real output, trimmed.

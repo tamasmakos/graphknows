@@ -23,7 +23,7 @@ export const meta = {
 // args: { limit?: 1, base?: 'main', labels?: 'bug', issues?: [12, 34], from?: <prepare-tickets result>, force?: false,
 //         draft?: true, maxTasks?: 4, maxNewIssues?: 3, verifyRounds?: 3, baseline?: true,
 //         packageGate?: 'auto', dogfood?: true, docs?: true, report?: true, reportPath?: 'docs/agents/runs/x.md',
-//         gates?: 'shadow' | 'on' | 'always',
+//         gates?: 'shadow' | 'on' | 'always', requireReady?: false,
 //         runLabel?: 'nightly', ship?: true, merge?: false, ciRounds?: 3 }
 //
 // This is the back half of a two-workflow loop. The prepare-tickets workflow does the research, design
@@ -59,6 +59,12 @@ const DO_BASELINE = opt.baseline !== false
 // Set by an orchestrator that has already read these issues' labels, state and blocking
 // edges. It removes a duplicated GitHub read at Triage; it never relaxes the label gate.
 const ROSTER_CHECKED = opt.rosterChecked === true
+// The train's admission rule, enforced at dispatch time: READY_LABEL must still be PRESENT,
+// not merely GATE_LABEL absent. A human's mid-train brake is removing that label, and the
+// agent already reading labels at Triage is the place to honour it -- a dedicated re-read
+// agent per car cost a full session context for the same two fields. Off by default: a
+// hand-picked standalone run may name human-filed issues that never carried any label.
+const REQUIRE_READY = opt.requireReady === true
 // The tech-writing stage. On by default: docs written in a follow-up PR never get written.
 const DO_DOCS = opt.docs !== false
 // Reading the produced data, not just the code. On by default: the suite asserts one field
@@ -67,34 +73,24 @@ const DO_DOGFOOD = opt.dogfood !== false
 // The run report. The return value lands in one session's context and dies with it; the
 // report is the copy still there tomorrow. Composed in plain JS from the same data the
 // return value carries -- a report an agent writes from memory disagrees with the run.
+// Deliberately written PER RUN, at the end of each run, even under an orchestrator: this
+// family of runs gets killed, and the per-car report on disk is what survives the kill.
 const DO_REPORT = opt.report !== false
 const PKG_GATE = opt.packageGate || 'auto' // 'auto' = skip only a provably test-only change | 'always' | 'never'
 // Adaptive stage gating -- see docs/research/adaptive-workflow-gating.md.
-// 'on' (the default) acts on the decision. 'shadow' decides and LOGS what it would have
-// skipped, then runs it anyway; 'always' never adaptively skips. A nightly forces 'always':
-// that is TIA's "run everything at a configured periodicity", with the caller standing in
-// for the clock, because a workflow script has no access to one.
-//
-// The default was 'shadow' for exactly the right reason -- a gate nobody has watched
-// decline a check is how a defect ships -- and then never moved, so every skip this policy
-// has ever decided was logged and overruled. A shadow that is never promoted is not caution,
-// it is the cost of the gate with none of the saving. The predicates are pinned by
-// gates.test.mjs, each one names the class of bug it is willing to miss, and Verify, CI and
-// the wheel gate all still run behind them. Promote it; keep 'shadow' for a new predicate.
+// 'on' (default) acts on the decision; 'shadow' logs what it would skip and runs anyway --
+// use it for a NEW predicate, then promote; 'always' never skips (a nightly forces it,
+// TIA-style). Predicates are pinned by gates.test.mjs, each naming the bug it may miss.
 const GATES = opt.runLabel === 'nightly' ? 'always' : opt.gates || 'on'
-// Merging is the only step here that changes main. It is gated on the PR's CI going green
-// under its own steam -- never on an agent's opinion that the code is fine.
-//
-// Opt IN, not out. It used to default on, so a run launched without `merge:false` merged to
-// main on its own; the reviewer found out afterwards. A forgotten argument must not be able
-// to write to main, and `merge:true` is one word for the times you do want it.
+// Merging is the only step here that changes main, gated on the PR's own CI going green --
+// never on an agent's opinion. Opt IN: it defaulted on once, and a forgotten argument
+// must not be able to write to main.
 const DO_MERGE = opt.merge === true
-// Watching main's CI after the merge costs about as long as the PR's own CI, and for a
-// one-off run nothing acts on the answer: it lands in a summary field and a report nobody
-// blocks on. It is load-bearing in a TRAIN, where post_merge_green === false is the halt
-// condition that stops the next car being cut from a poisoned tip -- so run-merge-train
-// asks for it explicitly and cannot be talked out of it.
-const WATCH_MAIN = opt.watchMain === true
+// Watching main post-merge is load-bearing only in a TRAIN (post_merge_green === false is
+// its halt condition). 'auto': a squash whose base is the pre-merge tip lands the exact
+// tree the PR's CI just proved, so the agent compares trees and only a mismatch earns the
+// ~11-minute watch.
+const WATCH_MAIN = opt.watchMain === 'auto' ? 'auto' : opt.watchMain === true
 const CI_ROUNDS = opt.ciRounds || 3
 // The one escape hatch from the needs-triage gate on a named list. It exists so a human
 // can say "yes, I know, work it anyway" -- never so an orchestrator can pass the gate on
@@ -104,23 +100,11 @@ const FORCE = opt.force === true
 // so run provenance in issue bodies comes from args, not the clock.
 const RUN = opt.runLabel || 'an automated process-issues run'
 
-// The gate that keeps the self-filing loop from feeding itself. docs/agents/triage-labels.md
-// owns the rules; what follows is why the constants live here and what they mean to THIS
-// workflow.
-//
-// PROVENANCE DECIDES THE DEFAULT. The property GATE_LABEL protects is that an agent must
-// not feed itself work it invented -- a claim about where the work came from, not about
-// who types the label. This comment used to say the opposite ("what a HUMAN applies after
-// triaging"), and read literally it made every ticket of every request a chore for one
-// person to clear one at a time. A chore gets cleared without being read, which is worse
-// than no gate at all.
-//
-// So the line is drawn at origin:
-//   - Work tracing to a request issue a person filed  -> prepare-tickets files it ready,
-//     gated only for the four reasons in triage-labels.md.
-//   - Work THIS workflow found for itself (Followups, below) -> FOUND_LABEL + GATE_LABEL,
-//     always, no exceptions. That is the self-feeding loop, and it never opens.
-// Triage still refuses anything carrying GATE_LABEL, whichever way it got there.
+// The gate that keeps the self-filing loop from feeding itself; docs/agents/triage-labels.md
+// owns the rules. PROVENANCE DECIDES THE DEFAULT: work tracing to a human-filed request is
+// filed ready (gated only for the four reasons in triage-labels.md); work THIS workflow
+// found for itself (Followups) gets FOUND_LABEL + GATE_LABEL, always, no exceptions -- that
+// loop never opens. Triage refuses anything carrying GATE_LABEL, whichever way it got there.
 const FOUND_LABEL = 'agent-found'
 const GATE_LABEL = 'needs-triage'
 // Mutually exclusive with GATE_LABEL. An issue carrying both is un-boardable -- every
@@ -131,12 +115,9 @@ const READY_LABEL = 'ready-for-agent'
 // .claude/ is gitignored, so skills and graphify-out do NOT exist inside a worktree.
 // Anything under here is read from the main checkout, by absolute path.
 const MAIN_REPO = 'C:/Users/User/Documents/dev/graphknows'
-// Where an agent's own output goes. One directory, one ignore rule, and it sits beside the
-// rules agents READ (definition-of-done.md, triage-labels.md) rather than off in a scratch
-// tree of its own -- so "what does an agent read here, and what did it write" is one folder.
-// docs/agents/runs/ is gitignored; the files beside it are not, deliberately: a rule an
-// agent cannot open from a fresh clone is a rule that gets restated into every ticket
-// instead, which is the bloat this whole pipeline was rebuilt to stop.
+// Where an agent's own output goes, beside the rules agents READ. docs/agents/runs/ is
+// gitignored; the rule files beside it are not, deliberately -- a rule an agent cannot
+// open from a fresh clone gets restated into every ticket instead.
 const RUNS_DIR = 'docs/agents/runs'
 
 // Docker on Windows needs a drive-letter path; agents tend to report the Git Bash form.
@@ -157,21 +138,20 @@ const RUN_ON = { model: 'sonnet', effort: 'medium' }
 // defect makes the whole loop confidently wrong. Everything else is mechanical: run a
 // command, read its output, fill a schema.
 const DEEP = { model: 'opus' }
+// Pure transcription -- an agent that only copies bytes or runs a fixed command list.
+// An agent spawn costs ~40k tokens of fixed overhead whatever model runs it, but the
+// cheapest model cuts what each of those tokens costs, and these stages need no judgement.
+const MECH = { model: 'haiku', effort: 'low' }
 const call = (prompt, opts = {}) => agent(prompt, { ...RUN_ON, ...opts })
 
 // gh landed on the machine PATH at install time; a session started before that
 // still carries the stale PATH, so every gh-touching prompt gets the fallback.
 const GH = 'Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).'
 
-// Every push in this run goes through the same hook, so it gets described once. Ship used to
-// say "~5 minutes, allow 10" and CI "around 25 minutes" for the identical hook: an agent that
-// believed the low number killed the gate mid-run, one that believed the high number idled.
-//
-// The "~3-4 minutes" this said before was stale, and it is what parked #137 and #160: the real
-// cost was ~12 minutes against their 10-minute budget, so they did all the work and pushed
-// nothing. Measured on 2026-08-28 after the frame-index fix, worktree (ephemeral runner, the
-// slow path): pytest 1271 tests in 119s, whole gate ~5 minutes. 900000 is that with headroom
-// for a cold model cache and a loaded host. Re-measure before lowering it.
+// Every push goes through the same pre-push hook, described once. Measured 2026-08-28:
+// whole gate ~5 minutes (pytest 1271 tests in 119s); 900000 ms is that plus headroom.
+// A stale low number parked #137/#160 with all work done and nothing pushed -- re-measure
+// before lowering it.
 const PREPUSH = [
   'Run it in the FOREGROUND, in ONE Bash call, with an explicit timeout of 900000 ms (15 minutes).',
   'Do NOT background it and do not poll for it: a backgrounded push cannot notify you before your turn ends,',
@@ -189,11 +169,8 @@ const HOUSE =
   'small diffs, no speculative abstraction. Pre-commit hooks are rules -- never pass --no-verify. ' +
   'NEVER weaken, delete or retarget an existing test to make the suite pass. If an existing test genuinely ' +
   'encodes the wrong behaviour, leave it failing and report it -- changing it silently is the one unforgivable move here. ' +
-  // The pipeline pushes every agent toward a green check, so the rule that a green check is not the
-  // goal has to be stated where that pressure is applied. #137 shipped `nltk.download()` into library
-  // code because the corpus was missing from the image: the tests went green, the criterion was met,
-  // and a package strangers pip-install now reaches the network mid-ingest. The repo already had
-  // scripts/bake_models.py for exactly that corpus, and an open ticket (#208) to wire it up.
+  // A green check is not the goal, stated where the pressure toward one is applied: #137
+  // shipped `nltk.download()` into library code when scripts/bake_models.py already existed.
   'A check can fail because the ENVIRONMENT is broken -- a missing corpus, model, service, credential or ' +
   'volume -- and that is not a defect in the code under test. Fix it where it is provisioned: the Dockerfile, ' +
   'docker-compose.yaml, a setup script, a Makefile target. Library code under graphknows/ never downloads a ' +
@@ -245,12 +222,9 @@ const GRAPHIFY = [
   'It was built 2026-08-09 and the package has moved since: use it to find where a thing lives and what touches it, then confirm against the actual file before acting on it. If the CLI or graph is missing, skip it and read the code.',
 ].join('\n')
 
-// The checks CANNOT run on the host: its virtualenv is incomplete and host pytest dies with
-// 77 collection errors unrelated to any change. They also cannot run via `scripts/gate.sh`
-// from a worktree: that script execs into the long-lived graphknows-workspace container,
-// whose /app is a bind mount of the MAIN repo -- it would lint and test the main working
-// tree and report the verdict as the worktree's. The only honest check is an ephemeral
-// container mounted on the worktree itself.
+// The checks CANNOT run on the host (its virtualenv cannot even collect the suite) nor via
+// `scripts/gate.sh` from a worktree (it execs into the shared container bound to the MAIN
+// repo). The only honest check is an ephemeral container mounted on the worktree itself.
 const checksIn = (worktree) =>
   [
     "Run this repo's checks INSIDE a container mounted on your worktree. Never on the host (its virtualenv cannot",
@@ -716,9 +690,10 @@ const SHIP_SCHEMA = {
   },
 }
 
-// One agent per round does the whole loop body: wait for the run to settle, and if it
-// failed, fix the cause and push. Splitting watch from fix would double the agent count
-// for no gain -- the agent that read the log is the one best placed to fix it.
+// One agent per round does the whole loop body -- watch, fix, and (when authorized) merge
+// on green: the agent that read the log is the one best placed to fix it, and a dedicated
+// merge agent would re-establish context this one already holds. The merge fields below
+// are filled only by the final green round.
 const CI_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -736,22 +711,13 @@ const CI_SCHEMA = {
     failing_jobs: { type: 'array', items: { type: 'string' }, description: 'job or step names that failed, with the error line' },
     fixed: { type: 'array', items: { type: 'string' }, description: 'what you changed to address them' },
     commit: { type: 'string', description: 'the sha you pushed, if you pushed' },
-    discoveries: DISCOVERIES,
-    notes: { type: 'string' },
-  },
-}
-
-const MERGE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['merged', 'notes'],
-  properties: {
-    merged: { type: 'boolean' },
-    method: { type: 'string', enum: ['squash', 'merge', 'rebase', 'none'] },
+    merged: { type: 'boolean', description: 'set only when this round was told to merge: true once the merge completed' },
     merge_commit: { type: 'string' },
     issue_closed: { type: 'boolean', description: 'the linked issue closed itself via "Closes #n"' },
+    tree_matches_ci: { type: 'boolean', description: "the merged main tip's tree is byte-identical to the tree the PR's CI tested" },
     post_merge_run_url: { type: 'string', description: 'the CI run the merge triggered on main' },
-    post_merge_green: { type: 'boolean', description: 'true only if that run finished successfully' },
+    post_merge_green: { type: 'boolean', description: 'true only if that run finished successfully; unset when the watch was skipped' },
+    discoveries: DISCOVERIES,
     notes: { type: 'string' },
   },
 }
@@ -844,7 +810,10 @@ const filter = ONLY
             'proposed the work and no human has agreed to it yet -- being named on the command line is not agreement,',
             'because the thing doing the naming may itself be a machine. A human removes the label; that is the gate.',
             'Also skip any issue that is already closed.',
-          ].join(' '),
+            REQUIRE_READY
+              ? `Also SKIP any issue NOT carrying "${READY_LABEL}", and say that label is missing as the reason. The caller admits only tickets a human explicitly approved, and removing that label mid-run is the human's brake -- absence of an objection is not approval.`
+              : '',
+          ].filter(Boolean).join(' '),
       BLOCKED,
     ].join('\n')
   : [
@@ -868,11 +837,8 @@ const triage = await call(
     '  1. `git fetch origin`',
     `  2. from the repo root: \`git worktree add ../gk-issue-<n> -b fix/issue-<n> origin/${BASE}\``,
     '  3. record the ABSOLUTE path of that worktree in DRIVE-LETTER form -- `C:/Users/User/Documents/dev/gk-issue-<n>`, not `/c/Users/...`. Later stages mount that path into docker, which needs the drive letter.',
-    // The train's whole safety story is that each car is cut from main AS IT STANDS after the
-    // previous merge, so siblings cannot conflict. A leftover branch silently voids that: it was
-    // cut from an older main. #137 resumed one and spent a full car re-deriving a gate fix that
-    // had already landed on the tip, because its base predated that merge -- and the duplicate
-    // shipped, because nothing downstream can tell a stale base from a fresh one.
+    // A leftover branch was cut from an older main and silently voids the train's safety
+    // story -- #137 resumed one and shipped a duplicate of a fix already on the tip.
     'If a worktree or branch for an issue already exists locally, reuse the DIRECTORY rather than failing --',
     'but never trust its commits as they stand, because a leftover branch was cut from an older base.',
     'Before any work starts on a reused branch, put it on the current tip:',
@@ -902,14 +868,10 @@ for (const i of issues.filter((i) => (i.resumed_from || '').trim())) {
 }
 
 // -- Change classification ------------------------------------------
-// One derived class, one policy table, no router agent: every fact a router would need is
-// already a field in a schema, and re-deriving them with an LLM adds cost, non-determinism
-// and a new way to be wrong. The wheel gate is the precedent -- it used to ask opus whether
-// a diff "touches packaging" and now answers it in four lines of JS.
-//
-// This may only ever REMOVE work when it is certain, and "no evidence" is not certainty:
-// an unclassifiable change is the most expensive class, not the cheapest. Same safe fallback
-// Nx uses when the lock file moves, and TIA uses on a commit it cannot reason about.
+// One derived class, one policy table, no router agent: every fact is already a schema
+// field (the wheel gate is the precedent -- opus judgement became four lines of JS). It may
+// only REMOVE work when certain: an unclassifiable change is the most expensive class, not
+// the cheapest (the same safe fallback Nx and TIA use).
 const norm = (f) => String(f).replace(/\\/g, '/').replace(/^\.\//, '')
 const isTestFile = (f) => /^tests?\//.test(f)
 const isDocFile = (f) => /^docs\//.test(f) || /\.md$/i.test(f)
@@ -946,11 +908,8 @@ const classify = (plan, verify, pkg = 'graphknows') => {
 // willing to miss. If you cannot name one, the stage is not skippable.
 const SKIPPABLE = {
   // Misses: ugly data in a change that produces none. Cheap -- Review, Verify and CI all
-  // still run behind it. The third clause is the expensive one to omit: dogfood reads the
-  // DATA the code produces, so a change that touches no file inside the import package
-  // cannot have changed any. Its own prompt opens by asking the agent to decide exactly
-  // that and return ran=false -- a container, a shell and a full turn spent reaching a
-  // conclusion the file list already carried.
+  // still run behind it. The third clause matters: dogfood reads the DATA the code produces,
+  // so a diff touching no file inside the import package cannot have changed any.
   dogfood: (c) => c.kind === 'docs' || c.kind === 'test-only' || !c.touchesPackage,
   // Misses: a wheel packaging defect. This workflow deliberately never releases, so NOTHING
   // downstream ever builds a wheel: it is the one skip in the pipeline with no post-submit
@@ -987,28 +946,20 @@ const results = await pipeline(
         `Work in the worktree at ${issue.worktree} -- cd there first; it is a full checkout of this repo on branch ${issue.branch}.`,
         'If the issue references a parent spec issue, READ IT FIRST (`gh issue view <n>`). Tickets filed by prepare-tickets carry the design decision in the parent, not in themselves: planning from the ticket alone re-decides a question that was already settled, and settled differently. The parent may open with a quoted banner recording that an adversarial reviewer called the design unsound, or that a fact it rests on was refuted -- that is not decoration, it is the thing to resolve before you plan around it.',
         'The issue text is the contract, and the parent spec is its context. Where the decision was architecturally significant the spec cites an ADR under docs/adr/ -- that IS in your worktree, so read it when the spec names one. Do not go looking for any other design document; there is none.',
-        // Two paths reach this stage. A ticket from prepare-tickets carries the contract in
-        // its body. An issue somebody filed by hand, or that this workflow found for itself,
-        // carries a reporter's words in the body and the contract in an "## Agent Brief"
-        // comment a person wrote at triage -- because editing a reporter's own issue body to
-        // impose a shape on it is the wrong trade. Read both; the brief wins.
+        // A hand-filed issue carries the contract in an "## Agent Brief" comment written at
+        // triage, not in the reporter's body. Read both; the brief wins.
         `Check the comments as well (\`gh issue view ${issue.number} --comments\`). If one of them is an "## Agent Brief", THAT is the contract and the body is background: a person wrote it during triage precisely because the body was a raw report. It carries the same sections a pipeline ticket does -- acceptance criteria, Verify, Out of scope -- and where the two disagree, the brief is the later decision.`,
         'A "[NEEDS CLARIFICATION: ...]" marker anywhere in the body or the brief means the work is NOT settled. Do not resolve it yourself and do not plan around it: stop, and report it as the reason. Somebody left that marker rather than guessing, and guessing here throws that away.',
         'Read the code before planning. Find the ROOT CAUSE, not the symptom: grep every caller of what you are about to change, so the fix lands where all callers route through instead of patching the one path the issue names.',
         skill('diagnosing-bugs/SKILL.md', 'the root-cause discipline this repo uses -- build the feedback loop before theorising. You may not modify the tree, so follow its "Diagnosis for planning" branch: spec the loop, do not run it.'),
         'Read CLAUDE.md and the surrounding modules; match their idiom.',
-        // Until now this reached exactly one stage, Review -- which meant "shortest working
-        // diff" was a judgement passed on work already done, by an agent with no power to
-        // un-write it. The cheapest place to not build something is the plan.
+        // The cheapest place to not build something is the plan, not the review.
         skill('ponytail/SKILL.md', 'the ladder: does this need to exist at all, is it already in this codebase, does the stdlib do it, can it be one line. Climb it for every task before you write the task down, and stop at the first rung that holds. It shortens the SOLUTION, never the reading -- trace the whole flow first.'),
         'A plan is a budget. The smallest number of tasks that closes the issue is the correct number; a task you added because it seemed thorough is a file somebody has to review.',
         GRAPHIFY,
         `Produce the smallest plan that actually fixes it -- at most ${MAX_TASKS} tasks. Each task must be self-contained: the agent executing it starts with a blank context and sees only your instruction. Give tasks disjoint files where you can.`,
-        // This used to read "EXACTLY ONE task must have kind='test'", unconditionally. On a
-        // deletion or config ticket there is no behaviour to reproduce, so "fails before,
-        // passes after" can only be satisfied by asserting that each deleted thing is
-        // absent -- which is how a cleanup whose entire point was removal acquired a
-        // 528-line test file transcribing its acceptance criteria one by one.
+        // "AT MOST one", not "exactly one": a deletion/config ticket has no behaviour to
+        // reproduce, and forcing a test once bought a 528-line file asserting absences.
         'AT MOST ONE task has kind="test": the reproduction that fails on the current code and passes once the fix lands. It touches only test files. Every other task is kind="code".',
         'Include it when there is BEHAVIOUR to reproduce -- something the code does wrong now and will do right after. Omit it when there is not: a deletion, a dependency or build-config change, a rename, a docs edit. For those the acceptance is the existing suite still passing, and the later stages know a plan can arrive with no test task.',
         'A test that asserts a file, a flag or a section is ABSENT is not a reproduction, it is the acceptance criteria copied into Python. Never write one. If the only test you can think of restates the ticket, that is the signal to omit the test task, not to write it anyway.',
@@ -1065,7 +1016,10 @@ const results = await pipeline(
               ].join('\n')
             : [
                 'Implement it fully. Do not commit. Do not touch anything outside this task -- no drive-by refactors, no unrelated files.',
-                skill('ponytail/SKILL.md', 'the ladder and the rules: reuse what is already here, stdlib before a dependency, deletion over addition, the shortest diff that actually works. Never lazy about UNDERSTANDING -- read the whole flow, then write the least code.'),
+                // The plan already climbed the ponytail ladder when it wrote this task, so the
+                // implementer gets the rules in one line instead of re-reading the whole skill
+                // file -- that read cost a file's worth of context per task, times every task.
+                'Shortest working diff: reuse what already lives in this codebase, stdlib before a new dependency, deletion over addition. That shortens the SOLUTION, never the reading -- trace the whole flow first, then write the least code.',
                 'If you need an import that is not already a declared dependency, add it to the correct pyproject.toml table in the SAME task, with a lower bound. Never leave an import undeclared.',
                 PACKAGING,
               ].join('\n'),
@@ -1093,11 +1047,9 @@ const results = await pipeline(
     return { ...ctx, red, done, discoveries }
   },
 
-  // Dogfood -- eat what was cooked, before anyone reviews the recipe.
-  // Every stage before this one reads CODE: the plan reads it, the implementer writes it,
-  // the suite asserts one field of one record. None of them ever looks at the data the
-  // change actually produces, which is where this system's bugs live -- a score that is
-  // identical across every row passes every assertion written for it.
+  // Dogfood -- eat what was cooked, before anyone reviews the recipe. Every earlier stage
+  // reads CODE; none looks at the data the change produces, which is where this system's
+  // bugs live -- a score identical across every row passes every assertion written for it.
   async (ctx) => {
     if (!ctx) return null
     const { issue, plan, red } = ctx
@@ -1230,12 +1182,9 @@ const results = await pipeline(
       log(`#${issue.number}: docs skipped -- the checks are not green`)
       return { ...ctx, docs: null }
     }
-    // The reviewer -- a different agent, told to falsify, reading the diff -- already
-    // priced the user-facing impact of this change. When it says "none", there is nothing
-    // for a writer to make true, and a writer sent in anyway finds something to edit: that
-    // is how a Docker cleanup reviewed as `none` came back having rewritten a versioning
-    // page nobody named. The opposite direction is still cross-checked at Followups, where
-    // a writer claiming user_visible=false against a priced release files an issue.
+    // The reviewer already priced the user-facing impact; a writer sent in against "none"
+    // finds something to edit anyway (a Docker cleanup once came back having rewritten a
+    // versioning page). The opposite direction is cross-checked at Followups.
     if ((review.packaging?.release_impact || 'unknown') === 'none') {
       log(`#${issue.number}: docs skipped -- the review priced this change as no release impact`)
       return { ...ctx, docs: null }
@@ -1252,9 +1201,7 @@ const results = await pipeline(
         `Release impact as reviewed: ${review.packaging?.release_impact || 'unknown'}${review.packaging?.changelog_line ? ` -- "${review.packaging.changelog_line}"` : ''}`,
         diffHowTo(issue),
         'READ THE DIFF FIRST. Document what the code now does, not what the issue hoped it would do -- those differ more often than anyone expects.',
-        // docs/ is not one audience any more. docs/agents/ is written FOR agents and partly
-        // BY them -- rules they read, and a gitignored runs/ directory full of machine output
-        // from previous runs. A writer sent to "leave the documentation true" over all of
+        // docs/agents/ is written FOR agents and partly BY them; a writer sent over all of
         // docs/ would happily edit last week's run report.
         'SCOPE: you write USER-facing documentation -- `README.md` and the pages under `docs/` that a person installing this package reads. Three things under `docs/` are NOT yours and must not be edited here: `docs/agents/` (rules written for agents, plus `docs/agents/runs/`, which is machine output from other runs and is gitignored), `docs/adr/` (decision records are immutable -- superseded, never rewritten), and `docs/agents/research/`. If one of them is genuinely wrong, say so in notes and leave it alone.',
         '',
@@ -1277,20 +1224,14 @@ const results = await pipeline(
     return { ...ctx, docs }
   },
 
-  // Package -- build the artifact and exercise it from a clean install.
-  // Gated in plain JS, not by an agent's judgement. 'auto' used to ask opus to predict
-  // whether the diff "touches packaging"; whether a plan changes anything but test files
-  // is a fact about the plan, and filtering is code's job, not an agent's. Conservative on
-  // purpose: this is the only check that can catch a fix that works in the source tree and
-  // is missing from the wheel, so it runs unless the change is provably test-only.
+  // Package -- build the artifact and exercise it from a clean install. Gated in plain JS,
+  // conservative on purpose: the only check that can catch a fix missing from the wheel,
+  // so it runs unless the change is provably test-only.
   async (ctx) => {
     if (!ctx) return null
     const { issue, plan, red, review, verify } = ctx
-    // Classified by PATH now, not by task kind. The old predicate was `t.kind !== 'test'`,
-    // which is true for ANY non-test task, so it could not tell a docs edit from a code one.
-    // This still builds a wheel for a docs-only change, deliberately: README.md IS the wheel
-    // long_description, and `twine check` is the only thing in this pipeline that renders it.
-    // The gain is that the decision is now readable and testable, not that it skips more.
+    // Still builds a wheel for a docs-only change, deliberately: README.md IS the wheel
+    // long_description, and `twine check` is the only thing here that renders it.
     const wanted = PKG_GATE === 'always' || (PKG_GATE !== 'never' && gate('package', classify(plan, verify, IMPORT_NAME), issue))
     if (!wanted) {
       if (PKG_GATE === 'never') log(`#${issue.number}: package gate skipped -- packageGate:'never'`)
@@ -1300,30 +1241,16 @@ const results = await pipeline(
     const pkg = await call(
       [
         `cd ${issue.worktree}.`,
-        'The unit suite passing proves the SOURCE TREE works. It does not prove the WHEEL works: tests import the source tree, users import the installed package. This gate builds the artifact and exercises it.',
+        skill('wheel-gate/SKILL.md', 'the seven steps and the rules of the wheel gate -- follow them exactly and fill the schema from what each step actually printed.'),
         DIST_FACTS,
-        'Everything runs INSIDE an ephemeral container mounted on your worktree: the host has neither `build` nor `twine`, and its virtualenv is incomplete. Open a shell there:',
+        `The import package (\`<import_name>\` in the skill) is \`${IMPORT_NAME}\`.`,
+        'Open the ephemeral container the gate runs in:',
         '```',
         `MSYS_NO_PATHCONV=1 docker run --rm -e GRAPHKNOWS_SKIP_PREFLIGHT=1 -v "${winPath(issue.worktree)}:/app" -w /app graphknows-workspace sh`,
         '```',
-        'Inside it, /tmp is a real Linux tmpdir that dies with the container, so no artifact can ever land in the worktree. Run the steps one at a time and record what each actually printed.',
-        '  1. `uvx --from build pyproject-build --outdir /tmp/dist` -- the image ships `uv`, not `build`. Both an sdist (.tar.gz) and a wheel (.whl) must appear.',
-        '  2. `uvx twine check /tmp/dist/*` -- metadata is valid and the README renders.',
-        '  3. `python -m zipfile -l /tmp/dist/*.whl`. Confirm EVERY file this change added is inside it -- new modules, and especially non-.py data files and py.typed. The backend is hatchling: it ships exactly what pyproject tells it to and nothing else. A missing file here is precisely the bug this gate exists to catch.',
-        '  4. Fresh venv: `python -m venv /tmp/venv`, then `/tmp/venv/bin/pip install /tmp/dist/*.whl` -- ONLY the built wheel. Not the source tree, not editable.',
-        `  5. \`cd /tmp\` (OUT of /app), then \`/tmp/venv/bin/python -c "import ${IMPORT_NAME}; print(${IMPORT_NAME}.__file__)"\`. It must resolve inside /tmp/venv/lib/*/site-packages. If it prints a path under /app you are still importing the source tree -- cd out and rerun, the check is worthless otherwise.`,
         red?.test_id
-          ? `  6. Copy the reproduction test out of the source tree (\`cp /app/<test file> /tmp/\`, plus /app/tests/conftest.py if it needs fixtures) and run ${red.test_id} from /tmp with \`/tmp/venv/bin/python -m pytest\`. Copying is the point: run it from /app and pytest puts the source tree on sys.path, so you would be testing the code you did not install. Passing from the source tree but failing here means the fix does not ship -- a blocker, record it under problems.`
-          : '  6. No reproduction test exists; instead exercise the changed code path directly against the installed package from /tmp, and say exactly what you ran.',
-        '  7. Exit the container (`--rm` takes /tmp with it), then on the HOST confirm `git status --short` in the worktree shows no dist/, build/ or *.egg-info. hatchling should leave none; delete any that appeared and set worktree_clean accordingly.',
-        '',
-        'You are the only stage that MEASURES packaging rather than reasoning about it, so you also fix what you break. If a step above fails because this change left the metadata wrong -- a third-party import missing from [project.dependencies], a runtime package sitting in a dev group, a new directory without __init__.py, a data file the backend was never told to ship -- then edit pyproject.toml (or add the __init__.py), rebuild from step 1, and record each edit under "fixed".',
-        skill('python-packaging/REFERENCE.md', 'the authority on dependency specifiers and what a build backend ships -- consult it before editing pyproject.toml.'),
-        skill('python-packaging/SKILL.md', 'dependency specifier grammar (PEP 508) and extras vs dependency-groups -- which table a new dependency belongs in.'),
-        'Declare every dependency in the correct table with a lower bound. Two rules bound this: NEVER change the version, and never widen what ships just to make a step pass -- if you cannot fix it honestly, leave it and record it under "problems".',
-        'NEVER upload anything: no `twine upload`, no TestPyPI, no PyPI, no git tag, no version edit. This gate builds and inspects only -- publishing belongs to a separate release workflow.',
-        'If a step genuinely cannot run (no network for uvx, docker unavailable), set that field false and say exactly why in notes. Never report a check you did not actually run.',
-        'Anything you find that is NOT caused by this change -- a file that was already missing from the wheel, metadata that was already wrong, a dependency nobody declared -- goes under "discoveries", not "problems". Those get filed as their own GitHub issues: packaging defects are invisible to the test suite, so an unfiled one stays unknown indefinitely.',
+          ? `The reproduction test for step 6 is ${red.test_id}.`
+          : 'No reproduction test exists -- step 6 falls back to exercising the changed code path directly.',
         verify.green ? '' : 'Note: the unit checks were NOT green. Run this gate anyway and report what you find.',
       ]
         .filter(Boolean)
@@ -1504,10 +1431,8 @@ const results = await pipeline(
         .join('\n'),
       { label: `ship#${issue.number}`, phase: 'Ship', schema: SHIP_SCHEMA },
     )
-    // Never propagate null from here on. A late stage that returns null drops the whole ctx,
-    // and the summary then reports reproduced=false / green=false / "not run" for work that
-    // demonstrably succeeded -- the run lies about itself, which is worse than an honest
-    // failure. If the agent gave us nothing, say exactly that and keep everything upstream.
+    // Never propagate null from here on: a dropped ctx makes the summary report failure for
+    // work that demonstrably succeeded. Keep everything upstream and say what happened.
     return {
       ...ctx,
       ship: ship || {
@@ -1525,54 +1450,33 @@ const results = await pipeline(
   // and merging a red branch to prove it is red is not a thing worth doing.
   async (ctx) => {
     if (!ctx) return null
-    const { issue, ship } = ctx
-    // Watching CI is read-only; merging is the only step that writes to main. They used to
-    // share one gate, so a default run (merge:false) pushed a PR and never looked at its CI
-    // -- the whole phase was dead unless you also authorised a merge. Separate gates now:
-    // watch whatever we shipped, merge only when asked AND only when CI went green on its own.
+    const { issue, ship, verify } = ctx
+    // Watching CI is read-only and always on for shipped work; merging has its own gate.
     if (!ship?.shipped) {
       return { ...ctx, ci: null, merge: null }
     }
 
-    // `gh pr ready|merge` take a POSITIONAL (number | url | branch). `--head` is a `gh pr list`
-    // flag, so the old fallback rendered `gh pr ready --head fix/issue-12` and failed in exactly
-    // the degraded case it existed for. A bare branch name is a valid positional.
+    // A change that rewrites the verification it must pass proves nothing by passing it.
+    // Same list as run-merge-train's HARNESS (duplicated: scripts cannot import).
+    const HARNESS = ['.github/workflows/ci.yml', '.github/workflows/release.yml', 'scripts/gate.sh', '.pre-commit-config.yaml']
+    const harnessTouched = (verify?.changed_files || []).map(norm).filter((f) => HARNESS.includes(f))
+    const mergeAllowed = DO_MERGE && !harnessTouched.length
+    if (DO_MERGE && !mergeAllowed) {
+      log(`#${issue.number}: will NOT merge -- the diff rewrites the harness (${harnessTouched.join(', ')}), so its own green checks prove nothing. Land it as a human-reviewed PR.`)
+    }
+
+    // `gh pr ready|merge` take a POSITIONAL (number | url | branch); a bare branch name works.
     const prRef = ship.pr_url || issue.branch
     let ci = null
     for (let round = 1; round <= CI_ROUNDS; round++) {
       ci = await call(
         [
-          `cd ${issue.worktree}. You are round ${round} of at most ${CI_ROUNDS} on GitHub Actions for PR ${prRef} (branch ${issue.branch}). ${GH}`,
-          '',
-          'STEP 1 -- find the run and wait for it to settle.',
-          `  \`gh run list --branch ${issue.branch} --limit 5 --json databaseId,status,conclusion,event,headSha,url\``,
-          '  Take the newest run whose headSha matches the branch tip (`git rev-parse HEAD` after `git fetch origin`).',
-          '  A run can take several minutes and your individual commands time out well before that, so POLL -- do not block:',
-          '    `for i in $(seq 1 18); do gh run view <id> --json status,conclusion -q .status; sleep 20; done`',
-          '  and repeat that command until status is "completed". Roughly 6 minutes of waiting per call.',
-          '  If NO run appears within about 3 minutes of polling, stop and set outcome="no-run". Say whether',
-          '  .github/workflows/ci.yml actually exists on the base branch -- if it does not, no push can ever trigger a run,',
-          '  and that is the finding, not a failure of this PR.',
-          '',
-          'STEP 2 -- if the conclusion is success, set outcome="green" and stop. You are done, change nothing.',
-          '',
-          'STEP 3 -- if it failed, read the actual log before touching anything:',
-          '  `gh run view <id> --log-failed` (fall back to `gh run view <id> --log` if that is empty).',
-          '  Record every failing job/step under failing_jobs with the error line, not a paraphrase.',
-          '  Then judge WHY it failed, because the three causes need different responses:',
-          '    a) OUR CODE is wrong -- a real failure this change caused. Fix the code.',
-          '    b) The CI CONFIG is wrong, or the check is flaky/infra (a runner timeout, a network blip, a cache miss).',
-          '       Do NOT weaken the check to get green. Re-run it once with `gh run rerun <id> --failed` and see.',
-          '       If it fails the same way twice, it is not flaky -- report it as still-red with what you found.',
-          "    c) The failure is PRE-EXISTING on the base branch and nothing to do with this change. Say so, and do not",
-          '       paper over it here.',
-          '  Fix only case (a). Then commit and push:',
-          '    `git add -A`, commit with a concise lower-case imperative subject, no author trailer, hooks NOT bypassed,',
-          `    then \`git push origin ${issue.branch}\`. ${PREPUSH}`,
-          '  Set outcome="fixed-and-pushed" so the next round picks up the new run. If you cannot fix it, outcome="still-red".',
-          '',
-          'Anything you learn that is NOT this failure -- a check that should exist and does not, a flaky test, a config',
-          'smell -- goes under "discoveries" for filing, not into this diff.',
+          `cd ${issue.worktree}. You are round ${round} of at most ${CI_ROUNDS} on GitHub Actions for PR ${prRef} (branch ${issue.branch}, issue #${issue.number}). ${GH}`,
+          skill('ci-watch/SKILL.md', 'the whole round -- find and watch the run, the three failure causes, and the merge steps. Follow it exactly.'),
+          mergeAllowed
+            ? `Merging IS authorized this round: on green, run the skill's STEP 4 for PR ${prRef} and issue #${issue.number}. Watch-main mode: ${WATCH_MAIN === 'auto' ? 'auto' : WATCH_MAIN ? 'always' : 'never'}.`
+            : 'Merging is NOT authorized this round: on green, set outcome="green" and stop -- change nothing.',
+          `If STEP 3 has you push a fix: ${PREPUSH}`,
           BASELINE_NOTE,
           HOUSE,
         ].join('\n'),
@@ -1586,33 +1490,23 @@ const results = await pipeline(
       log(`#${issue.number}: CI ${ci?.outcome || 'unknown'}; not merging (merge:false)`)
       return { ...ctx, ci, merge: null }
     }
-    if (ci?.outcome !== 'green') {
-      log(`#${issue.number}: NOT merging -- CI is ${ci?.outcome || 'unknown'}`)
+    if (ci?.outcome !== 'green' || !mergeAllowed) {
+      if (mergeAllowed) log(`#${issue.number}: NOT merging -- CI is ${ci?.outcome || 'unknown'}`)
       return { ...ctx, ci, merge: null }
     }
 
-    const merge = await call(
-      [
-        `CI is green on PR ${prRef} for issue #${issue.number}. Merge it. ${GH}`,
-        `  1. \`gh pr ready ${prRef}\` -- take it out of draft, a draft PR cannot be merged.`,
-        `  2. \`gh pr merge ${prRef} --squash --delete-branch\`. Squash: one issue, one commit on main.`,
-        '     If the merge is refused (conflict, protected branch, not mergeable), do NOT force anything: set merged=false',
-        '     and say exactly what GitHub refused.',
-        `  3. Confirm issue #${issue.number} closed itself from the "Closes" line: \`gh issue view ${issue.number} --json state\`.`,
-        '     If it is still open, leave it open and note that -- do not close it by hand, that hides a broken link.',
-        WATCH_MAIN
-          ? [
-              '  4. The merge pushes to main, which triggers CI again. Watch that run the same way: poll',
-              '     `gh run list --branch main --limit 3 --json databaseId,status,conclusion,url` until it completes.',
-              '     Report post_merge_green. If it went red, say so plainly and do NOT try to fix main here -- a red main is a',
-              '     human decision (revert or roll forward), not something to improvise at the end of an automated run.',
-            ].join('\n')
-          : '  4. Do NOT wait for main\'s CI. Leave post_merge_green unset: nothing in this run acts on it, and the PR\'s own CI already went green on this exact tree. Stop once the merge is confirmed.',
-        'Do not tag, do not release, do not bump a version, do not upload anything.',
-      ].join('\n'),
-      { label: `merge#${issue.number}`, phase: 'CI', schema: MERGE_SCHEMA },
-    )
-    log(`#${issue.number}: ${merge?.merged ? 'merged' : 'NOT merged'} -- ${merge?.notes || ''}`)
+    // The merge happened inside the final green CI round; reshape its fields into the
+    // same object the summary and the train have always read.
+    const merge = {
+      merged: ci.merged === true,
+      merge_commit: ci.merge_commit,
+      issue_closed: ci.issue_closed,
+      tree_matches_ci: ci.tree_matches_ci,
+      post_merge_run_url: ci.post_merge_run_url,
+      post_merge_green: ci.post_merge_green,
+      notes: ci.notes,
+    }
+    log(`#${issue.number}: ${merge.merged ? 'merged' : 'NOT merged'} -- ${merge.notes || ''}`)
     return { ...ctx, ci, merge }
   },
 )
@@ -1638,6 +1532,8 @@ const summary = issues.map((issue, i) => {
     pr_url: r?.ship?.pr_url,
     ci: r?.ci?.outcome || 'not run',
     merged: r?.merge?.merged === true,
+    merge_commit: r?.merge?.merge_commit || '',
+    tree_matches_ci: r?.merge?.tree_matches_ci,
     post_merge_green: r?.merge?.post_merge_green,
     filed: (r?.followups?.filed || []).map((f) => f.number),
     discovered:
@@ -1775,7 +1671,7 @@ if (DO_REPORT) {
       '',
       'Then confirm the file exists and report its path and its size in bytes.',
     ].join('\n'),
-    { label: 'report', phase: 'Report' },
+    { label: 'report', phase: 'Report', ...MECH },
   )
   log(`run report: ${REPORT_PATH}`)
 }

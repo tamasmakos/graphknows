@@ -2,14 +2,14 @@ export const meta = {
   name: 'run-merge-train',
   description: 'Drain one spec issue: roster its sub-issue tickets, topo-order them, land each serially on the fresh tip via process-issues',
   whenToUse:
-    'The drain half of the merge-train skill. Given a spec issue filed by prepare-tickets, it reads the spec\'s sub-issues, admits only tickets a human has approved (ready-for-agent present, needs-triage absent), orders them by their "## Blocked by" edges, and lands them one at a time -- each car cut from main as it stands after the previous merge, so sibling conflicts cannot happen. A failed car is parked with its dependents and the train continues; a red main after a merge halts everything. Progress is commented on the spec issue per car, so a killed run resumes by relaunching.',
+    'The drain half of the merge-train skill. Given a spec issue filed by prepare-tickets, it reads the spec\'s sub-issues, admits only tickets a human has approved (ready-for-agent present, needs-triage absent), orders them by their "## Blocked by" edges, and lands them one at a time -- each car cut from main as it stands after the previous merge, so sibling conflicts cannot happen. A failed car is parked with its dependents and the train continues; a red main after a merge halts everything. Departure, parked cars and halts are commented on the spec issue as they happen and the wrap-up posts the full ledger, so a killed run resumes by relaunching -- position rebuilds from GitHub state alone.',
   phases: [
     { title: 'Roster', detail: 'read the spec\'s sub-issues, admit only human-approved tickets, order them', model: 'sonnet' },
     { title: 'Express', detail: 'the tiny tickets first, batched onto one branch with one CI run', model: 'sonnet' },
     { title: 'Drain', detail: 'per car: re-check labels, dispatch process-issues with merge, classify the outcome', model: 'sonnet' },
     { title: 'Recover', detail: 'one rebase-and-resolve attempt when a green PR failed to merge', model: 'sonnet' },
-    { title: 'Ledger', detail: 'one comment on the spec issue per car terminal state', model: 'sonnet' },
-    { title: 'Report', detail: 'write the train table to docs/agents/runs/', model: 'sonnet' },
+    { title: 'Ledger', detail: 'departure, parked and halt comments post immediately; landed cars batch into the wrap-up', model: 'sonnet' },
+    { title: 'Report', detail: 'one wrap-up agent: single main flake-check, the ledger comment, the train report', model: 'sonnet' },
   ],
 }
 
@@ -327,8 +327,18 @@ const ledger = (text) =>
       text,
       '<<<END COMMENT>>>',
     ].join('\n'),
-    { label: 'ledger', phase: 'Ledger' },
+    // Pure transcription -- the text is composed here, the agent only posts it. The
+    // cheapest model cuts what each of a spawn's ~40k overhead tokens costs.
+    { label: 'ledger', phase: 'Ledger', model: 'haiku', effort: 'low' },
   )
+
+// Per-car outcomes accumulate here and go up as ONE comment in the wrap-up, not one
+// ~40k-token agent per event -- the ledger agents alone cost more than any real stage
+// across recent runs. The split is by what a KILLED run would lose: a landed car is
+// durable without a comment (closed issue, merged PR, its own run report on disk), so it
+// batches; a parked car with no PR leaves no other trace of WHY it parked, so parking
+// still posts immediately -- as do departure and a halt, the moments a human waits on.
+const ledgerLines = []
 
 // The roster comment first: if the session dies mid-train, this plus the per-car comments
 // is the whole recovery story -- a relaunch rebuilds position from GitHub state alone
@@ -383,8 +393,8 @@ if (expressSet.length) {
     cars.push({ issue: r.number, title: byNumber.get(r.number)?.title || '', state: 'parked', reason: `express lane refused it: ${r.reason}` })
   }
 
-  await ledger(
-    `${RUN}: express batch ${expressResult?.merged ? 'landed' : 'did NOT land'} — ${landed.length ? landed.map((n) => '#' + n).join(', ') : 'nothing'}${
+  ledgerLines.push(
+    `express batch ${expressResult?.merged ? 'landed' : 'did NOT land'} — ${landed.length ? landed.map((n) => '#' + n).join(', ') : 'nothing'}${
       expressResult?.pr_url ? ` (${expressResult.pr_url})` : ''
     }.${ejected.length ? ` Ejected as bigger than rostered and re-queued as full cars: ${ejected.map((e) => '#' + e.number).join(', ')}.` : ''}`,
   )
@@ -414,7 +424,10 @@ for (const n of dispatchList) {
   const car = byNumber.get(n)
   const finish = async (state, reason, extra = {}) => {
     cars.push({ issue: n, title: car.title, state, reason, ...extra })
-    await ledger(`${RUN}: car #${n} ${state}${reason ? ` -- ${reason}` : ''}${extra.merge_commit ? ` (merged as ${extra.merge_commit})` : ''}${extra.pr_url ? ` ${extra.pr_url}` : ''}`)
+    const line = `car #${n} ${state}${reason ? ` -- ${reason}` : ''}${extra.merge_commit ? ` (merged as ${extra.merge_commit})` : ''}${extra.pr_url ? ` ${extra.pr_url}` : ''}`
+    ledgerLines.push(line)
+    // A parked car's reason lives nowhere else if this run is killed before the wrap-up.
+    if (state === 'parked') await ledger(`${RUN}: ${line}`)
   }
 
   if (halted) {
@@ -426,36 +439,12 @@ for (const n of dispatchList) {
     continue
   }
 
-  // The dispatch-time re-check: approval is durable label state, and the human's only
-  // mid-train brake is changing it. Redundant with the roster filter on a quiet repo,
-  // load-bearing on any other kind.
+  // No separate dispatch-time recheck agent: process-issues' own Triage re-reads state and
+  // labels on every named issue and refuses a gated or closed one whatever rosterChecked
+  // says -- so the mid-train human brake (re-applying the gate label) still works, and the
+  // refusal surfaces below through the child's `skipped` reason. A dedicated 40k-token
+  // agent per car re-read the same two fields the child was about to read anyway.
   phase('Drain')
-  const now = await call(
-    `Read GitHub issue #${n}: \`gh issue view ${n} --json state,labels\`. ${GH} Report its state and label names exactly as GitHub returns them. Do nothing else.`,
-    {
-      label: `recheck#${n}`,
-      phase: 'Drain',
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['state', 'labels'],
-        properties: { state: { type: 'string' }, labels: { type: 'array', items: { type: 'string' } } },
-      },
-    },
-  )
-  const regressed =
-    now?.state !== 'OPEN'
-      ? 'no longer open'
-      : (now.labels || []).includes(GATE_LABEL)
-        ? `re-labelled "${GATE_LABEL}" since the roster was built`
-        : !(now.labels || []).includes(READY_LABEL)
-          ? `"${READY_LABEL}" was removed since the roster was built`
-          : ''
-  if (regressed) {
-    await finish('parked', regressed)
-    for (const d of dependentsOf(admitted, n)) parkedSet.add(d)
-    continue
-  }
 
   // One car, end to end: worktree, 13 phases, merge. process-issues re-fetches and cuts
   // its worktree at its own Triage, so the fresh tip needs no help from here.
@@ -468,8 +457,14 @@ for (const n of dispatchList) {
   //     cut from a main that the previous car's CI just proved green, so re-running the full
   //     check chain to rediscover that costs a container per car and learns nothing new. A
   //     halt on a red main is what invalidates this, and a halt ends the train anyway.
-  //   - rosterChecked: labels, state and blocking edges were all read at Roster and re-read
-  //     at the dispatch check ten lines above.
+  //   - rosterChecked: blocking edges were verified at Roster; Triage still re-reads the
+  //     labels and state itself, which is the dispatch-time brake.
+  //   - requireReady: Triage's re-read must also demand READY_LABEL's continued PRESENCE
+  //     -- the train's admission rule, and the human's mid-train brake. Standalone runs do
+  //     not require it, so the train has to say so.
+  //   - watchMain 'auto': the merge agent compares trees and only watches main's CI when
+  //     the squash landed something the PR's CI did not test. The per-train flake net is
+  //     the single main check in the wrap-up below.
   const r = await workflow('process-issues', {
     issues: [n],
     merge: true,
@@ -477,7 +472,9 @@ for (const n of dispatchList) {
     baseline: landedSoFar() === 0,
     rosterChecked: true,
     ...CAR_ARGS,
-    watchMain: true,
+    // After the spread on purpose: neither is the operator's to relax on a train.
+    requireReady: true,
+    watchMain: 'auto',
   })
   let s = r?.summary?.[0]
 
@@ -498,7 +495,7 @@ for (const n of dispatchList) {
         `The worktree is ${s.worktree} on branch ${s.branch}.${s.pr_url ? ` The PR: ${s.pr_url}` : ''}`,
         `cd there, \`git fetch origin\`, \`git rebase origin/main\`.`,
         `If the rebase conflicts: read ${MAIN_REPO}/.claude/skills/resolving-merge-conflicts/SKILL.md and follow it on the live conflict. Resolve honestly or abort -- never take "ours" wholesale to make it stop.`,
-        'Then push with `git push --force-with-lease` in the FOREGROUND, one Bash call, explicit timeout of 600000 ms -- the pre-push hook runs the full container gate (3-4 minutes normally) and the default timeout kills it mid-gate. Never --no-verify.',
+        'Then push with `git push --force-with-lease` in the FOREGROUND, one Bash call, explicit timeout of 900000 ms (15 minutes) -- the pre-push hook runs the full container gate, ~5 minutes measured 2026-08-28 and longer on a cold cache or a loaded host, and the default timeout kills it mid-gate. Never --no-verify.',
         'Watch the PR checks to a conclusion (`gh pr checks <pr> --watch`), and if green: `gh pr merge <pr> --squash --delete-branch`.',
         'Then find the CI run the merge triggered on main (`gh run list --branch main --limit 3`), wait for it, and report post_merge_green.',
         'If anything fails -- a second conflict, red checks, a refused merge -- STOP and report it. Do not retry, do not improvise.',
@@ -534,6 +531,8 @@ for (const n of dispatchList) {
     await finish('halted-main-red', 'main went red after this merge. HUMAN: decide revert vs roll-forward before anything else lands.', {
       pr_url: s.pr_url,
     })
+    // A halt is the one per-car event a human may be waiting on -- it posts now, not at wrap-up.
+    await ledger(`${RUN}: **HALTED at car #${n}.** Main went red after its merge${s.pr_url ? ` (${s.pr_url})` : ''}. Revert or roll forward before anything else lands.`)
     continue
   }
   if (s.merged) {
@@ -552,9 +551,11 @@ for (const n of dispatchList) {
 const landed = cars.filter((c) => c.state === 'landed')
 log(`train done: ${landed.length} landed, ${cars.filter((c) => c.state.startsWith('parked')).length} parked${halted ? ', HALTED on red main' : ''}`)
 
-// -- Report --------------------------------------------------------
+// -- Wrap-up -------------------------------------------------------
+// One agent: the train's single main flake-check, the ledger comment, and the report file.
+// It runs even with report:false -- the comment is how a killed session's human catches up.
 const REPORT_PATH = opt.reportPath || `${RUNS_DIR}/run-merge-train-${SPEC}.md`
-if (DO_REPORT) {
+{
   const body = [
     `# merge-train -- spec #${SPEC}: ${roster.spec_title}`,
     '',
@@ -588,24 +589,67 @@ if (DO_REPORT) {
     '',
     '## Next',
     '',
-    `- The per-car ledger lives as comments on #${SPEC}; a relaunch of { spec: ${SPEC}, merge: true } resumes from GitHub state alone.`,
+    `- A relaunch of { spec: ${SPEC}, merge: true } resumes from GitHub state alone (closed child = landed, open PR = parked).`,
     '- Parked cars keep their PRs open and their worktrees in place; clear the derail by hand or re-triage the ticket.',
+    `- Per-car detail lives in each car's own run report under ${RUNS_DIR}/ (process-issues-<n>.md).`,
   ]
     .filter((x) => x !== null)
     .join('\n')
+
+  // Every car skipped its own main watch when the squash landed the exact tree its PR CI
+  // proved -- so one check here is the whole flake net for the train. A halt already
+  // measured main red and posted, so it needs neither.
+  const checkMain = landed.length > 0 && !halted
   await call(
     [
-      'Write a file. That is the whole task: no analysis, no summarising, no edits to the text.',
-      `Path: ${MAIN_REPO}/${REPORT_PATH} -- create the directory if it is missing, overwrite the file if it exists.`,
-      'Content: everything between the two marker lines below, byte for byte. The markers are NOT part of the file.',
-      '<<<REPORT-BEGINS>>>',
-      body,
-      '<<<REPORT-ENDS>>>',
-      'Then confirm the file exists and report its path.',
-    ].join('\n'),
-    { label: 'train-report', phase: 'Report' },
+      `You are wrapping up a merge train for spec issue #${SPEC}. Do these in order and nothing else. ${GH}`,
+      checkMain
+        ? [
+            '1. Check main ONCE: `gh run list --workflow CI --branch main --event push --limit 1 --json databaseId,status,conclusion,url`',
+            '   -- the CI workflow specifically, not whatever ran on main last. If that run is still in progress, wait for it',
+            '   with `gh run watch <id> --interval 30` (one foreground Bash call, explicit 1500000 ms timeout -- do not hand-roll',
+            '   a sleep loop). Report its conclusion under main_conclusion.',
+          ].join('\n')
+        : '1. Do NOT check main -- nothing landed, or the train already halted on a measured red. Set main_conclusion to "not-checked".',
+      `2. Post ONE comment on issue #${SPEC}. The text is final -- do not rephrase or extend it, except for the one RED line rule below.`,
+      `\`gh issue comment ${SPEC} --body "<the text below>"\``,
+      '<<<COMMENT>>>',
+      `${RUN}: train finished -- ${landed.length} of ${dispatchList.length} dispatched car(s) landed${halted ? '; **HALTED on a red main**' : ''}.`,
+      ...ledgerLines.map((l) => `- ${l}`),
+      '<<<END COMMENT>>>',
+      checkMain
+        ? "If step 1 found main RED, append this line to the comment: '**Main is RED after this train** -- revert or roll forward before anything else lands.'"
+        : '',
+      DO_REPORT
+        ? [
+            `3. Write a file at ${MAIN_REPO}/${REPORT_PATH} -- create the directory if missing, overwrite if it exists.`,
+            'Content: everything between the two markers, byte for byte; the markers are NOT part of the file. The one allowed',
+            'addition: append a final line `Main CI after the train: <conclusion from step 1>`.',
+            '<<<REPORT-BEGINS>>>',
+            body,
+            '<<<REPORT-ENDS>>>',
+            'Then confirm the file exists.',
+          ].join('\n')
+        : '3. No report file this run.',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    {
+      label: 'wrapup',
+      phase: 'Report',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['posted', 'main_conclusion'],
+        properties: {
+          posted: { type: 'boolean' },
+          main_conclusion: { type: 'string', description: "GitHub's conclusion string, or 'not-checked'" },
+          notes: { type: 'string' },
+        },
+      },
+    },
   )
-  log(`run report: ${REPORT_PATH}`)
+  if (DO_REPORT) log(`run report: ${REPORT_PATH}`)
 }
 
 return {

@@ -1,3 +1,0 @@
-Report the labels on these GitHub issues and do nothing else. Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
-For each of #202, #203: `gh issue view <n> --json number,labels`.
-Report the label names exactly as GitHub returns them. Do not add, remove or correct any label -- another step decides what to do about what you find.

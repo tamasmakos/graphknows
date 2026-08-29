@@ -227,6 +227,15 @@ const CANNED = {
     wide_refactor: false,
     notes: 'two slices',
   },
+  'wrap-up': {
+    issues: [
+      { number: 202, labels: ['enhancement', 'ready-for-agent'] },
+      { number: 203, labels: ['enhancement', 'ready-for-agent'] },
+    ],
+    repaired: [],
+    feature_dir: 'specs/001-window-chunk-episodic-index',
+    notes: 'stub',
+  },
   merge: { merged: true, method: 'squash', merge_commit: 'def5678', issue_closed: true, post_merge_run_url: 'https://github.com/tamasmakos/graphknows/actions/runs/1700', post_merge_green: true, notes: 'squashed' },
   roster: {
     spec_title: 'Window chunks carry their own episodic index',

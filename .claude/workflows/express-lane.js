@@ -64,8 +64,8 @@ const RUN_ON = { model: 'sonnet', effort: 'medium' }
 const call = (prompt, opts = {}) => agent(prompt, { ...RUN_ON, ...opts })
 
 const PREPUSH = [
-  'Run it in the FOREGROUND, in ONE Bash call, with an explicit timeout of 600000 ms (10 minutes).',
-  'The pre-push hook runs the full container gate -- normally 3-4 minutes, occasionally longer -- so the DEFAULT',
+  'Run it in the FOREGROUND, in ONE Bash call, with an explicit timeout of 900000 ms (15 minutes).',
+  'The pre-push hook runs the full container gate -- ~5 minutes measured 2026-08-28, longer on a cold cache -- so the DEFAULT',
   '2-minute timeout kills it mid-gate every time. A slow push is NOT an auth failure and NOT a hang: do not retry',
   'with a different remote, do not re-authenticate, and NEVER add --no-verify. Run it once -- killing and retrying',
   'leaves an orphaned container-side pytest behind, and they starve each other of CPU.',

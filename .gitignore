@@ -104,3 +104,6 @@ prototypes
 # by `git add graphknows/`, and the large-file hook then rejects the whole
 # commit on a 4.6 MB .owl that was never meant to be committed.
 graphknows/symbolic/ontology/assets/cco-extensions/candidates/
+# machine-written run reports; the rules beside runs/ stay tracked (gates.test.mjs asserts both)
+docs/agents/runs/
+.specify

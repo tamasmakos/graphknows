@@ -19,6 +19,7 @@
         "pr_url": "https://github.com/tamasmakos/graphknows/pull/163",
         "ci": "green",
         "merged": false,
+        "merge_commit": "",
         "filed": [
           162
         ],
@@ -84,7 +85,7 @@
     "#157: package gate problems -- py.typed is absent from the wheel",
     "#157: filed #162",
     "#157: CI round 1/3 -- green",
-    "#157: CI green; not merging (merge:false)",
+    "#157: NOT merged -- stub",
     "shipped 1/1; filed 1 follow-up issue(s)",
     "run report: docs/agents/runs/process-issues-157.md"
   ]

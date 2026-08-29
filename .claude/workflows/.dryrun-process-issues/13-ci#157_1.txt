@@ -1,35 +1,8 @@
-cd C:/Users/User/Documents/dev/gk-issue-157. You are round 1 of at most 3 on GitHub Actions for PR https://github.com/tamasmakos/graphknows/pull/163 (branch fix/issue-157). Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
-
-STEP 1 -- find the run and wait for it to settle.
-  `gh run list --branch fix/issue-157 --limit 5 --json databaseId,status,conclusion,event,headSha,url`
-  Take the newest run whose headSha matches the branch tip (`git rev-parse HEAD` after `git fetch origin`).
-  A run can take several minutes and your individual commands time out well before that, so POLL -- do not block:
-    `for i in $(seq 1 18); do gh run view <id> --json status,conclusion -q .status; sleep 20; done`
-  and repeat that command until status is "completed". Roughly 6 minutes of waiting per call.
-  If NO run appears within about 3 minutes of polling, stop and set outcome="no-run". Say whether
-  .github/workflows/ci.yml actually exists on the base branch -- if it does not, no push can ever trigger a run,
-  and that is the finding, not a failure of this PR.
-
-STEP 2 -- if the conclusion is success, set outcome="green" and stop. You are done, change nothing.
-
-STEP 3 -- if it failed, read the actual log before touching anything:
-  `gh run view <id> --log-failed` (fall back to `gh run view <id> --log` if that is empty).
-  Record every failing job/step under failing_jobs with the error line, not a paraphrase.
-  Then judge WHY it failed, because the three causes need different responses:
-    a) OUR CODE is wrong -- a real failure this change caused. Fix the code.
-    b) The CI CONFIG is wrong, or the check is flaky/infra (a runner timeout, a network blip, a cache miss).
-       Do NOT weaken the check to get green. Re-run it once with `gh run rerun <id> --failed` and see.
-       If it fails the same way twice, it is not flaky -- report it as still-red with what you found.
-    c) The failure is PRE-EXISTING on the base branch and nothing to do with this change. Say so, and do not
-       paper over it here.
-  Fix only case (a). Then commit and push:
-    `git add -A`, commit with a concise lower-case imperative subject, no author trailer, hooks NOT bypassed,
-    then `git push origin fix/issue-157`. Run it in the FOREGROUND, in ONE Bash call, with an explicit timeout of 600000 ms (10 minutes). Do NOT background it and do not poll for it: a backgrounded push cannot notify you before your turn ends, so you would wait forever and finish without reporting. One blocking call that returns is what you want. The pre-push hook runs the full container gate (lint, types, the whole suite, secret scan, dependency audit) -- normally 3-4 minutes, occasionally longer under load -- so the DEFAULT 2-minute timeout kills it mid-gate every time and you must pass the timeout explicitly. A slow push is NOT an auth failure and NOT a hang: do not retry with a different remote, do not re-authenticate, and NEVER add --no-verify. Run it once -- killing and retrying leaves an orphaned container-side pytest behind, and they starve each other of CPU.
-  Set outcome="fixed-and-pushed" so the next round picks up the new run. If you cannot fix it, outcome="still-red".
-
-Anything you learn that is NOT this failure -- a check that should exist and does not, a flaky test, a config
-smell -- goes under "discoveries" for filing, not into this diff.
+cd C:/Users/User/Documents/dev/gk-issue-157. You are round 1 of at most 3 on GitHub Actions for PR https://github.com/tamasmakos/graphknows/pull/163 (branch fix/issue-157, issue #157). Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
+Read C:/Users/User/Documents/dev/graphknows/.claude/skills/ci-watch/SKILL.md and follow it: the whole round -- find and watch the run, the three failure causes, and the merge steps. Follow it exactly.
+Merging IS authorized this round: on green, run the skill's STEP 4 for PR https://github.com/tamasmakos/graphknows/pull/163 and issue #157. Watch-main mode: auto.
+If STEP 3 has you push a fix: Run it in the FOREGROUND, in ONE Bash call, with an explicit timeout of 900000 ms (15 minutes). Do NOT background it and do not poll for it: a backgrounded push cannot notify you before your turn ends, so you would wait forever and finish without reporting. One blocking call that returns is what you want. The pre-push hook runs the full container gate (lint, types, the whole suite, secret scan, dependency audit) -- around 5 minutes, longer on a cold model cache or a loaded host -- so the DEFAULT 2-minute timeout kills it mid-gate every time and you must pass the timeout explicitly. A slow push is NOT an auth failure and NOT a hang: do not retry with a different remote, do not re-authenticate, and NEVER add --no-verify. Run it once. If it is killed anyway, the gate now names and traps its own runner, so check `docker ps` for a `gk-gate-*` survivor and remove it before anything else -- a retry that races an orphan starves both.
 These checks ALREADY fail on main and are not yours to fix or delete:
   - tests/topics/test_topic_stage.py::test_cluster: assertion on cluster count
 Anything failing that is NOT on this list was caused by this work.
-Repo rules (CLAUDE.md) are binding: pythonic OOP, type hints, one thing per function, small diffs, no speculative abstraction. Pre-commit hooks are rules -- never pass --no-verify. NEVER weaken, delete or retarget an existing test to make the suite pass. If an existing test genuinely encodes the wrong behaviour, leave it failing and report it -- changing it silently is the one unforgivable move here.
+Repo rules (CLAUDE.md) are binding: pythonic OOP, type hints, one thing per function, small diffs, no speculative abstraction. Pre-commit hooks are rules -- never pass --no-verify. NEVER weaken, delete or retarget an existing test to make the suite pass. If an existing test genuinely encodes the wrong behaviour, leave it failing and report it -- changing it silently is the one unforgivable move here. A check can fail because the ENVIRONMENT is broken -- a missing corpus, model, service, credential or volume -- and that is not a defect in the code under test. Fix it where it is provisioned: the Dockerfile, docker-compose.yaml, a setup script, a Makefile target. Library code under graphknows/ never downloads a corpus or model, provisions a service, or reaches the network to make a check pass. If you cannot fix the environment from inside this worktree, STOP: leave the check failing, say exactly what is missing and where it should be provisioned, and let the car park. A parked car costs one re-run; a workaround shipped to PyPI costs every user who installs it offline. Before writing any such fallback, grep scripts/ and the Makefile -- the provisioning step usually already exists and is simply not being run.

@@ -14,7 +14,7 @@ export const meta = {
     { title: 'Spec', detail: 'draft the spec from the chosen design (no filing yet)', model: 'opus' },
     { title: 'Critic', detail: 'adversarial read of the draft against the research brief', model: 'opus' },
     { title: 'Tickets', detail: 'draft the slices, check the bodies in JS, then file the spec and the tickets', model: 'opus' },
-    { title: 'Report', detail: 'write the run report to docs/agents/runs/ so it outlives this session', model: 'sonnet' },
+    { title: 'Report', detail: 'one wrap-up agent: repair labels, post clarifications, mirror the spec to specs/, write the run report', model: 'sonnet' },
   ],
 }
 
@@ -795,26 +795,61 @@ if (leaned.length > contested.length) log(`contesting ${contested.length} of ${l
 let refuted = []
 if (contested.length) {
   phase('Contest')
+  // Two claims per skeptic: the fixed per-agent overhead (session context) dwarfs the cost
+  // of checking a second claim, and the claims are independent facts, not votes -- pairing
+  // them loses no adversarial independence between DIFFERENT claims' verdicts.
+  const pairs = []
+  for (let i = 0; i < contested.length; i += 2) pairs.push(contested.slice(i, i + 2))
   const verdicts = await parallel(
-    contested.map((claim, i) => () =>
+    pairs.map((batch, i) => () =>
       call(
         [
-          `You are trying to REFUTE one claim that a design decision rests on, for the GraphKnows repository at ${MAIN_REPO}.`,
-          `THE CLAIM: ${claim}`,
-          'It came from a research agent that cited a source for it. That agent may have misread the file, cited a line that says something else, or generalised from one case.',
-          'Go and check it against the actual files, the actual command output, or the actual primary source. Read the thing itself -- do not reason about whether it sounds right.',
+          `You are trying to REFUTE ${batch.length === 1 ? 'one claim' : 'each of these claims'} that a design decision rests on, for the GraphKnows repository at ${MAIN_REPO}. Judge each claim on its own -- one being wrong says nothing about the other.`,
+          ...batch.map((c, j) => `CLAIM ${j + 1}: ${c}`),
+          'Each came from a research agent that cited a source for it. That agent may have misread the file, cited a line that says something else, or generalised from one case.',
+          'Go and check each against the actual files, the actual command output, or the actual primary source. Read the thing itself -- do not reason about whether it sounds right.',
           CHOSEN,
-          'Set refuted=true ONLY if you established the claim is wrong. A claim you could not verify either way is NOT refuted -- say so under why and leave refuted false. Being unable to confirm something is not the same as disproving it.',
-          'If it is wrong, say what is true instead under correction.',
+          'Per claim, set refuted=true ONLY if you established it is wrong. A claim you could not verify either way is NOT refuted -- say so under why and leave refuted false. Being unable to confirm something is not the same as disproving it.',
+          'If one is wrong, say what is true instead under its correction.',
+          'Each verdict MUST repeat its claim verbatim under "claim" -- that is how the script attaches your verdict to the right claim, and a refutation attached to the wrong claim poisons the spec.',
           'Change nothing. Write no files.',
         ].join('\n'),
-        { label: `contest:${i + 1}`, phase: 'Contest', schema: CONTEST_SCHEMA },
+        {
+          label: `contest:${i + 1}`,
+          phase: 'Contest',
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['verdicts'],
+            properties: {
+              verdicts: {
+                type: 'array',
+                items: {
+                  ...CONTEST_SCHEMA,
+                  required: [...CONTEST_SCHEMA.required, 'claim'],
+                  properties: { claim: { type: 'string', description: 'the contested claim, verbatim' }, ...CONTEST_SCHEMA.properties },
+                },
+              },
+            },
+          },
+        },
       ),
     ),
   )
+  // Attach each verdict to its claim by TEXT, not by position: a refutation stamped onto
+  // the wrong claim is worse than a lost verdict. Position is only the tiebreak, and a
+  // verdict matching nothing is dropped with a log line rather than guessed at.
+  const squash = (s) => String(s).toLowerCase().replace(/\s+/g, ' ').trim()
   refuted = verdicts
-    .map((v, i) => ({ claim: contested[i], ...(v || {}) }))
-    .filter((x) => x.refuted === true)
+    .flatMap((v, i) =>
+      (v?.verdicts || []).map((x, j) => {
+        const echoed = squash(x?.claim || '')
+        const match = pairs[i].find((c) => squash(c) === echoed || (echoed && squash(c).includes(echoed))) ?? pairs[i][j]
+        if (!match) log(`contest:${i + 1} returned a verdict matching no claim it was given -- dropped ("${String(x?.claim || '').slice(0, 80)}")`)
+        return match ? { ...(x || {}), claim: match } : null
+      }),
+    )
+    .filter((x) => x?.refuted === true)
   log(
     refuted.length
       ? `contest: ${refuted.length} of ${contested.length} load-bearing finding(s) REFUTED`
@@ -890,7 +925,8 @@ const spec = await call(
     skill('to-spec/SKILL.md', 'the spec template. Follow its section order exactly; you are the no-user branch, so stop at the draft.'),
     `Vocabulary: use the domain terms the repo already uses -- the Tensor Brain lexicon in ${MAIN_REPO}/CLAUDE.md and the terms defined in docs/ontology.md, docs/architecture.md and docs/services.md. Do not coin new ones for concepts that have names.`,
     'Sketch the seams you will test the feature at, per the template, and ALSO list them highest-first under "seams" in your output.',
-    'The user-stories section is in "As an <actor>, I want <feature>, so that <benefit>" form. One story per distinct actor with a distinct want -- if two stories differ only in wording, they are one story.',
+    'The user-stories section is in "As an <actor>, I want <feature>, so that <benefit>" form, PRIORITIZED: mark each story P1/P2/P3 and order them highest first. Each story must be independently testable, and the P1 story alone must be a viable MVP. One story per distinct actor with a distinct want -- if two stories differ only in wording, they are one story.',
+    'Number the requirements FR-001, FR-002, ... in order -- tickets may cite them by number.',
     'Length is a cost, not a virtue. Every sentence an implementer would not act on is a sentence that makes them build more. Do not re-derive what the user already decided above -- state it once, in one line, and move on.',
     'No file paths and no code snippets in the body -- they go stale. The one exception is a snippet from the prototype that encodes a decision more precisely than prose can; trim it to the decision.',
     // The spec carries the contract. The rationale lives in the ADR, which is COMMITTED --
@@ -970,7 +1006,7 @@ const draft = await call(
     PROTO_NOTE,
     CONTEST_NOTE,
     skill('to-tickets/SKILL.md', 'the Ticketing rules and Agent mode sections: vertical slices, blocking edges as data, the wide-refactor expand-migrate-contract exception. You are the agent-mode branch -- draft only.'),
-    `Produce at most ${MAX_TICKETS} tickets. Each is a tracer bullet: a narrow but COMPLETE path through every layer, demoable on its own, sized to fit one fresh context window. A ticket that only adds a schema, or only adds a test, is a horizontal slice and is wrong.`,
+    `Produce at most ${MAX_TICKETS} tickets. Each is a tracer bullet: a narrow but COMPLETE path through every layer, demoable on its own, sized to fit one fresh context window. A ticket that only adds a schema, or only adds a test, is a horizontal slice and is wrong. The first unblocked ticket should deliver the spec's P1 story end to end.`,
     'FILE NOTHING. Run no `gh issue create`, comment on nothing. A later step does the filing; your job is the text.',
     'Return the FINAL spec body under spec_body, with the critic must-fix items folded in. That exact text is filed verbatim -- nobody rewrites it after you.',
     // The spec keeps the no-paths rule -- it outlives the tree it was written against. A
@@ -1273,56 +1309,11 @@ if (notFiling) {
   )
 }
 
+// Label verify+repair rides in the wrap-up agent below: the expected label per issue is
+// computed here from data the agent cannot see, so it has nothing to decide -- and a
+// dedicated agent paid a full session context to run one gh loop.
+const filedNumbers = filedRes?.filed ? (filedRes.tickets || []).filter((t) => t.number > 0 && !t.duplicate_of) : []
 let labelProblems = []
-if (filedRes?.filed) {
-  const filedNumbers = (filedRes.tickets || []).filter((t) => t.number > 0 && !t.duplicate_of)
-  if (filedNumbers.length) {
-    const seen = await call(
-      [
-        `Report the labels on these GitHub issues and do nothing else. ${GH}`,
-        `For each of ${filedNumbers.map((t) => '#' + t.number).join(', ')}: \`gh issue view <n> --json number,labels\`.`,
-        'Report the label names exactly as GitHub returns them. Do not add, remove or correct any label -- another step decides what to do about what you find.',
-      ].join('\n'),
-      {
-        label: 'tickets:labels',
-        phase: 'Tickets',
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['issues'],
-          properties: {
-            issues: {
-              type: 'array',
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                required: ['number', 'labels'],
-                properties: { number: { type: 'integer' }, labels: { type: 'array', items: { type: 'string' } } },
-              },
-            },
-          },
-        },
-      },
-    )
-    const expected = new Map(filedNumbers.map((t) => [t.number, Boolean(gateReason[t.index])]))
-    labelProblems = labelCheck((seen?.issues || []).map((r) => ({ ...r, expected_gate: expected.get(r.number) })))
-    for (const p of labelProblems) log(`label check: ${p}`)
-    if (labelProblems.length) {
-      await call(
-        [
-          `Fix the labels on these GitHub issues. ${GH} Change nothing else -- no comments, no body edits, no closing.`,
-          ...filedNumbers.map(
-            (t) =>
-              `  #${t.number}: it must carry "${gateReason[t.index] ? GATE_LABEL : READY_LABEL}" and NOT "${gateReason[t.index] ? READY_LABEL : GATE_LABEL}". Use \`gh issue edit ${t.number} --add-label "..." --remove-label "..."\` as needed; if it is already correct, leave it alone.`,
-          ),
-          'These two labels are mutually exclusive. An issue carrying both is treated as gated by every reader and never gets worked.',
-        ].join('\n'),
-        { label: 'tickets:relabel', phase: 'Tickets' },
-      )
-      log(`label check: repaired ${labelProblems.length} issue(s) -- re-read them if this run mattered`)
-    }
-  }
-}
 
 // Index -> real issue number, resolved in the script. The blocking edges in the return
 // value are therefore computed, not claimed.
@@ -1357,33 +1348,60 @@ log(
 // answer, and they are not reading the tickets. One comment, every question, each with the
 // default the run used meanwhile, so an unanswered question is a decision already made and
 // visibly attributed rather than a silent assumption.
-if (REQUEST && FILE && clarifications.length) {
-  await call(
-    [
-      `Post ONE comment on GitHub issue #${REQUEST} and do nothing else -- do not close it, do not relabel it. ${GH}`,
-      'The text is final. Do not rephrase it, do not add a signature, do not answer the questions yourself.',
-      `\`gh issue comment ${REQUEST} --body "<the text below, verbatim>"\``,
-      '<<<COMMENT>>>',
-      `**${clarifications.length} question(s) this request does not settle.** ${RUN} carried on using the defaults below, so nothing is blocked — but if a default is wrong, the work built on it will be too.`,
-      '',
-      ...clarifications.map((c) => `- **${c.question}**\n  Assumed meanwhile: ${c.default_if_unanswered || 'nothing — the pipeline guessed'}`),
-      '',
-      tickets.filed
-        ? `Answer here and re-run \`{ request: ${REQUEST} }\` to re-spec, or edit the affected ticket directly: ${filed.map((n) => '#' + n).join(', ')}.`
-        : 'Answer here and re-run to file.',
-      '<<<END COMMENT>>>',
-    ].join('\n'),
-    { label: 'clarifications', phase: 'Tickets' },
-  )
-  log(`posted ${clarifications.length} open question(s) to #${REQUEST}`)
-}
-
-// -- Run report ----------------------------------------------------
-// The research note holds the sources; this holds the outcome. One agent, no judgement:
-// the markdown is composed here and it only writes the bytes.
+const CLAR_COMMENT =
+  REQUEST && FILE && clarifications.length
+    ? [
+        `**${clarifications.length} question(s) this request does not settle.** ${RUN} carried on using the defaults below, so nothing is blocked — but if a default is wrong, the work built on it will be too.`,
+        '',
+        ...clarifications.map((c) => `- **${c.question}**\n  Assumed meanwhile: ${c.default_if_unanswered || 'nothing — the pipeline guessed'}`),
+        '',
+        tickets.filed
+          ? `Answer here and re-run \`{ request: ${REQUEST} }\` to re-spec, or edit the affected ticket directly: ${filed.map((n) => '#' + n).join(', ')}.`
+          : 'Answer here and re-run to file.',
+      ].join('\n')
+    : ''
+// -- Wrap-up -------------------------------------------------------
+// One agent for everything after filing: label verify+repair, the clarifications comment,
+// the specs/<NNN>-<slug>/ mirror, and the run report. All of it is mechanical -- every
+// body and every expected label is computed here -- and each task used to pay a full
+// session context for an agent of its own.
 const REPORT_PATH = opt.reportPath || `${RUNS_DIR}/prepare-tickets-${SLUG || 'run'}.md`
+
+// The on-disk mirror of what was filed, in spec-kit's layout. specs/<NNN>-<slug>/ is
+// committed, so the speckit skills (analyze, checklist, clarify, converge) can be run on
+// this feature afterwards. The GitHub issues stay the contract process-issues reads; the
+// mirror is written only when they exist, so a preview run leaves no trace here either.
+const SPEC_MD = tickets.filed
+  ? [`<!-- Filed as spec issue #${tickets.spec_issue}${REQUEST ? `, requested in #${REQUEST}` : ''} by ${RUN} -->`, '', SPEC_BODY].join('\n')
+  : ''
+const RESEARCH_MD = tickets.filed
+  ? [`# Research -- ${TOPIC}`, BRIEF, CONTEST_NOTE, PROTO_NOTE].filter(Boolean).join('\n\n')
+  : ''
+const TASKS_MD = tickets.filed
+  ? [
+      `# Tasks: ${spec.title}`,
+      '',
+      `Mirror of the tickets under spec issue #${tickets.spec_issue}; the issues are the source of truth.`,
+      '',
+      ...order.map((i, k) => {
+        const t = drafted[i]
+        const n = numberOf.get(i)
+        const blockers = (t.blocked_by_index || []).map((b) => numberOf.get(b) || 0).filter((x) => x > 0)
+        return [
+          `- [ ] T${String(k + 1).padStart(3, '0')} ${t.title}${n ? ` (#${n})` : ''}`,
+          `  - Blocked by: ${blockers.length ? blockers.map((x) => `#${x}`).join(', ') : 'nothing -- can start immediately'}`,
+          gateReason[i] ? `  - Gated: ${gateReason[i]}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n')
+      }),
+    ].join('\n')
+  : ''
+
+// The run report. The research note holds the sources; this holds the outcome.
+let REPORT_BODY = ''
 if (DO_REPORT) {
-  const body = [
+  REPORT_BODY = [
     `# prepare-tickets -- ${TOPIC}`,
     '',
     `${RUN}. ${
@@ -1501,23 +1519,102 @@ if (DO_REPORT) {
   ]
     .filter((x) => x !== null)
     .join('\n')
+}
 
-  await call(
+const wrapTasks = []
+if (filedNumbers.length) {
+  wrapTasks.push(
     [
-      'Write a file. That is the whole task: no analysis, no summarising, no edits to the text.',
-      `Path: ${MAIN_REPO}/${REPORT_PATH} -- create the directory if it is missing, overwrite the file if it exists.`,
-      'Content: everything between the two marker lines below, byte for byte. The markers themselves are NOT part of the file.',
-      'Do not reformat it, do not fix its grammar, do not add a heading or a footer, and do not append a note about yourself.',
-      '',
-      '<<<REPORT-BEGINS>>>',
-      body,
-      '<<<REPORT-ENDS>>>',
-      '',
-      'Then confirm the file exists and report its path and its size in bytes.',
+      'Verify and repair the labels on the issues below. For each: `gh issue view <n> --json number,labels`; if it already carries exactly the required label and not the forbidden one, leave it alone, otherwise `gh issue edit <n> --add-label "..." --remove-label "..."` until it does. Change nothing else on them -- no comments, no body edits, no closing.',
+      ...filedNumbers.map(
+        (t) => `  #${t.number}: must carry "${gateReason[t.index] ? GATE_LABEL : READY_LABEL}" and NOT "${gateReason[t.index] ? READY_LABEL : GATE_LABEL}".`,
+      ),
+      'These two labels are mutually exclusive. An issue carrying both is treated as gated by every reader and never gets worked.',
+      'Report the FINAL labels on each issue under issues, exactly as GitHub returns them after your edits, and every repair you made under repaired.',
     ].join('\n'),
-    { label: 'report', phase: 'Report' },
   )
-  log(`run report: ${REPORT_PATH}`)
+}
+if (CLAR_COMMENT) {
+  wrapTasks.push(
+    [
+      `Post ONE comment on GitHub issue #${REQUEST} -- do not close it, do not relabel it, do not answer the questions yourself.`,
+      `\`gh issue comment ${REQUEST} --body "<the text below, verbatim>"\``,
+      '<<<COMMENT>>>',
+      CLAR_COMMENT,
+      '<<<END COMMENT>>>',
+    ].join('\n'),
+  )
+}
+if (SPEC_MD) {
+  wrapTasks.push(
+    [
+      `Mirror the filed spec into the repository, in spec-kit's layout. From ${MAIN_REPO} run \`powershell -ExecutionPolicy Bypass -File .specify/scripts/powershell/create-new-feature.ps1 -Json -ShortName "${SLUG}" "<the topic, quoted safely>"\` where the topic is: ${TOPIC}. Parse the JSON it prints for the feature directory it created (specs/<NNN>-<slug>). It seeds a template spec.md there; overwrite it.`,
+      'Into that directory write the three payloads below as spec.md, research.md and tasks.md -- byte for byte, markers excluded. Report the directory, relative to the repo root, under feature_dir.',
+      '<<<spec.md>>>',
+      SPEC_MD,
+      '<<<end spec.md>>>',
+      '<<<research.md>>>',
+      RESEARCH_MD,
+      '<<<end research.md>>>',
+      '<<<tasks.md>>>',
+      TASKS_MD,
+      '<<<end tasks.md>>>',
+    ].join('\n'),
+  )
+}
+if (REPORT_BODY) {
+  wrapTasks.push(
+    [
+      `Write the run report to ${MAIN_REPO}/${REPORT_PATH} -- create the directory if it is missing, overwrite the file if it exists. Content: everything between the two marker lines, byte for byte; the markers are NOT part of the file.`,
+      '<<<REPORT-BEGINS>>>',
+      REPORT_BODY,
+      '<<<REPORT-ENDS>>>',
+      'Then confirm the file exists and report its path and its size in bytes under notes.',
+    ].join('\n'),
+  )
+}
+
+let wrap = null
+if (wrapTasks.length) {
+  wrap = await call(
+    [
+      `${wrapTasks.length} task(s), in order, and nothing else. ${GH}`,
+      'Every payload below is FINAL. Write the bytes as given: do not reformat, do not fix grammar, do not add headings, footers or notes about yourself.',
+      ...wrapTasks.map((t, i) => `\nTASK ${i + 1} -- ${t}`),
+    ].join('\n'),
+    {
+      label: 'wrap-up',
+      phase: 'Report',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['issues'],
+        properties: {
+          issues: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['number', 'labels'],
+              properties: { number: { type: 'integer' }, labels: { type: 'array', items: { type: 'string' } } },
+            },
+          },
+          repaired: { type: 'array', items: { type: 'string' } },
+          feature_dir: { type: 'string', description: 'the specs/<NNN>-<slug> directory the mirror was written to, or empty' },
+          notes: { type: 'string' },
+        },
+      },
+    },
+  )
+  for (const r of wrap?.repaired || []) log(`label repair: ${r}`)
+  if (filedNumbers.length) {
+    const expected = new Map(filedNumbers.map((t) => [t.number, Boolean(gateReason[t.index])]))
+    labelProblems = labelCheck((wrap?.issues || []).map((r) => ({ ...r, expected_gate: expected.get(r.number) })))
+    for (const p of labelProblems) log(`label check STILL WRONG after repair: ${p}`)
+  }
+  if (CLAR_COMMENT) log(`posted ${clarifications.length} open question(s) to #${REQUEST}`)
+  if (SPEC_MD) log(`spec mirror: ${wrap?.feature_dir || 'directory not reported -- check specs/'}`)
+  if (REPORT_BODY) log(`run report: ${REPORT_PATH}`)
 }
 
 // The handover to process-issues. `tickets` is the array it takes as args.from.tickets.
@@ -1527,6 +1624,7 @@ if (DO_REPORT) {
 // around.
 return {
   report: DO_REPORT ? REPORT_PATH : 'not written',
+  feature_dir: wrap?.feature_dir || '',
   request: REQUEST,
   topic: TOPIC,
   screened: screen?.verdict || (REQUEST ? 'not run' : 'no request to screen'),

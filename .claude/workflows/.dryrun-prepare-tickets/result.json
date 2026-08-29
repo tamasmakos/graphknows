@@ -1,6 +1,7 @@
 {
   "result": {
-    "report": "not written",
+    "report": "docs/agents/runs/prepare-tickets-window-chunk-episodic-index.md",
+    "feature_dir": "specs/001-window-chunk-episodic-index",
     "request": 300,
     "topic": "should window chunks carry their own episodic index?",
     "screened": "go",
@@ -74,6 +75,8 @@
     "critic: fixable, 1 must-fix",
     "2/2 ticket(s) ready for an agent, 0 waiting on a person",
     "filed spec #201 and 2 ticket(s): #202, #203",
-    "posted 1 open question(s) to #300"
+    "posted 1 open question(s) to #300",
+    "spec mirror: specs/001-window-chunk-episodic-index",
+    "run report: docs/agents/runs/prepare-tickets-window-chunk-episodic-index.md"
   ]
 }
