@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import logging
 import threading
+from functools import cache
 from pathlib import Path
 
 from graphknows.symbolic.ontology.lexical import document_frequency, usable_index
-from graphknows.symbolic.ontology.skos import Concept, build_scheme, extend_scheme
+from graphknows.symbolic.ontology.skos import Concept, build_scheme, coarse_aliases, extend_scheme
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +61,24 @@ def load_scheme(source: str, overlay: str = "") -> dict[str, Concept]:
         return scheme
 
 
+@cache
+def load_coarse_aliases(overlay: str) -> dict[str, str]:
+    """The overlay's curated coarse-type -> CCO-class mapping, cached per path.
+
+    Same caching intent as :func:`load_scheme`: an empty ``overlay`` means no
+    curated aliases at all, and a configured-but-missing path is a broken
+    install rather than an absent feature. ``lru_cache`` gives thread-safe
+    memoisation for a dict this small in one decorator.
+    """
+    if not overlay:
+        return {}
+    path = Path(overlay)
+    if path.exists():
+        return coarse_aliases(path)
+    log.error("Ontology overlay %r not found; curated coarse-type aliases absent", overlay)
+    return {}
+
+
 def build_index(
     scheme: dict[str, Concept], corpus: list[str], nlp: object, namespace: str = ""
 ) -> dict[str, set[str]]:
@@ -89,3 +108,4 @@ def reset_schemes() -> None:
     with _lock:
         _schemes.clear()
         _indexes.clear()
+    load_coarse_aliases.cache_clear()

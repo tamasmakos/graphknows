@@ -70,7 +70,17 @@ The two mappers are deliberately different:
 - **Entity types** are grounded in two stages, memoised per distinct type.
   The candidate set comes only from lexical evidence — an exact label match,
   or a SKOS altLabel once the corpus-frequency lexicon has warmed up — never
-  from embedding similarity against the whole class vocabulary. A single
+  from embedding similarity against the whole class vocabulary. An altLabel
+  candidate only counts when every content word of its class label is also a
+  content word of the extracted type, so a label that merely *contains* the
+  type as one word among several ("product" inside "Product Transport
+  Facility") cannot anchor on its own. The bundled overlay's `coarseAliases`
+  block additionally maps the extractor's seven guaranteed coarse types
+  (`person`, `organization`, `facility`, `occupation`, `event`, `animal`,
+  `product`) to the CCO class each one means — `event` to `Act`, `product` to
+  `Material Artifact` — ahead of that lexical build, since three of the seven
+  are not CCO class labels verbatim; a coarse type mapped to `""` (`entity`)
+  abstains outright rather than fall back to a fragment match. A single
   candidate is the answer (`matcher="lexical"`, score 1.0). Several
   candidates are ranked by embedding, but only against each other's
   definitions, and accepted only if the top one clears a similarity floor and
@@ -114,6 +124,22 @@ once a rebind promotes a newer version), `MATCHES_CLASS` (chunk → class,
 Written once per namespace at schema-ensure time, count-guarded so a restart is
 a no-op. The DDL is unconditional and additive, so an existing namespace gains
 the types (empty) on its next `ensure_schema`.
+
+**Why all 1437 CCO classes get written, not only the ones a chunk actually
+matched.** `GraphStore.write_ontology` writes every class vertex, its
+definition embedding and its `BROADER` edges up front, whether or not any
+chunk in the namespace ever gets tagged with it. That is not wasted
+materialisation: a class no chunk ever matched directly is the entry point
+that makes its grounded descendants reachable from a general query.
+`GraphStore._narrower_scores` walks one hop DOWN the `BROADER` edges at a
+discount, so a query that matches `Facility` reaches a chunk tagged only
+`Dance Studio`, even though `Facility` itself tags nothing in that namespace —
+the taxonomy has to already be there for that hop to exist. Two honest limits:
+that reader sits behind `GRAPHKNOWS_ENABLE_ONTOLOGY_CHANNEL`, default-off
+pending its A/B (see [modes.md](modes.md) / [configuration.md](configuration.md)),
+and a class with no grounded descendant in a given namespace genuinely
+contributes nothing there — an ungrounded class is dead weight only for the
+namespaces that never populate its subtree, not for the mechanism in general.
 
 **Every ontology import mints a `SOURCE` vertex** recording the (channel,
 version) it produced, keyed so a re-import under a changed file MERGEs a new

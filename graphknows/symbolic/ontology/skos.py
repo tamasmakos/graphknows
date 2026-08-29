@@ -286,6 +286,21 @@ def extend_scheme(scheme: dict[str, Concept], overlay: Path) -> dict[str, Concep
     return scheme
 
 
+def coarse_aliases(overlay: Path) -> dict[str, str]:
+    """The overlay's curated ``coarseAliases`` block: coarse type -> CCO class.
+
+    The extractor's guaranteed coarse vocabulary (``labels.COARSE``) is offered
+    on every chunk, and a human already curated what each one MEANS in CCO terms
+    (``event`` -> ``Act``, ``product`` -> ``Artifact``) — this is that mapping,
+    read verbatim so it can outrank the accidental altLabel-fragment anchor. An
+    empty string is a deliberate answer ("this coarse type is untypeable"), not
+    a missing one, so it is kept rather than filtered out.
+    """
+    data = json.loads(overlay.read_text(encoding="utf-8"))
+    block = data.get("coarseAliases") or {}
+    return {k.casefold(): v for k, v in block.items() if k != "_comment"}
+
+
 def lexical_index(scheme: dict[str, Concept]) -> dict[str, set[str]]:
     """AltLabel -> the prefLabels that claim it. The whole selection mechanism."""
     index: dict[str, set[str]] = defaultdict(set)
