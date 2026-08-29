@@ -56,6 +56,7 @@ _STRUCTURAL = frozenset(
     [
         "act",
         "acts",
+        "has",
         "of",
         "the",
         "a",
@@ -175,9 +176,14 @@ class Concept:
 
 
 def content_tokens(label: str) -> list[str]:
-    """The descriptive words of a label, minus CCO's structural scaffolding."""
-    words = re.findall(r"[A-Za-z]+", label.lower())
-    return [w for w in words if w not in _STRUCTURAL and len(w) > 2]
+    """The descriptive words of a label, minus CCO's and schema.org's structural scaffolding.
+
+    Tokenizes BEFORE lowercasing: case is the only word boundary a camelCase
+    label ("worksFor") has, and lowercasing first would collapse it into one
+    unsplittable string.
+    """
+    words = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])", label)
+    return [w for w in (w.lower() for w in words) if w not in _STRUCTURAL and len(w) > 2]
 
 
 def lexicalize(concept: Concept) -> Concept:

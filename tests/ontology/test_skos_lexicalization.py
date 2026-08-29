@@ -20,6 +20,7 @@ from graphknows.symbolic.ontology.skos import (
     Concept,
     _upper_ontology_property,
     ancestors,
+    content_tokens,
     lexicalize,
 )
 
@@ -124,6 +125,59 @@ class TestMissingWordnetCorpus:
         assert "commercial" in concept.alt_labels
         assert "organization" in concept.alt_labels
         assert "commercial organization" in concept.alt_labels
+
+
+class TestCamelCaseLabelsSplit:
+    """schema.org names properties in camelCase (``worksFor``) where CCO uses
+    space-separated Title Case (``Act of Employment``). ``content_tokens``
+    lowercases before tokenizing, destroying the case boundary that would
+    split a camelCase label — a collapsed token like ``worksfor`` is an index
+    key no mention of running text can ever reach.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "expected"),
+        [
+            ("worksFor", ["works"]),
+            ("friendOf", ["friend"]),
+            ("lifePartnerOf", ["life", "partner"]),
+            ("plansTo", ["plans"]),
+            ("EducationalOrganization", ["educational", "organization"]),
+            ("hasOccupation", ["occupation"]),
+        ],
+    )
+    def test_camel_case_label_splits_into_lowercase_tokens(
+        self, label: str, expected: list[str]
+    ) -> None:
+        assert content_tokens(label) == expected
+
+    def test_has_prefix_is_structural(self) -> None:
+        """``has`` is a spaCy stopword ``lexical.lemma_view`` never emits, so a
+        two-token ``has <noun>`` label (``hasOccupation``, and the ~70 CCO
+        relations shaped ``has brother`` / ``has mother``) can never satisfy
+        ``lexical.evoked``'s STRONG all-tokens-present rule or the WEAK
+        branch's single-token gate. Stripping it collapses these to their one
+        real content word, restoring both paths.
+        """
+        assert content_tokens("has brother") == ["brother"]
+
+    def test_cco_title_case_labels_are_unchanged(self) -> None:
+        """No-regression half of the fix: CCO has zero camelCase labels."""
+        assert content_tokens("Act of Employment") == ["employment"]
+        assert content_tokens("Commercial Organization") == ["commercial", "organization"]
+
+    def test_camel_case_class_reaches_its_parts_through_lexicalize(self) -> None:
+        c = lexicalize(
+            Concept(
+                uri="schema:EducationalOrganization",
+                pref_label="EducationalOrganization",
+                definition="",
+                kind="class",
+            )
+        )
+        assert "educational" in c.alt_labels
+        assert "organization" in c.alt_labels
+        assert "educational organization" in c.alt_labels
 
 
 class TestAncestors:

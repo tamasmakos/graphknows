@@ -150,3 +150,30 @@ baseline sheet (`conv-30-seed0.csv`, `judged=0` on every tier) and the two new
 sheets drawn here — a human judging pass is the natural next step before
 calling the predicate-anchoring signal above a certified precision result
 rather than a directional one.
+
+## 2026-08-29 addendum: this A/B ran with the camelCase lexical surface broken
+
+Issue #250 found that `skos.py::content_tokens` lowercased a label before
+tokenizing it, destroying the only word-boundary signal a camelCase
+schema.org-shaped label has — so 12 of the personal profile's 25 properties
+(`worksFor`, `friendOf`, `lifePartnerOf`, `homeLocation`, `workLocation`,
+`hasOccupation`, `knowsAbout`, `memberOf`, `alumniOf`, `relatedTo`,
+`plansTo`, `lifeEvent`) and 1 of its 9 classes (`EducationalOrganization`)
+had no lexical surface beyond their own unreadable concatenated label
+(`worksfor`, `lifepartnerof`, `educationalorganization`, ...) at the time
+this A/B ran (`2026-08-28T11:04:00Z`, per this file's own `Generated` line).
+That bug was still present when the "personal 144 ontology-tier / 9
+unanchored vs cco 105 / 48" predicate-anchoring result above was measured.
+
+**This makes the personal arm's 144/9 result a floor, not a ceiling** — every
+number above it was reachable with more than half the personal vocabulary's
+properties effectively mute to normal conversational text (matchable only via
+the literal camelCase string or embedding similarity, not via lexical
+lookup). CCO has zero camelCase labels in either its classes or its 264
+properties (confirmed in issue #250), so the cco arm's 105/48 is unaffected
+by this bug and is not a floor in the same sense.
+
+Re-running both arms with the fix in place is a separate ~52-minute two-arm
+`evaluation locomo` docker run (matching this file's own cold-start timings:
+~26 minutes per arm) and was not performed as part of this note — no number
+in the table or prose above has been changed or re-measured here.
