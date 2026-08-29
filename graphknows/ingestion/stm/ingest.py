@@ -460,6 +460,14 @@ class _STMIngestHandler:
         # abstention nobody can count is indistinguishable from an extractor
         # that found nothing.
         self._abstentions: dict[str, int] = defaultdict(int)
+        # Accepted MATCHES_CLASS sims for this session, so the spread that
+        # issue #158 measured (a degenerate ~0.02 band) can be reported rather
+        # than only ever inferred from a bug report.
+        self._tag_sims: list[float] = []
+        # Set once we have logged that class tagging is off for lack of a
+        # lexical index -- otherwise every subsequent chunk repeats the same
+        # INFO line for the whole ingest run.
+        self._logged_unanchored_class_tag: bool = False
         # Lexical label selection over the SKOS scheme. Replaces embedding the
         # chunk against class definitions, which measured 11% of tags sharing a
         # word with their own chunk. Built lazily: the lexical index needs the
@@ -470,6 +478,12 @@ class _STMIngestHandler:
         # The overlay's curated coarse-type -> CCO-class mapping (issue #154):
         # populated in `_ensure_scheme` alongside `_scheme`.
         self._coarse_aliases: dict[str, str] = {}
+        # Overlay-only classes (in `_scheme` but not in `self._ontology.classes`,
+        # e.g. "Dance Studio") as their own tiny index, so the anchor law's
+        # candidate set and the ranked vocabulary agree — see `_match_classes`.
+        # ``None`` until `_ensure_scheme` builds it, and stays ``None`` when
+        # every scheme class is already covered by `self._ontology.classes`.
+        self._overlay_index: Any = None
         self._corpus_seen: list[str] = []
         self._lex_frozen: bool = False
         # Corpus size the lexical index was last built at. `_ensure_scheme` is
@@ -586,9 +600,13 @@ class _STMIngestHandler:
         # parallelism by setting INGEST_CHUNK_CONCURRENCY>1.
         cap = int(os.environ.get("INGEST_CHUNK_CONCURRENCY", "1"))
 
+        self._seed_corpus(cleaned_texts)
+
         # Per-chunk ontology label hints, reusing the embeddings above (no
         # re-embed). Empty when no ontology is configured, which is the default.
-        ont_classes = [self._match_classes(e) for e in batch_embeddings]
+        ont_classes = [
+            self._match_classes(e, t) for e, t in zip(batch_embeddings, cleaned_texts, strict=False)
+        ]
         entity_hints = self._label_hints(batch_embeddings)
 
         # Batch NER for ALL chunks in one GLiNER2 forward pass when supported.
@@ -700,7 +718,7 @@ class _STMIngestHandler:
             entity_count=entity_count,
             elapsed_s=elapsed,
             errors=errors,
-            abstentions={k: v for k, v in self._abstentions.items() if v},
+            abstentions=self._report_abstentions(),
         )
 
     async def _relation_pass(
@@ -927,7 +945,7 @@ class _STMIngestHandler:
             extraction=extraction,
             temporal=temporal,
             memory_class=metadata.get("memory_class") or "raw_evidence",
-            ontology_classes=self._match_classes(embedding) if infer else [],
+            ontology_classes=self._match_classes(embedding, chunk_text) if infer else [],
         )
 
     # ------------------------------------------------------------------
@@ -958,6 +976,7 @@ class _STMIngestHandler:
             cfg = GraphKnowsSettings()
             self._scheme = load_scheme(cfg.ontology_source, cfg.overlay_source)
             self._coarse_aliases = load_coarse_aliases(cfg.overlay_source)
+            self._overlay_index = self._build_overlay_index()
         # Built EAGERLY from whatever text has arrived, then rebuilt once at the
         # warmup mark. Waiting for the full warmup would leave every corpus's
         # first turns with no lexical selection at all, and a short session with
@@ -1410,19 +1429,120 @@ class _STMIngestHandler:
     # Ontology injection (mode-independent; inert when no ontology is set)
     # ------------------------------------------------------------------
 
-    def _match_classes(self, embedding: list[float]) -> list[tuple[str, float]]:
+    def _seed_corpus(self, texts: list[str]) -> None:
+        """Feed the file path's cleaned chunk texts into the lexical corpus.
+
+        Only the turn path fed it before now, so a file ingest never had a
+        lexical index and `_match_classes` abstained unconditionally.
+        """
+        if self._lexical and not self._lex_frozen:
+            self._corpus_seen.extend(texts)
+
+    def _build_overlay_index(self) -> Any:
+        """Overlay-only SKOS classes (e.g. "Dance Studio"), embedded once.
+
+        The anchor law in ``_match_classes`` admits anything in ``_scheme``,
+        which is ontology + overlay, but ``self._ontology.classes`` is loaded
+        from ``settings.ontology_source`` alone — so a class the overlay adds
+        can be anchored and still never win, because it was never part of the
+        vocabulary cosine ranks. This gives it its own tiny index, built the
+        same way (:class:`~graphknows.symbolic.ontology.catalog.OntologyIndex`)
+        so it is ranked and cached identically. ``None`` when nothing is left
+        to add (no ontology configured, or every scheme class already has a
+        same-labelled entry in ``self._ontology.classes``).
+        """
+        if self._ontology is None or self._scheme is None:
+            return None
+        from graphknows.symbolic.ontology.catalog import OntologyIndex
+        from graphknows.symbolic.ontology.loader import OntologyTerm
+
+        known = {t.label.casefold() for t in self._ontology.classes}
+        terms = [
+            OntologyTerm(uri=c.uri, label=c.pref_label, definition=c.definition, kind="class")
+            for c in self._scheme.values()
+            if c.kind == "class" and c.pref_label.casefold() not in known
+        ]
+        return OntologyIndex("overlay", terms) if terms else None
+
+    def _match_classes(self, embedding: list[float], text: str) -> list[tuple[str, float]]:
         """Ontology classes this chunk evokes, as ``[(uri, sim)]`` for tagging.
 
-        Uses the stricter TAG floor: these become persisted MATCHES_CLASS edges,
-        which retrieval trusts, whereas a label hint the extractor finds no span
-        for simply goes unused.
+        These become persisted MATCHES_CLASS edges, which retrieval trusts, so
+        they obey the same anchor law as entity typing (``_lexical_candidates``):
+        the candidate set comes from lexical evidence, cosine only RANKS it.
+        Absolute cosine over CCO's 1437 class definitions is uncalibrated (see
+        the docstring of ``catalog.py``: median 0.409, p95 0.493 on real
+        conversation) -- on conv-30 every unanchored tag landed in a 0.557-0.590
+        band, a spread narrow enough that a BFO upper class like "Curvilinear
+        Motion" outranked "Dance Studio" on a chunk that never mentions motion.
+        No floor can separate a degenerate band; only the chunk's own words can
+        -- so ``TAG_MIN_SIM`` is not applied here either: once the anchor has
+        admitted a class, vetoing it again on the same uncalibrated cosine
+        (0.487 for "Week", 0.457 for "Month", both lexically anchored) throws
+        away evidence the anchor already certified, and miscounts it as
+        ``unanchored_class_tag``.
+
+        Ranked against ``self._ontology.classes`` PLUS ``_build_overlay_index``'s
+        overlay-only classes: the anchor set comes from ``_scheme`` (ontology +
+        overlay), so a class that exists only in the overlay -- "Dance Studio"
+        -- must be rankable too, or it can be anchored and still never win.
+
+        A chunk with no spaCy pipeline or no lexical index available abstains
+        outright (``unanchored_class_tag``) -- there is no anchor to check
+        against. Otherwise the anchor set is whatever ``lexical.evoked`` finds
+        in this chunk's own text, cosine ranks the whole vocabulary (not just
+        top-k, since the anchored classes are almost never in an unanchored
+        top-k), and only matches inside the anchor survive, truncated to
+        ``_ONT_TAG_TOP_K``.
         """
         if self._ontology is None or not embedding:
             return []
-        from graphknows.symbolic.ontology.catalog import TAG_MIN_SIM
+        from graphknows.symbolic.ontology.lexical import evoked
 
-        matches = self._ontology.match_classes(embedding, top_k=_ONT_TAG_TOP_K, min_sim=TAG_MIN_SIM)
-        return [(term.uri, sim) for term, sim in matches]
+        if not self._ensure_scheme():
+            self._abstentions["unanchored_class_tag"] += 1
+            if not self._logged_unanchored_class_tag:
+                log.info("Class tagging off: no lexical index available for anchoring")
+                self._logged_unanchored_class_tag = True
+            return []
+        doc = self._extractor.parse(text)
+        anchor = {label.casefold() for label in evoked(doc, self._scheme, self._lex_index, "class")}
+        matches = self._ontology.match_classes(
+            embedding, top_k=len(self._ontology.classes), min_sim=0.0
+        )
+        if self._overlay_index is not None:
+            matches = matches + self._overlay_index.match_classes(
+                embedding, top_k=len(self._overlay_index.classes), min_sim=0.0
+            )
+        matches.sort(key=lambda pair: pair[1], reverse=True)
+        accepted = [(term.uri, sim) for term, sim in matches if term.label.casefold() in anchor][
+            :_ONT_TAG_TOP_K
+        ]
+        if not accepted:
+            self._abstentions["unanchored_class_tag"] += 1
+        else:
+            self._abstentions["class_tags"] += len(accepted)
+            self._tag_sims.extend(sim for _, sim in accepted)
+        return accepted
+
+    def _report_abstentions(self) -> dict[str, int]:
+        """Non-zero abstention counters for this session, logging the tag sim spread.
+
+        Was two identical dict comprehensions (``_ingest_parsed`` and
+        ``STMService.ingest_messages``); collecting the log line here too means
+        the spread issue #158 measured -- a band narrower than ~0.05 means
+        cosine ranked nothing inside the anchor set -- is reported from every
+        caller rather than only ever recovered by re-running the bug.
+        """
+        if self._tag_sims:
+            log.info(
+                "MATCHES_CLASS sim spread: n=%d min=%.3f max=%.3f spread=%.3f",
+                len(self._tag_sims),
+                min(self._tag_sims),
+                max(self._tag_sims),
+                max(self._tag_sims) - min(self._tag_sims),
+            )
+        return {k: v for k, v in self._abstentions.items() if v}
 
     def _label_hints(self, embeddings: list[list[float]]) -> list[list[str]] | None:
         """Per-chunk ontology CLASS labels, offered as candidate entity types.
