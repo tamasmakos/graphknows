@@ -126,7 +126,11 @@ they match the configured embedder.
 - `REL` carries **every** ENTITY→ENTITY fact; the predicate is the `predicate`
   property, not the edge type name. The vocabulary is open and mostly single-use,
   so a type-per-predicate minted hundreds of near-empty types plus a DDL
-  round-trip on the ingest hot path.
+  round-trip on the ingest hot path. `predicate` itself mixes two vocabularies:
+  a relex/DSPy relation label is written bare, a frame-derived co-role edge is
+  prefixed `fn:` (e.g. `fn:Giving`) so the two are distinguishable without a
+  second lookup; frame facts otherwise reach the fact sheet through the
+  `FRAME_INSTANCE`/`PLAYS_ROLE` layer, not through these edges.
 
 Schema conventions are `type` not `label`, `confidence` not `score`, and
 `valid_at` / `invalid_at` / `is_current` for bi-temporal relation edges.
