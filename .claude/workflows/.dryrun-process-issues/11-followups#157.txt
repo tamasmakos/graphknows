@@ -78,8 +78,15 @@ Use hidden-coupling rows to widen a root-cause search past the file the issue na
 It was built 2026-08-09 and the package has moved since: use it to find where a thing lives and what touches it, then confirm against the actual file before acting on it. If the CLI or graph is missing, skip it and read the code.
   2. DEDUPE, before creating anything: `gh issue list --state all --search "<3-5 distinctive terms>" --limit 20` and read the close matches. If an open issue already covers it, `gh issue comment <n>` with the new evidence and record it under "commented". Never open a second issue for something already known.
   3. CREATE: `gh issue create --title "<symptom first, specific, searchable>" --label "agent-found" --label "needs-triage" --label "<bug|enhancement>" --body "<body>"`
-     A BUG body, in order: **Symptom** / **Where** (file:line) / **Concrete failure scenario** (inputs -> wrong output) / **How it was found** (during an automated process-issues run, while fixing #157) / **Why it was out of scope for #157** / **First thing to check** (one line, no fix design).
-     An ENHANCEMENT body, in order: **What to build** (the end-to-end behaviour this makes work, from the user's side -- not a layer-by-layer implementation list) / **Acceptance criteria** (a checklist) / **Blocked by** (issue references, or "None -- can start immediately") / **How it was found** (as above). Keep file paths and code snippets out of an enhancement body; they go stale fast.
+     Write the body as MARKDOWN SECTIONS with "## " headings -- not bold labels, and spell each heading exactly as given.
+     A BUG body, in this order:
+       "## Symptom", "## Where" (file:line), "## Concrete failure scenario" (inputs -> wrong output),
+       "## Verify" -- ONE runnable command that shows the defect today and must pass once it is fixed, and what passing looks like. If you genuinely cannot name one, say what to run to observe it; do not leave the section out.
+       "## Out of scope" -- the neighbouring work it will be tempting to do here and must not be,
+       "## How it was found" (during an automated process-issues run, while fixing #157, and why it was out of scope for that ticket),
+       "## First thing to check" (one line, no fix design).
+     An ENHANCEMENT body, in this order: "## What to build" (the end-to-end behaviour this makes work, from the user's side -- not a layer-by-layer implementation list), "## Acceptance criteria" (a checklist), "## Verify" (ONE runnable command and what passing looks like), "## Out of scope", "## Blocked by" (issue references, or "None -- can start immediately"), "## How it was found" (as above). Keep file paths and code snippets out of an enhancement body; they go stale fast.
+     Report each issue you create with its kind and the body you filed, verbatim.
      If it is a packaging defect (missing from the wheel, an undeclared dependency, broken metadata), say so in the TITLE -- those are invisible to the test suite and a human should see that immediately.
      A candidate whose source is "baseline" already fails on main and belongs to nobody: say that in the body, and do not attribute it to #157.
      Labels: "agent-found" + "needs-triage" + exactly one of "bug" / "enhancement". "needs-triage" is the gate that stops this loop from feeding itself work it invented -- never omit it, and never remove it from an existing issue.

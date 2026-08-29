@@ -15,7 +15,7 @@ PR body, in this order:
    - **The data it produces**: read 41 record(s) from evaluation/run_locomo.py --turns 20, 41 INSTANCE_OF edges -- edible.
    - **Documentation**: docs/architecture.md (INSTANCE_OF.score is described as per entity).
    - `Closes #157`.
-   - **Found along the way**: #162 as `Refs` -- these must NOT be auto-closed by this PR.
+   - **Found along the way**: #162, #163 as `Refs` -- these must NOT be auto-closed by this PR.
    - **Known gaps**: spell out everything unresolved.
 Verify notes: green
 Do not tag, do not build, do not upload anything.

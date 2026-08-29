@@ -6,7 +6,7 @@ Do not reformat it, do not fix its grammar, do not add a heading or a footer, an
 <<<REPORT-BEGINS>>>
 # process-issues -- #157
 
-Base branch `main`, an automated process-issues run. Merging was enabled.
+Base branch `main`, an automated process-issues run. Merging was disabled.
 
 | Issue | Repro red | Green | Dogfood | Docs | Wheel | Shipped | CI | Merged | Needs human |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -42,7 +42,10 @@ Branch `fix/issue-157` in `C:/Users/User/Documents/dev/gk-issue-157`. PR: https:
 
 **Release impact.** patch -- INSTANCE_OF.score is now computed per entity. The version was deliberately not bumped.
 
-**Filed along the way.** #162 -- all gated behind `needs-triage`.
+**Filed along the way.** #162, #163 -- all gated behind `needs-triage`.
+
+**Those bodies are malformed** and an agent cannot start on them as they stand — fix them before ungating:
+- #163 "chunk text keeps markdown fences": no "## Verify" section
 
 ## Not picked up
 
@@ -50,7 +53,7 @@ Branch `fix/issue-157` in `C:/Users/User/Documents/dev/gk-issue-157`. PR: https:
 
 ## Next
 
-- Triage #162: remove `needs-triage` from the ones worth doing, or this workflow will never pick them up.
+- Triage #162, #163: remove `needs-triage` from the ones worth doing, or this workflow will never pick them up.
 - **#157 needs a human**: draft opened
 - Worktrees left in place: C:/Users/User/Documents/dev/gk-issue-157, ../gk-baseline (`git worktree remove <path>`).
 <<<REPORT-ENDS>>>

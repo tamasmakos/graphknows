@@ -104,7 +104,26 @@ const CANNED = {
     broken_links: [],
     notes: 'one page corrected',
   },
-  followups: { filed: [{ number: 162, title: 'py.typed is absent from the wheel' }], commented: [], dropped: [] },
+  // One well-formed body and one missing "## Verify", so the dry run exercises both sides of
+  // checkFollowupBody rather than only the happy path.
+  followups: {
+    filed: [
+      {
+        number: 162,
+        title: 'py.typed is absent from the wheel',
+        kind: 'bug',
+        body: '## Symptom\npy.typed is missing from the built wheel\n## Where\npyproject.toml\n## Concrete failure scenario\nmypy on an installed copy finds no marker\n## Verify\n`python -m zipfile -l dist/*.whl | grep py.typed` lists it\n## Out of scope\nthe rest of the wheel contents\n',
+      },
+      {
+        number: 163,
+        title: 'chunk text keeps markdown fences',
+        kind: 'bug',
+        body: '## Symptom\nfences survive extraction\n## Where\ngraphknows/ingest/extract.py\n## Concrete failure scenario\na fenced turn stores the fence\n## Out of scope\nthe parser rewrite\n',
+      },
+    ],
+    commented: [],
+    dropped: [],
+  },
   ship: { shipped: true, pr_url: 'https://github.com/tamasmakos/graphknows/pull/163', branch: 'fix/issue-157', action: 'created', notes: 'draft opened' },
   // DRYRUN_CI=fixed-and-pushed exercises the retry loop; =still-red / =no-run exercise the
   // paths that must refuse to merge. Default green, so the happy path runs end to end.

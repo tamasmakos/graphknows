@@ -21,7 +21,11 @@
         "merged": false,
         "merge_commit": "",
         "filed": [
-          162
+          162,
+          163
+        ],
+        "followup_body_problems": [
+          "#163 \"chunk text keeps markdown fences\": no \"## Verify\" section"
         ],
         "discovered": 3,
         "needs_human": true,
@@ -63,7 +67,8 @@
       }
     ],
     "filed_issues": [
-      162
+      162,
+      163
     ],
     "needs_human": [
       157
@@ -71,7 +76,7 @@
     "release_notes": [
       "patch: INSTANCE_OF.score is now computed per entity (#157)"
     ],
-    "next_step": "Review #162 and remove the \"needs-triage\" label from the ones worth doing -- until then this workflow will not pick them up.",
+    "next_step": "Review #162, #163 and remove the \"needs-triage\" label from the ones worth doing -- until then this workflow will not pick them up.",
     "cleanup": "worktrees left in place on purpose: C:/Users/User/Documents/dev/gk-issue-157, ../gk-baseline (remove with `git worktree remove <path>`)"
   },
   "logs": [
@@ -83,10 +88,11 @@
     "#157: dogfood edible -- 2 smell(s), 1 refined",
     "#157: docs -- 1 page(s) updated",
     "#157: package gate problems -- py.typed is absent from the wheel",
-    "#157: filed #162",
+    "#157: filed #162, #163",
+    "#157: followup body check -- #163 \"chunk text keeps markdown fences\": no \"## Verify\" section",
     "#157: CI round 1/3 -- green",
-    "#157: NOT merged -- stub",
-    "shipped 1/1; filed 1 follow-up issue(s)",
+    "#157: CI green; not merging (merge:false)",
+    "shipped 1/1; filed 2 follow-up issue(s)",
     "run report: docs/agents/runs/process-issues-157.md"
   ]
 }

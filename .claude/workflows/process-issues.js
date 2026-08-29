@@ -651,8 +651,16 @@ const FOLLOWUP_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['number', 'title'],
-        properties: { number: { type: 'integer' }, title: { type: 'string' }, url: { type: 'string' } },
+        required: ['number', 'title', 'kind', 'body'],
+        properties: {
+          number: { type: 'integer' },
+          title: { type: 'string' },
+          url: { type: 'string' },
+          kind: { type: 'string', enum: ['bug', 'enhancement'] },
+          // Read back by checkFollowupBody: the body is the contract the next agent picks
+          // this issue up on, and a promise in a prompt is not a fact about a string.
+          body: { type: 'string', description: 'the body you filed, verbatim' },
+        },
       },
     },
     commented: {
@@ -928,6 +936,29 @@ const gate = (stage, c, issue) => {
   const why = `${c.kind}${c.measured ? '' : ' (predicted from the plan; no measured file list)'}`
   log(`#${issue.number}: ${GATES === 'shadow' ? 'WOULD skip' : 'skipped'} ${stage} -- ${why}`)
   return GATES === 'shadow'
+}
+
+// The body an agent-found issue is filed with, checked the way prepare-tickets checks a
+// pipeline ticket's. Nothing enforced this before, and the path that files the MOST issues
+// was the only one with no check: nearly every open issue here is agent-found. Without
+// "## Verify" the Definition of Done's first rule -- a ticket with no runnable check is not
+// done, it is claimed done -- cannot be met, which is why an agent-found issue needed a
+// human-written "## Agent Brief" comment before anything could start on it.
+//
+// No "## Parent" here, unlike a pipeline ticket: a followup slices no spec, it is its own
+// root. That is why prepare-tickets' checkHandover cannot simply be reused.
+// Sliced out and exercised by gates.test.mjs.
+const FOLLOWUP_SECTIONS = {
+  bug: ['Symptom', 'Where', 'Concrete failure scenario', 'Verify', 'Out of scope'],
+  enhancement: ['What to build', 'Acceptance criteria', 'Verify', 'Out of scope'],
+}
+const checkFollowupBody = (body, kind) => {
+  const text = String(body || '')
+  const has = (heading) => new RegExp(`^##\\s+${heading}\\s*$`, 'im').test(text)
+  // An unknown kind is checked as a bug: the expensive class, not the cheap one -- same
+  // rule the change classifier follows when it cannot tell what it is looking at.
+  const required = FOLLOWUP_SECTIONS[kind] || FOLLOWUP_SECTIONS.bug
+  return required.filter((heading) => !has(heading)).map((heading) => `no "## ${heading}" section`)
 }
 
 // -- Per-issue pipeline ---------------------------------------------
@@ -1332,9 +1363,18 @@ const results = await pipeline(
         GRAPHIFY,
         '  2. DEDUPE, before creating anything: `gh issue list --state all --search "<3-5 distinctive terms>" --limit 20` and read the close matches. If an open issue already covers it, `gh issue comment <n>` with the new evidence and record it under "commented". Never open a second issue for something already known.',
         `  3. CREATE: \`gh issue create --title "<symptom first, specific, searchable>" --label "${FOUND_LABEL}" --label "${GATE_LABEL}" --label "<bug|enhancement>" --body "<body>"\``,
-        '     A BUG body, in order: **Symptom** / **Where** (file:line) / **Concrete failure scenario** (inputs -> wrong output) / **How it was found** (' +
-          `during ${RUN}, while fixing #${issue.number}) / **Why it was out of scope for #${issue.number}** / **First thing to check** (one line, no fix design).`,
-        "     An ENHANCEMENT body, in order: **What to build** (the end-to-end behaviour this makes work, from the user's side -- not a layer-by-layer implementation list) / **Acceptance criteria** (a checklist) / **Blocked by** (issue references, or \"None -- can start immediately\") / **How it was found** (as above). Keep file paths and code snippets out of an enhancement body; they go stale fast.",
+        // Same section vocabulary as a pipeline ticket, because an issue filed here is picked
+        // up by THIS workflow once a human ungates it, and Plan reads the body as the contract.
+        // A deterministic check reads these back and refuses a body missing one.
+        '     Write the body as MARKDOWN SECTIONS with "## " headings -- not bold labels, and spell each heading exactly as given.',
+        '     A BUG body, in this order:',
+        '       "## Symptom", "## Where" (file:line), "## Concrete failure scenario" (inputs -> wrong output),',
+        '       "## Verify" -- ONE runnable command that shows the defect today and must pass once it is fixed, and what passing looks like. If you genuinely cannot name one, say what to run to observe it; do not leave the section out.',
+        '       "## Out of scope" -- the neighbouring work it will be tempting to do here and must not be,',
+        `       "## How it was found" (during ${RUN}, while fixing #${issue.number}, and why it was out of scope for that ticket),`,
+        '       "## First thing to check" (one line, no fix design).',
+        '     An ENHANCEMENT body, in this order: "## What to build" (the end-to-end behaviour this makes work, from the user\'s side -- not a layer-by-layer implementation list), "## Acceptance criteria" (a checklist), "## Verify" (ONE runnable command and what passing looks like), "## Out of scope", "## Blocked by" (issue references, or "None -- can start immediately"), "## How it was found" (as above). Keep file paths and code snippets out of an enhancement body; they go stale fast.',
+        '     Report each issue you create with its kind and the body you filed, verbatim.',
         '     If it is a packaging defect (missing from the wheel, an undeclared dependency, broken metadata), say so in the TITLE -- those are invisible to the test suite and a human should see that immediately.',
         `     A candidate whose source is "baseline" already fails on ${BASE} and belongs to nobody: say that in the body, and do not attribute it to #${issue.number}.`,
         `     Labels: "${FOUND_LABEL}" + "${GATE_LABEL}" + exactly one of "bug" / "enhancement". "${GATE_LABEL}" is the gate that stops this loop from feeding itself work it invented -- never omit it, and never remove it from an existing issue.`,
@@ -1345,7 +1385,16 @@ const results = await pipeline(
       { label: `followups#${issue.number}`, phase: 'Followups', schema: FOLLOWUP_SCHEMA },
     )
     if (followups?.filed?.length) log(`#${issue.number}: filed ${followups.filed.map((f) => '#' + f.number).join(', ')}`)
-    return { ...ctx, followups }
+    // The body is read back rather than believed. It cannot be checked BEFORE creation the
+    // way a pipeline ticket is -- this one agent judges, dedupes and files in a single turn,
+    // so there is no point where the script sees the text first. Detection, not prevention:
+    // a malformed body still reaches the backlog, but it does so named, in the run report,
+    // instead of being discovered months later by whoever tries to pick the issue up.
+    const followupProblems = (followups?.filed || []).flatMap((f) =>
+      checkFollowupBody(f.body, f.kind).map((p) => `#${f.number} "${f.title}": ${p}`),
+    )
+    for (const p of followupProblems) log(`#${issue.number}: followup body check -- ${p}`)
+    return { ...ctx, followups, followupProblems }
   },
 
   // Ship -- commit, push, open or update a draft PR
@@ -1536,6 +1585,7 @@ const summary = issues.map((issue, i) => {
     tree_matches_ci: r?.merge?.tree_matches_ci,
     post_merge_green: r?.merge?.post_merge_green,
     filed: (r?.followups?.filed || []).map((f) => f.number),
+    followup_body_problems: r?.followupProblems || [],
     discovered:
       (r?.discoveries || []).length + (r?.pkg?.discoveries || []).length + (r?.pkg?.problems || []).length,
     needs_human:
@@ -1639,6 +1689,9 @@ if (DO_REPORT) {
         s.filed.length
           ? `**Filed along the way.** ${s.filed.map((n) => '#' + n).join(', ')} -- all gated behind \`${GATE_LABEL}\`.`
           : '**Filed along the way.** nothing.',
+        (s.followup_body_problems || []).length
+          ? `\n**Those bodies are malformed** and an agent cannot start on them as they stand — fix them before ungating:\n${s.followup_body_problems.map((p) => `- ${p}`).join('\n')}`
+          : null,
         '',
       ].filter((x) => x !== null)
     }),

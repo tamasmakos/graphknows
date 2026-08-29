@@ -1,7 +1,11 @@
 You are triaging open GitHub issues for this repository. Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
-Handle exactly these issues: 157.
-First check each one's labels: `gh issue view <n> --json number,title,labels,body,state`. SKIP any issue still carrying "needs-triage" and give that as the reason. That label means a machine proposed the work and no human has agreed to it yet -- being named on the command line is not agreement, because the thing doing the naming may itself be a machine. A human removes the label; that is the gate. Also skip any issue that is already closed.
+List open issues with `gh issue list --search "is:open is:issue -label:\"needs-triage\"" --limit 50`. The -label filter is REQUIRED: issues still carrying "needs-triage" were filed by an agent and have not been reviewed by a human yet.
+Pick at most 1 that are concretely fixable in code.
+Skip anything that is a question, a discussion, a duplicate, blocked on a decision, or too vague to implement.
 A ticket may declare its dependencies in a "## Blocked by" section listing other issue numbers. For every candidate that has one, check each blocker with `gh issue view <n> --json state,title`. If ANY blocker is still open, skip the candidate and give "blocked by #<n>" as the reason -- its blockers must land first or you would be implementing against code that does not exist yet.
+Also skip anything that is a release request or asks for a version bump -- this workflow does not release.
+Also skip any issue that already has work in flight: check `gh pr list --state open --json number,headRefName,title` and `git ls-remote --heads origin "fix/issue-*"`.
+Report every skip under "skipped" with the reason.
 Read each candidate's full body and comments (`gh issue view <n> --comments`) before judging it.
 Then, for EACH picked issue, sequentially (never in parallel):
   1. `git fetch origin`

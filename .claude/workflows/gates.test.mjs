@@ -79,6 +79,44 @@ assert.equal(SKIPPABLE.dogfood(classify(plan(['graphknows_extra/x.py']), null)),
 assert.equal(SKIPPABLE.docs(classify(plan(['tests/test_x.py']), null)), true)
 assert.equal(SKIPPABLE.docs(classify(plan(['docs/modes.md']), null)), false, 'a docs change is exactly when docs runs')
 
+// -- the body an agent-found issue is filed with --
+//
+// Nearly every open issue in this repo is agent-found, and until this check existed the path
+// that files them was the only one with no body check at all. A followup with no "## Verify"
+// cannot satisfy the Definition of Done's first rule, so it needs a human-written
+// "## Agent Brief" comment before anything can start on it.
+const from4 = src.indexOf('const FOLLOWUP_SECTIONS = ')
+const to4 = src.indexOf('// -- Per-issue pipeline')
+assert.ok(from4 > 0 && to4 > from4, 'checkFollowupBody not found in process-issues.js -- did the markers move?')
+const { checkFollowupBody } = await import(
+  'data:text/javascript,' + encodeURIComponent(src.slice(from4, to4) + '\nexport { checkFollowupBody }')
+)
+
+const bugBody = [
+  '## Symptom', 'x', '## Where', 'a.py:1', '## Concrete failure scenario', 'x -> y',
+  '## Verify', '`pytest -q` fails on a.py', '## Out of scope', 'the rest',
+].join('\n')
+const enhBody = [
+  '## What to build', 'x', '## Acceptance criteria', '- [ ] x',
+  '## Verify', '`pytest -q` passes', '## Out of scope', 'the rest',
+].join('\n')
+
+assert.deepEqual(checkFollowupBody(bugBody, 'bug'), [])
+assert.deepEqual(checkFollowupBody(enhBody, 'enhancement'), [])
+
+// the section this whole check exists for
+assert.match(checkFollowupBody(bugBody.replace('## Verify\n', ''), 'bug').join(), /"## Verify"/)
+assert.match(checkFollowupBody(enhBody.replace('## Verify\n', ''), 'enhancement').join(), /"## Verify"/)
+assert.match(checkFollowupBody(enhBody.replace('## Out of scope\n', ''), 'enhancement').join(), /"## Out of scope"/)
+
+// bold labels are what the followup filer used to emit; they must not pass as sections
+assert.ok(checkFollowupBody('**Symptom** x / **Where** a.py:1', 'bug').length >= 4, 'bold labels are not sections')
+// an unknown kind is checked as the expensive class, not waved through
+assert.ok(checkFollowupBody('', undefined).length > 0, 'an unknown kind must still be checked')
+assert.deepEqual(checkFollowupBody(bugBody, 'not-a-kind'), [], 'unknown kind falls back to the bug contract')
+// a pipeline ticket has "## Parent"; a followup is its own root and must not be asked for one
+assert.ok(!checkFollowupBody('', 'bug').join().includes('Parent'))
+
 // -- the two workflows must agree on the vocabulary of the gate --
 //
 // prepare-tickets.js files issues behind GATE_LABEL and process-issues.js refuses to pick them up while
