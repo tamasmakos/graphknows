@@ -1,0 +1,9 @@
+PR #950 carries 2 small ticket(s) as 2 commit(s). Land it. Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
+1. Watch CI to a conclusion: `gh pr checks 950 --watch`. If it goes red, STOP: set ci="red", merged=false and name the failing check. Do NOT try to fix it -- guessing which of 2 commits broke it is exactly the cost this lane was trading away.
+   Then close the PR so the batch stops claiming these tickets: `gh pr close 950 --comment "batch CI went red; these tickets go back through the full pipeline one at a time"`. Do NOT pass --delete-branch: the caller re-queues each ticket as a full car, and leaving express/205 on the remote is what lets a human bisect the batch afterwards.
+2. Green: `gh pr ready 950` if it is a draft, then `gh pr merge 950 --rebase --delete-branch`.
+   REBASE, not squash. Each ticket must land as its own commit on main so its "Closes #N" trailer closes it and `git log` stays readable per ticket. If the repository refuses rebase merges, set merged=false and say so -- do NOT fall back to squash, which would close every ticket from one commit and destroy the per-ticket history.
+3. Confirm each issue closed itself: `gh issue view 205 --json state`, `gh issue view 206 --json state`. Report any still open; do not close one by hand, that hides a broken link.
+4. Do NOT wait for main's CI. Leave post_merge_green unset: nothing in this run acts on it, and the PR CI already went green on this exact tree.
+5. Remove the worktree: `git worktree remove C:/Users/User/Documents/dev/gk-express-205` from the repo root (add --force only if it refuses over untracked files you have confirmed are build output).
+Do not tag, do not release, do not bump a version.

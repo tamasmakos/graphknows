@@ -19,8 +19,15 @@ Report every ticket by the INDEX it carries below, with the number you created. 
 > **An adversarial reviewer returned "fixable" on this spec.** The body below may already address these; check before removing the `needs-triage` label.
 > - the spec never says what happens to chunks already stored — *fix:* state that back-fill is out of scope and why
 
-## Problem Statement
-...
+## User Scenarios & Testing
+### User Story 1 - Recall by instant (Priority: P1)
+x
+## Requirements
+- **FR-001**: the chunk writer MUST derive an episodic index.
+## Success Criteria
+- **SC-001**: recall returns the right chunk for a known instant in 100% of cases.
+## Implementation Decisions
+Recorded in docs/adr/0004-episodic-index.md.
 ## Testing Decisions
 Tested at the chunk writer.
 

@@ -101,7 +101,7 @@ const GATE_LABEL = 'needs-triage'
 const READY_LABEL = 'ready-for-agent'
 
 // .claude/ is gitignored, so skills are read from the main checkout by absolute path.
-const MAIN_REPO = 'C:/Users/User/Documents/dev/graphknows'
+const MAIN_REPO = opt.repo || 'C:/Users/User/Documents/dev/graphknows'
 // Where an agent's own output goes. One directory, one ignore rule, and it sits beside the
 // rules agents READ (definition-of-done.md, triage-labels.md) rather than off in a scratch
 // tree of its own -- so "what does an agent read here, and what did it write" is one folder.
@@ -111,7 +111,7 @@ const MAIN_REPO = 'C:/Users/User/Documents/dev/graphknows'
 const RUNS_DIR = 'docs/agents/runs'
 const skill = (path, why) => `Read ${MAIN_REPO}/.claude/skills/${path} and follow it: ${why}`
 
-const GH = 'Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).'
+const GH = `Use \`gh\`. If it is not on PATH, fall back to "${opt.ghPath || '/c/Program Files/GitHub CLI/gh.exe'}" (quote it).`
 
 const RUN_ON = { model: 'sonnet', effort: 'medium' }
 // Design and spec work is where a wrong answer is expensive and invisible: every ticket
@@ -308,11 +308,20 @@ const PROTO_SCHEMA = {
 const SPEC_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['title', 'body', 'seams'],
+  required: ['title', 'body', 'seams', 'success_criteria'],
   properties: {
     title: { type: 'string' },
     body: { type: 'string', description: 'the full spec in Markdown, ready to be an issue body' },
     seams: { type: 'array', items: { type: 'string' }, description: 'the seams the feature will be tested at, highest first' },
+    // spec-kit's SC-### line. NOT the same thing as a user story's acceptance scenario: a
+    // scenario says the feature works, a success criterion is the measurable outcome that
+    // says it was worth building. speckit-analyze keys its coverage checks on these, so an
+    // empty list makes that half of the analysis silently vacuous.
+    success_criteria: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'measurable outcomes, one per SC-### line, technology-agnostic -- a number, a rate or a bound someone could check after the change lands. Exclude business KPIs nobody here can measure.',
+    },
     out_of_scope: { type: 'array', items: { type: 'string' } },
   },
 }
@@ -922,11 +931,22 @@ const spec = await call(
     PROTO_NOTE,
     CONTEST_NOTE,
     BRIEF,
-    skill('to-spec/SKILL.md', 'the spec template. Follow its section order exactly; you are the no-user branch, so stop at the draft.'),
+    // spec-kit's template rather than to-spec's, because it is the more mature of the two at
+    // exactly this level: it has Edge Cases, Key Entities, Assumptions and measurable SC-###
+    // outcomes that to-spec has no equivalent for. It is committed at this path, so it stays
+    // the single source of the shape rather than a copy in this prompt that drifts from it.
+    // Deliberately NOT adopted below the spec: spec-kit turns tasks into title-only issues,
+    // and the ticket contract here is the only thing the implementing workflow ever reads.
+    `Read ${MAIN_REPO}/.specify/templates/spec-template.md and follow its section order and heading text exactly. It is a template: replace every bracketed placeholder, delete the sample rows and the HTML comment blocks, and drop the \`*(mandatory)*\` annotations from the headings -- they mark the template's own rules, they are not part of a written spec.`,
+    'TWO SECTIONS THIS REPO ADDS on top of that template, both after "## Success Criteria" and both required:',
+    '  - "## Implementation Decisions" -- where the ADR is cited. spec-kit has nowhere for it, and the implementing workflow is told the spec cites one.',
+    '  - "## Testing Decisions" -- the seams. This is the ONLY channel the implementing workflow ever reads them through; spec-kit has no equivalent section at all.',
+    'Do not add any other section, and do not keep a template section you have nothing to put in -- an empty heading is a heading somebody reads looking for content.',
     `Vocabulary: use the domain terms the repo already uses -- the Tensor Brain lexicon in ${MAIN_REPO}/CLAUDE.md and the terms defined in docs/ontology.md, docs/architecture.md and docs/services.md. Do not coin new ones for concepts that have names.`,
     'Sketch the seams you will test the feature at, per the template, and ALSO list them highest-first under "seams" in your output.',
     'The user-stories section is in "As an <actor>, I want <feature>, so that <benefit>" form, PRIORITIZED: mark each story P1/P2/P3 and order them highest first. Each story must be independently testable, and the P1 story alone must be a viable MVP. One story per distinct actor with a distinct want -- if two stories differ only in wording, they are one story.',
-    'Number the requirements FR-001, FR-002, ... in order -- tickets may cite them by number.',
+    'Number the functional requirements FR-001, FR-002, ... in order under "## Requirements" -- tickets may cite them by number.',
+    'Number the success criteria SC-001, SC-002, ... under "## Success Criteria", and put the same list under `success_criteria` in your output. Each is a MEASURABLE outcome someone could check after the change lands -- a number, a rate, a bound -- and technology-agnostic: "recall returns the right chunk for a known instant in 100% of cases", not "the new index is used". An acceptance scenario says the feature works; a success criterion says it was worth building. Do not invent business metrics nobody here can measure; if the honest answer is one criterion, write one.',
     'Length is a cost, not a virtue. Every sentence an implementer would not act on is a sentence that makes them build more. Do not re-derive what the user already decided above -- state it once, in one line, and move on.',
     'No file paths and no code snippets in the body -- they go stale. The one exception is a snippet from the prototype that encodes a decision more precisely than prose can; trim it to the decision.',
     // The spec carries the contract. The rationale lives in the ADR, which is COMMITTED --
@@ -1065,9 +1085,24 @@ if (!draft?.spec_body || !(draft.tickets || []).length) {
 // exercised by gates.test.mjs -- the cycle detection especially, which is the part that
 // silently does the wrong thing rather than throwing.
 const checkHandover = (specBody, seams, drafted) => {
-  const has = (body, heading) => new RegExp(`^##\\s+${heading}\\s*$`, 'im').test(String(body || ''))
+  // The trailing group tolerates a template annotation the writer forgot to strip
+  // (`## Requirements *(mandatory)*`): the section IS there, and refusing the whole run over
+  // an asterisk would be a check failing on punctuation rather than on the handover.
+  const has = (body, heading) => new RegExp(`^##\\s+${heading}\\s*(\\*.*\\*)?\\s*$`, 'im').test(String(body || ''))
   const problems = []
-  if (!has(specBody, 'Testing Decisions')) problems.push('the spec body has no "## Testing Decisions" section')
+  // spec-kit's three mandatory sections, plus the two this repo adds on top of its template.
+  // "Testing Decisions" carries the seams and "Implementation Decisions" cites the ADR --
+  // spec-kit has no equivalent for either, and the implementing workflow is told both exist.
+  for (const heading of ['User Scenarios & Testing', 'Requirements', 'Success Criteria', 'Implementation Decisions', 'Testing Decisions']) {
+    if (!has(specBody, heading)) problems.push(`the spec body has no "## ${heading}" section`)
+  }
+  // A section with no numbered lines is a heading, not requirements: speckit-analyze builds
+  // its coverage inventory by keying on these ids, so it reports nothing rather than a gap.
+  for (const [id, what] of [['FR-', 'functional requirement'], ['SC-', 'success criterion']]) {
+    if (!new RegExp(`\\b${id}\\d{3}\\b`).test(String(specBody || ''))) {
+      problems.push(`the spec body has no ${id}### ${what} -- an unnumbered one cannot be cited by a ticket or counted by speckit-analyze`)
+    }
+  }
   // Nothing bounded the spec before, and one reached 56 KB of GitHub's 65,536-char cap.
   const MAX_SPEC_LINES = 400
   const specLines = String(specBody || '').split('\n').length
@@ -1374,6 +1409,56 @@ const REPORT_PATH = opt.reportPath || `${RUNS_DIR}/prepare-tickets-${SLUG || 'ru
 const SPEC_MD = tickets.filed
   ? [`<!-- Filed as spec issue #${tickets.spec_issue}${REQUEST ? `, requested in #${REQUEST}` : ''} by ${RUN} -->`, '', SPEC_BODY].join('\n')
   : ''
+// plan.md is the KEY to the whole mirror, not a nicety: check-prerequisites.ps1 exits 1
+// without it, so every skill that gates on it -- analyze, checklist, clarify, converge,
+// implement -- aborted at step 1 and the mirror was a layer nothing could read. Composed
+// here from what the run already knows rather than by an agent: every line below is a fact
+// this script is holding, and an agent asked to restate them would only get them wrong.
+const PLAN_MD = tickets.filed
+  ? [
+      `# Implementation Plan: ${spec.title}`,
+      '',
+      '## Summary',
+      '',
+      synth.chosen,
+      '',
+      '## Technical Context',
+      '',
+      '**Project Type**: single project, flat layout -- a distributed Python package, not an application.',
+      `**Constraints**: no new third-party dependency unless a ticket declares one in pyproject.toml. The verification harness (${HARNESS.join(', ')}) is off limits to every ticket below.`,
+      `**Source of truth**: the GitHub issues under spec #${tickets.spec_issue}. This directory mirrors them; where the two disagree, the issues win.`,
+      '',
+      '## Constitution Check',
+      '',
+      critic?.verdict === 'not-ready'
+        ? `FAILED. An adversarial reviewer called this design unsound; every ticket was filed behind the ${GATE_LABEL} label and a person owes it a decision before any of them starts.`
+        : `Passed. .specify/memory/constitution.md was not contradicted by the chosen design, and an adversarial reviewer returned "${critic?.verdict || 'no verdict'}".`,
+      '',
+      '## Project Structure',
+      '',
+      '### Documentation (this feature)',
+      '',
+      '```',
+      'spec.md      the filed spec, byte for byte',
+      'plan.md      this file',
+      'research.md  what the research lanes found, and what a skeptic did to it',
+      'tasks.md     the filed tickets, in dependency order',
+      '```',
+      '',
+      '### Source Code (repository root)',
+      '',
+      ...(() => {
+        const files = [...new Set(order.flatMap((i) => drafted[i].files_named || []))].sort()
+        return files.length ? ['```', ...files, '```'] : ['No ticket named a file path; see each issue for where its change lands.']
+      })(),
+      '',
+      '## Complexity Tracking',
+      '',
+      `${order.length} ticket(s). ${order.filter((i) => gateReason[i]).length} gated behind a human decision; the rest were filed ready.`,
+      synth.adr_written ? `The decision itself is recorded in \`${synth.adr_path}\`.` : 'No ADR: the decision was not architecturally significant.',
+    ].join('\n')
+  : ''
+
 const RESEARCH_MD = tickets.filed
   ? [`# Research -- ${TOPIC}`, BRIEF, CONTEST_NOTE, PROTO_NOTE].filter(Boolean).join('\n\n')
   : ''
@@ -1549,10 +1634,14 @@ if (SPEC_MD) {
   wrapTasks.push(
     [
       `Mirror the filed spec into the repository, in spec-kit's layout. From ${MAIN_REPO} run \`powershell -ExecutionPolicy Bypass -File .specify/scripts/powershell/create-new-feature.ps1 -Json -ShortName "${SLUG}" "<the topic, quoted safely>"\` where the topic is: ${TOPIC}. Parse the JSON it prints for the feature directory it created (specs/<NNN>-<slug>). It seeds a template spec.md there; overwrite it.`,
-      'Into that directory write the three payloads below as spec.md, research.md and tasks.md -- byte for byte, markers excluded. Report the directory, relative to the repo root, under feature_dir.',
+      'Into that directory write the four payloads below as spec.md, plan.md, research.md and tasks.md -- byte for byte, markers excluded. Report the directory, relative to the repo root, under feature_dir.',
+      'All four matter: the speckit skills refuse to run on a feature directory that has no plan.md, whatever else is in it.',
       '<<<spec.md>>>',
       SPEC_MD,
       '<<<end spec.md>>>',
+      '<<<plan.md>>>',
+      PLAN_MD,
+      '<<<end plan.md>>>',
       '<<<research.md>>>',
       RESEARCH_MD,
       '<<<end research.md>>>',

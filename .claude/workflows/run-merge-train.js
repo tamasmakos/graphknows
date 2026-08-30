@@ -65,7 +65,7 @@ delete CAR_ARGS.watchMain
 // Same vocabulary as prepare-tickets.js and process-issues.js; gates.test.mjs asserts they agree.
 const GATE_LABEL = 'needs-triage'
 const READY_LABEL = 'ready-for-agent'
-const MAIN_REPO = 'C:/Users/User/Documents/dev/graphknows'
+const MAIN_REPO = opt.repo || 'C:/Users/User/Documents/dev/graphknows'
 // Where an agent's own output goes. One directory, one ignore rule, and it sits beside the
 // rules agents READ (definition-of-done.md, triage-labels.md) rather than off in a scratch
 // tree of its own -- so "what does an agent read here, and what did it write" is one folder.
@@ -73,7 +73,7 @@ const MAIN_REPO = 'C:/Users/User/Documents/dev/graphknows'
 // agent cannot open from a fresh clone is a rule that gets restated into every ticket
 // instead, which is the bloat this whole pipeline was rebuilt to stop.
 const RUNS_DIR = 'docs/agents/runs'
-const GH = 'Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).'
+const GH = `Use \`gh\`. If it is not on PATH, fall back to "${opt.ghPath || '/c/Program Files/GitHub CLI/gh.exe'}" (quote it).`
 
 const RUN_ON = { model: 'sonnet', effort: 'medium' }
 const call = (prompt, opts = {}) => agent(prompt, { ...RUN_ON, ...opts })
@@ -109,6 +109,10 @@ const admit = (car, rosterNumbers) => {
 // Returns '' when the car may take the express lane, or the reason it may not -- same
 // convention as admit(), which has already run and already refused anything touching the
 // harness, so this does not re-check that.
+// The near side of THE REVIEW BOUNDARY OF THE WHOLE SYSTEM: this admits a car at <=30
+// expected lines, express-lane.js's MAX_LINES ejects one at >50 actual. The 20-line slack is
+// deliberate -- see the note there -- and it means a ticket rostered at 30 can legitimately
+// land at 49 having had only batch-level review. Move one number, look at the other.
 const EXPRESS_MAX_LINES = 30
 const EXPRESS_MAX_FILES = 2
 const isExpress = (car, rosterNumbers) => {
@@ -369,6 +373,8 @@ if (expressSet.length) {
   expressResult = await workflow('express-lane', {
     issues: expressSet,
     merge: true,
+    repo: opt.repo,
+    ghPath: opt.ghPath,
     // Same reason the full cars get it: post_merge_green is this train's halt condition,
     // and a batch that poisons main must stop everything behind it.
     watchMain: true,
@@ -377,16 +383,22 @@ if (expressSet.length) {
 
   const landed = expressResult?.landed || []
   const ejected = expressResult?.ejected || []
+  // Committed but not merged: a red shared CI, or a refused merge. The lane closed its PR,
+  // so these tickets have no open claim on them and are ours to re-dispatch.
+  const redBatch = expressResult?.red_batch || []
   for (const n of landed) {
     cars.push({ issue: n, title: byNumber.get(n)?.title || '', state: 'landed', reason: 'express batch', pr_url: expressResult?.pr_url || '', merge_commit: expressResult?.merge_commit || '' })
   }
-  // An ejected ticket turned out bigger than its estimate claimed. It has NOT landed and
-  // nothing is wrong with it -- it just needs the lane that reviews properly. Re-queueing
-  // it here is the whole handover; dropping it would be this train silently losing work.
-  for (const e of ejected) {
+  // An ejected ticket turned out bigger than its estimate claimed; a red_batch ticket
+  // committed fine and then the shared CI went red. Neither landed, and neither is a ticket
+  // anyone should have to notice went missing -- both go back to the lane that reviews one at
+  // a time. Appending to a topo-ordered list is safe: isExpress() refuses any car blocked by
+  // another car on this train, so nothing here has a blocker still ahead of it.
+  const reQueued = [...ejected.map((e) => ({ ...e, why: `ejected as bigger than rostered (${e.reason})` })), ...redBatch.map((n) => ({ number: n, why: 'the express batch went red' }))]
+  for (const e of reQueued) {
     if (!dispatchList.includes(e.number) && byNumber.has(e.number)) {
       dispatchList.push(e.number)
-      log(`#${e.number} ejected from the express batch (${e.reason}) -- re-queued as a full car`)
+      log(`#${e.number}: ${e.why} -- re-queued as a full car`)
     }
   }
   for (const r of expressResult?.refused || []) {
@@ -394,11 +406,13 @@ if (expressSet.length) {
   }
 
   ledgerLines.push(
-    `express batch ${expressResult?.merged ? 'landed' : 'did NOT land'} — ${landed.length ? landed.map((n) => '#' + n).join(', ') : 'nothing'}${
+    `express batch ${expressResult?.merged ? 'landed' : `did NOT land (CI ${expressResult?.ci || 'unknown'})`} — ${landed.length ? landed.map((n) => '#' + n).join(', ') : 'nothing'}${
       expressResult?.pr_url ? ` (${expressResult.pr_url})` : ''
-    }.${ejected.length ? ` Ejected as bigger than rostered and re-queued as full cars: ${ejected.map((e) => '#' + e.number).join(', ')}.` : ''}`,
+    }.${ejected.length ? ` Ejected as bigger than rostered and re-queued as full cars: ${ejected.map((e) => '#' + e.number).join(', ')}.` : ''}${
+      redBatch.length ? ` Its PR is closed and ${redBatch.map((n) => '#' + n).join(', ')} ${redBatch.length === 1 ? 'is' : 'are'} re-queued as full cars.` : ''
+    }`,
   )
-  log(`express batch: ${landed.length} landed, ${ejected.length} ejected, ${(expressResult?.refused || []).length} refused`)
+  log(`express batch: ${landed.length} landed, ${ejected.length} ejected, ${redBatch.length} re-queued after a red CI, ${(expressResult?.refused || []).length} refused`)
 }
 
 // A poisoned main stops everything behind it, exactly as a full car's would.
@@ -448,6 +462,9 @@ for (const n of dispatchList) {
 
   // One car, end to end: worktree, 13 phases, merge. process-issues re-fetches and cuts
   // its worktree at its own Triage, so the fresh tip needs no help from here.
+  // The child hand-rolls that worktree rather than using `isolation: 'worktree'`: the tree
+  // must be named, durable and readable by a human after a parked car, which the per-agent
+  // ephemeral one is not.
   //
   // Three things this train knows that a standalone run does not:
   //   - watchMain: post_merge_green is the halt condition below, so it must be measured.
@@ -472,6 +489,9 @@ for (const n of dispatchList) {
     baseline: landedSoFar() === 0,
     rosterChecked: true,
     ...CAR_ARGS,
+    // The machine this train is running on, passed down rather than re-guessed per script.
+    repo: opt.repo,
+    ghPath: opt.ghPath,
     // After the spread on purpose: neither is the operator's to relax on a train.
     requireReady: true,
     watchMain: 'auto',
@@ -549,7 +569,12 @@ for (const n of dispatchList) {
 }
 
 const landed = cars.filter((c) => c.state === 'landed')
-log(`train done: ${landed.length} landed, ${cars.filter((c) => c.state.startsWith('parked')).length} parked${halted ? ', HALTED on red main' : ''}`)
+// needs_human is a wide OR in process-issues, and it can fire on a car that nonetheless
+// merged. The merge cannot be undone, so the train keeps going -- but "6 landed" with five of
+// them flagged and the flags visible only per row reads as a clean run. Count them.
+const flagged = landed.filter((c) => c.reason).length
+const flagLine = flagged ? `, ${flagged} of them flagged needs_human -- read those cars' run reports` : ''
+log(`train done: ${landed.length} landed${flagLine}, ${cars.filter((c) => c.state.startsWith('parked')).length} parked${halted ? ', HALTED on red main' : ''}`)
 
 // -- Wrap-up -------------------------------------------------------
 // One agent: the train's single main flake-check, the ledger comment, and the report file.
@@ -559,7 +584,7 @@ const REPORT_PATH = opt.reportPath || `${RUNS_DIR}/run-merge-train-${SPEC}.md`
   const body = [
     `# merge-train -- spec #${SPEC}: ${roster.spec_title}`,
     '',
-    `${RUN}. ${landed.length} of ${dispatchList.length} dispatched car(s) landed.${halted ? ' **The train halted: main went red after a merge.**' : ''}`,
+    `${RUN}. ${landed.length} of ${dispatchList.length} dispatched car(s) landed${flagLine}.${halted ? ' **The train halted: main went red after a merge.**' : ''}`,
     '',
     '## Cars',
     '',
@@ -614,11 +639,11 @@ const REPORT_PATH = opt.reportPath || `${RUNS_DIR}/run-merge-train-${SPEC}.md`
       `2. Post ONE comment on issue #${SPEC}. The text is final -- do not rephrase or extend it, except for the one RED line rule below.`,
       `\`gh issue comment ${SPEC} --body "<the text below>"\``,
       '<<<COMMENT>>>',
-      `${RUN}: train finished -- ${landed.length} of ${dispatchList.length} dispatched car(s) landed${halted ? '; **HALTED on a red main**' : ''}.`,
+      `${RUN}: train finished -- ${landed.length} of ${dispatchList.length} dispatched car(s) landed${flagLine}${halted ? '; **HALTED on a red main**' : ''}.`,
       ...ledgerLines.map((l) => `- ${l}`),
       '<<<END COMMENT>>>',
       checkMain
-        ? "If step 1 found main RED, append this line to the comment: '**Main is RED after this train** -- revert or roll forward before anything else lands.'"
+        ? "Then ONE mechanical addition to that comment, decided by string comparison, not by judgement: if main_conclusion from step 1 is exactly \"success\", append nothing. For ANY other value, append this line verbatim: '**Main is RED after this train** -- revert or roll forward before anything else lands.'"
         : '',
       DO_REPORT
         ? [
@@ -637,6 +662,11 @@ const REPORT_PATH = opt.reportPath || `${RUNS_DIR}/run-merge-train-${SPEC}.md`
     {
       label: 'wrapup',
       phase: 'Report',
+      // Transcription plus two string comparisons -- no judgement left in it, so it runs on
+      // the cheapest model like ledger() does. It is the one haiku agent here that watches a
+      // CI run; if that turns out to be beyond it, put the model back and keep the wording.
+      model: 'haiku',
+      effort: 'low',
       schema: {
         type: 'object',
         additionalProperties: false,

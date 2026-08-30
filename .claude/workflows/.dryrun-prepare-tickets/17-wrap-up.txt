@@ -19,19 +19,66 @@ Answer here and re-run `{ request: 300 }` to re-spec, or edit the affected ticke
 <<<END COMMENT>>>
 
 TASK 3 -- Mirror the filed spec into the repository, in spec-kit's layout. From C:/Users/User/Documents/dev/graphknows run `powershell -ExecutionPolicy Bypass -File .specify/scripts/powershell/create-new-feature.ps1 -Json -ShortName "window-chunk-episodic-index" "<the topic, quoted safely>"` where the topic is: should window chunks carry their own episodic index?. Parse the JSON it prints for the feature directory it created (specs/<NNN>-<slug>). It seeds a template spec.md there; overwrite it.
-Into that directory write the three payloads below as spec.md, research.md and tasks.md -- byte for byte, markers excluded. Report the directory, relative to the repo root, under feature_dir.
+Into that directory write the four payloads below as spec.md, plan.md, research.md and tasks.md -- byte for byte, markers excluded. Report the directory, relative to the repo root, under feature_dir.
+All four matter: the speckit skills refuse to run on a feature directory that has no plan.md, whatever else is in it.
 <<<spec.md>>>
 <!-- Filed as spec issue #201, requested in #300 by an automated prepare-tickets run -->
 
 > **An adversarial reviewer returned "fixable" on this spec.** The body below may already address these; check before removing the `needs-triage` label.
 > - the spec never says what happens to chunks already stored — *fix:* state that back-fill is out of scope and why
 
-## Problem Statement
-...
+## User Scenarios & Testing
+### User Story 1 - Recall by instant (Priority: P1)
+x
+## Requirements
+- **FR-001**: the chunk writer MUST derive an episodic index.
+## Success Criteria
+- **SC-001**: recall returns the right chunk for a known instant in 100% of cases.
+## Implementation Decisions
+Recorded in docs/adr/0004-episodic-index.md.
 ## Testing Decisions
 Tested at the chunk writer.
 
 <<<end spec.md>>>
+<<<plan.md>>>
+# Implementation Plan: Window chunks carry their own episodic index
+
+## Summary
+
+attach the episodic index at write time, in the chunk writer
+
+## Technical Context
+
+**Project Type**: single project, flat layout -- a distributed Python package, not an application.
+**Constraints**: no new third-party dependency unless a ticket declares one in pyproject.toml. The verification harness (.github/workflows/ci.yml, .github/workflows/release.yml, scripts/gate.sh, .pre-commit-config.yaml) is off limits to every ticket below.
+**Source of truth**: the GitHub issues under spec #201. This directory mirrors them; where the two disagree, the issues win.
+
+## Constitution Check
+
+Passed. .specify/memory/constitution.md was not contradicted by the chosen design, and an adversarial reviewer returned "fixable".
+
+## Project Structure
+
+### Documentation (this feature)
+
+```
+spec.md      the filed spec, byte for byte
+plan.md      this file
+research.md  what the research lanes found, and what a skeptic did to it
+tasks.md     the filed tickets, in dependency order
+```
+
+### Source Code (repository root)
+
+```
+graphknows/storage/chunks.py
+```
+
+## Complexity Tracking
+
+2 ticket(s). 0 gated behind a human decision; the rest were filed ready.
+The decision itself is recorded in `docs/adr/0002-episodic-index-on-window-chunks.md`.
+<<<end plan.md>>>
 <<<research.md>>>
 # Research -- should window chunks carry their own episodic index?
 

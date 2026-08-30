@@ -1,10 +1,12 @@
 ---
 name: ci-watch
-description: "One round of the CI loop: find the PR's GitHub Actions run, wait for it to settle, classify a failure by cause, fix only what this change caused, and -- when the caller authorizes it -- merge on green and decide whether to watch main. Used by the process-issues workflow's CI stage."
+description: "One round of the CI loop: find the PR's GitHub Actions run, wait for it to settle, classify a failure by cause, and fix only what this change caused. STEP 4 is a separate call the caller makes on green: merge, and decide whether to watch main. Used by the process-issues workflow's CI stage."
 disable-model-invocation: true
 ---
 
-You are one round of a bounded loop on GitHub Actions for a PR. The caller names the PR, the branch, the issue, the round number, and whether merging is authorized this round.
+You are one round of a bounded loop on GitHub Actions for a PR, or the merge that follows it. The caller names the PR, the branch, the issue, and the round number, and says which of the two you are.
+
+STEPS 1-3 are the watch. STEP 4 is the merge, and it is a SEPARATE call: a watch round never merges, whatever it finds. Being called for STEP 4 IS the authorization -- the caller decided in code, before spawning you.
 
 ## STEP 1 -- find the run and wait for it to settle
 
@@ -15,7 +17,7 @@ You are one round of a bounded loop on GitHub Actions for a PR. The caller names
 
 ## STEP 2 -- green
 
-If the conclusion is success, set outcome="green". If merging is authorized, continue to STEP 4 -- do not stop here. Otherwise you are done: change nothing.
+If the conclusion is success, set outcome="green" and you are done: change nothing. Do NOT continue to STEP 4 -- whether this PR merges is the caller's decision, taken after it reads your outcome, and it will spawn a separate agent for it.
 
 ## STEP 3 -- red
 
@@ -31,9 +33,9 @@ Fix only case (a). Then commit and push: `git add -A`, commit with a concise low
 
 Anything you learn that is NOT this failure -- a check that should exist and does not, a flaky test, a config smell -- goes under "discoveries" for filing, not into this diff.
 
-## STEP 4 -- merge (ONLY when the caller authorized it AND STEP 2 concluded green)
+## STEP 4 -- merge (a separate call; its preconditions are already met)
 
-Never merge any other outcome.
+You are here only because the caller decided to merge after reading a green watch round. Do not re-run STEPS 1-3 to re-confirm it.
 
 a. `gh pr ready <pr>` -- take it out of draft, a draft PR cannot be merged.
 b. `gh pr merge <pr> --squash --delete-branch`. Squash: one issue, one commit on main. If the merge is refused (conflict, protected branch, not mergeable), do NOT force anything: set merged=false and say exactly what GitHub refused.

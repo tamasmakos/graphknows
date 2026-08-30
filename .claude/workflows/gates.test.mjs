@@ -125,7 +125,10 @@ assert.ok(!checkFollowupBody('', 'bug').join().includes('Parent'))
 // errors -- the issues just sit there, or worse, get worked without a human agreeing.
 const rnd = readFileSync(new URL('./prepare-tickets.js', import.meta.url), 'utf8')
 const train = readFileSync(new URL('./run-merge-train.js', import.meta.url), 'utf8')
-const konst = (text, name) => text.match(new RegExp(`^const ${name} = '([^']*)'`, 'm'))?.[1]
+const express = readFileSync(new URL('./express-lane.js', import.meta.url), 'utf8')
+// Tolerates the `opt.x || 'default'` form these constants take where a caller may override
+// the machine they run on -- the DEFAULT is what has to agree across the four files.
+const konst = (text, name) => text.match(new RegExp(`^const ${name} = (?:[\\w.]+ \\|\\| )?'([^']*)'`, 'm'))?.[1]
 
 // RUNS_DIR joins the drift check for a reason of its own: it is the one path in these
 // scripts that .gitignore has an opinion about. If a workflow drifts to a directory the
@@ -134,7 +137,7 @@ const konst = (text, name) => text.match(new RegExp(`^const ${name} = '([^']*)'`
 // months later by someone reading a diff full of machine output.
 for (const name of ['GATE_LABEL', 'READY_LABEL', 'MAIN_REPO', 'RUNS_DIR']) {
   const a = konst(src, name)
-  for (const [fname, text] of [['prepare-tickets.js', rnd], ['run-merge-train.js', train]]) {
+  for (const [fname, text] of [['prepare-tickets.js', rnd], ['run-merge-train.js', train], ['express-lane.js', express]]) {
     const b = konst(text, name)
     assert.ok(a, `${name} not found in process-issues.js`)
     assert.ok(b, `${name} not found in ${fname}`)
@@ -191,7 +194,15 @@ const { checkHandover, gateFor, HARNESS, labelCheck } = await import(
   'data:text/javascript,' + encodeURIComponent(LABELS + rnd.slice(from2, to2) + '\nexport { checkHandover, gateFor, HARNESS, labelCheck }')
 )
 
-const SPEC = '## Problem Statement\nx\n## Testing Decisions\nTested at the chunk writer.\n'
+// spec-kit's spec template, which prepare-tickets adopted at the spec level: its three
+// mandatory sections plus the two this repo adds (Implementation Decisions cites the ADR,
+// Testing Decisions carries the seams -- spec-kit has no equivalent for either).
+const SPEC =
+  '## User Scenarios & Testing\n### User Story 1 - Recall by instant (Priority: P1)\nx\n' +
+  '## Requirements\n- **FR-001**: the chunk writer MUST derive an episodic index.\n' +
+  '## Success Criteria\n- **SC-001**: recall returns the right chunk for a known instant in 100% of cases.\n' +
+  '## Implementation Decisions\nRecorded in docs/adr/0004-episodic-index.md.\n' +
+  '## Testing Decisions\nTested at the chunk writer.\n'
 const body =
   '## Parent\nthe parent spec issue\n## What to build\nx\n' +
   '## Acceptance criteria\n- [ ] WHEN a chunk is stored THE SYSTEM SHALL return it by instant\n' +
@@ -208,7 +219,24 @@ assert.match(
   checkHandover(SPEC, ['the retrieval fuser'], [tk([])]).problems.join(),
   /never names the seam/,
 )
-assert.match(checkHandover('## Problem Statement\nx\n', [], [tk([])]).problems.join(), /Testing Decisions/)
+// every mandatory section is refused by name, not just the one that used to be checked
+for (const heading of ['User Scenarios & Testing', 'Requirements', 'Success Criteria', 'Implementation Decisions', 'Testing Decisions']) {
+  const stripped = SPEC.replace('## ' + heading + '\n', '')
+  assert.match(
+    checkHandover(stripped, [], [tk([])]).problems.join(),
+    new RegExp(`no "## ${heading.replace('&', '&')}" section`),
+    `a spec missing ## ${heading} must be refused`,
+  )
+}
+// a template annotation the writer forgot to strip is punctuation, not a missing section
+assert.deepEqual(
+  checkHandover(SPEC.replace('## Requirements', '## Requirements *(mandatory)*'), ['the chunk writer'], [tk([])]).problems,
+  [],
+  'a heading still carrying the template annotation *(mandatory)* is still that heading',
+)
+// an unnumbered requirement or criterion cannot be cited by a ticket or counted by analyze
+assert.match(checkHandover(SPEC.replace('FR-001', 'FR'), [], [tk([])]).problems.join(), /no FR-### functional requirement/)
+assert.match(checkHandover(SPEC.replace('SC-001', 'SC'), [], [tk([])]).problems.join(), /no SC-### success criterion/)
 
 // a ticket missing any required section
 for (const missing of ['## Parent', '## What to build', '## Acceptance criteria', '## Verify', '## Out of scope']) {
@@ -375,7 +403,25 @@ assert.deepEqual(dependentsOf(dag, 4), [])
 // verifies it. Two copies, no imports: if they drift, prepare-tickets files a ticket ready that the
 // train would have refused, and nothing errors.
 const harnessList = (text) => text.match(/^const HARNESS = \[([^\]]*)\]/m)?.[1]
-assert.ok(harnessList(rnd) && harnessList(train), 'HARNESS not found in both files')
-assert.equal(harnessList(train), harnessList(rnd), 'the HARNESS list has drifted between prepare-tickets.js and run-merge-train.js')
+for (const [fname, text] of [['prepare-tickets.js', rnd], ['run-merge-train.js', train], ['process-issues.js', src]]) {
+  assert.ok(harnessList(text), `HARNESS not found at top level in ${fname}`)
+  assert.equal(harnessList(text), harnessList(train), `the HARNESS list has drifted between ${fname} and run-merge-train.js`)
+}
+
+// -- the review boundary of the whole system, in numbers rather than in two comments --
+//
+// run-merge-train admits a car at <= EXPRESS_MAX_LINES expected; express-lane ejects one at
+// > MAX_LINES actual. The gap between them is the band where a ticket lands having had only
+// batch-level review -- no adversarial review, no dogfood, no wheel gate, no docs. Invert
+// them and every express car ejects; equalise them and an honest under-estimate ejects
+// instead of landing. Neither errors.
+const num = (text, name) => Number(text.match(new RegExp(`^const ${name} = (?:opt\\.\\w+ \\|\\| )?(\\d+)`, 'm'))?.[1])
+const admitAt = num(train, 'EXPRESS_MAX_LINES')
+const ejectAt = num(express, 'MAX_LINES')
+assert.ok(admitAt > 0 && ejectAt > 0, 'EXPRESS_MAX_LINES / MAX_LINES not found -- did one of them move?')
+assert.ok(
+  ejectAt > admitAt,
+  `express-lane ejects at ${ejectAt} lines but run-merge-train admits at ${admitAt}: the lane would eject cars it was rostered to take`,
+)
 
 console.log('ok')

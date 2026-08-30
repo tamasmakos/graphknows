@@ -6,11 +6,11 @@ Do not reformat it, do not fix its grammar, do not add a heading or a footer, an
 <<<REPORT-BEGINS>>>
 # process-issues -- #157
 
-Base branch `main`, an automated process-issues run. Merging was disabled.
+Base branch `main`, an automated process-issues run. Merging was enabled.
 
 | Issue | Repro red | Green | Dogfood | Docs | Wheel | Shipped | CI | Merged | Needs human |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| #157 INSTANCE_OF.score is per-class, not per-entity | yes | yes | edible | 1 page(s) | problems | yes | green | NO | yes |
+| #157 INSTANCE_OF.score is per-class, not per-entity | yes | yes | edible | 1 page(s) | problems | yes | green | yes | yes |
 
 ## Baseline
 

@@ -42,9 +42,12 @@ const BASE = opt.base || 'main'
 const DO_MERGE = opt.merge === true
 const DO_SHIP = opt.ship !== false
 const DO_REPORT = opt.report !== false
-// The ejection threshold. A ticket claiming ~25 lines that turns into 200 is not a small
-// ticket, it is a wrong estimate, and the whole justification for the reduced scrutiny
-// above rests on the claim being true. Generous enough to absorb an honest miss.
+// The ejection threshold, and the far side of THE REVIEW BOUNDARY OF THE WHOLE SYSTEM:
+// run-merge-train's EXPRESS_MAX_LINES admits a car at <=30 expected lines, this ejects one
+// at >50 actual. Keep the pair in mind when moving either number -- the 20-line slack is
+// deliberate (a wrong estimate should cost a restart, not a badly-reviewed merge) and it
+// means a ticket rostered at 30 can legitimately land at 49 having had only batch-level
+// review: no adversarial review, no dogfood, no wheel gate, no docs.
 const MAX_LINES = opt.maxLines || 50
 // Only a train needs this: post_merge_green is its halt condition. A standalone run has
 // nothing that acts on the answer, so it does not spend eleven minutes measuring it.
@@ -53,12 +56,15 @@ const RUN = opt.runLabel || 'an express-lane run'
 
 const GATE_LABEL = 'needs-triage'
 const READY_LABEL = 'ready-for-agent'
-const MAIN_REPO = 'C:/Users/User/Documents/dev/graphknows'
+const MAIN_REPO = opt.repo || 'C:/Users/User/Documents/dev/graphknows'
 const RUNS_DIR = 'docs/agents/runs'
-const GH = 'Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).'
+const GH = `Use \`gh\`. If it is not on PATH, fall back to "${opt.ghPath || '/c/Program Files/GitHub CLI/gh.exe'}" (quote it).`
 // Deterministic, so a resumed run reuses the same tree instead of stranding the first one.
+// Hand-rolled rather than the runtime's `isolation: 'worktree'` on purpose: that one is
+// per-agent and ephemeral, and this tree must be named, outlive any single agent, survive a
+// killed session, and be written by N sequential Commit agents plus a Ship agent.
 const BRANCH = opt.branch || `express/${ISSUES.join('-')}`
-const WORKTREE = opt.worktree || `C:/Users/User/Documents/dev/gk-express-${ISSUES[0]}`
+const WORKTREE = opt.worktree || `${MAIN_REPO.replace(/\/[^/]+$/, '')}/gk-express-${ISSUES[0]}`
 
 const RUN_ON = { model: 'sonnet', effort: 'medium' }
 const call = (prompt, opts = {}) => agent(prompt, { ...RUN_ON, ...opts })
@@ -303,7 +309,8 @@ if (DO_SHIP && ship?.pr_number && DO_MERGE) {
   land = await call(
     [
       `PR #${ship.pr_number} carries ${committed.length} small ticket(s) as ${committed.length} commit(s). Land it. ${GH}`,
-      `1. Watch CI to a conclusion: \`gh pr checks ${ship.pr_number} --watch\`. If it goes red, STOP: set merged=false, name the failing check, and do not try to fix it here. A red batch is bisected by a human or re-run through the full pipeline per ticket -- guessing which of ${committed.length} commits broke it is exactly the cost this lane was trading away.`,
+      `1. Watch CI to a conclusion: \`gh pr checks ${ship.pr_number} --watch\`. If it goes red, STOP: set ci="red", merged=false and name the failing check. Do NOT try to fix it -- guessing which of ${committed.length} commits broke it is exactly the cost this lane was trading away.`,
+      `   Then close the PR so the batch stops claiming these tickets: \`gh pr close ${ship.pr_number} --comment "batch CI went red; these tickets go back through the full pipeline one at a time"\`. Do NOT pass --delete-branch: the caller re-queues each ticket as a full car, and leaving ${BRANCH} on the remote is what lets a human bisect the batch afterwards.`,
       `2. Green: \`gh pr ready ${ship.pr_number}\` if it is a draft, then \`gh pr merge ${ship.pr_number} --rebase --delete-branch\`.`,
       '   REBASE, not squash. Each ticket must land as its own commit on main so its "Closes #N" trailer closes it and `git log` stays readable per ticket. If the repository refuses rebase merges, set merged=false and say so -- do NOT fall back to squash, which would close every ticket from one commit and destroy the per-ticket history.',
       `3. Confirm each issue closed itself: ${committed.map((c) => `\`gh issue view ${c.number} --json state\``).join(', ')}. Report any still open; do not close one by hand, that hides a broken link.`,
@@ -349,12 +356,15 @@ if (DO_REPORT) {
     'One gate run, one CI run and one merge were shared across this batch. Through the normal lane each ticket',
     `would have paid its own -- roughly thirty-one minutes each, or about ${committed.length * 31} minutes for these ${committed.length}.`,
     '',
-    '## Landed',
+    land?.merged ? '## Landed' : '## Committed, but NOT landed',
     '',
     '| # | Ticket | ~lines | Files |',
     '| --- | --- | --- | --- |',
     ...committed.map((c) => `| #${c.number} | ${c.title} | ${c.lines || '?'} | ${(c.files || []).join(', ')} |`),
     '',
+    DO_MERGE && !land?.merged
+      ? `## Why nothing landed\n\nCI came back ${land?.ci || 'unknown'}${land?.failing_check ? ` (${land.failing_check})` : ''} and the PR was closed, so nothing above reached ${BASE}. Every ticket in the table is still open and goes back through process-issues one at a time. The commits are still on \`${BRANCH}\` on the remote if you want to bisect the batch first.`
+      : null,
     ejected.length
       ? `## Ejected\n\nBigger than rostered, or not buildable as described. These did NOT land and are still open — run them through process-issues as normal cars.\n\n${ejected
           .map((e) => `- #${e.number} ${e.title} — ${e.reason}`)
@@ -392,15 +402,23 @@ return {
   merged: land?.merged === true,
   merge_commit: land?.merge_commit || '',
   post_merge_green: land?.post_merge_green,
-  landed: committed.map((c) => c.number),
+  // Committed is NOT landed. Nothing reaches main until the rebase-merge succeeds, so a red
+  // CI, a refused merge or a run with merge:false leaves this empty -- reporting the batch as
+  // landed there told the train to record N merged tickets that do not exist.
+  landed: land?.merged ? committed.map((c) => c.number) : [],
   // The caller re-queues these as normal cars. Naming them here is the whole handover:
-  // an ejected ticket that nobody picks up is a ticket this lane silently dropped.
+  // an ejected ticket that nobody picks up is a ticket this lane silently dropped. Same for
+  // a batch that committed and then failed to land -- its PR is closed, so nothing else is
+  // claiming these tickets and they need the lane that reviews one at a time.
+  red_batch: DO_MERGE && !land?.merged ? committed.map((c) => c.number) : [],
   ejected: ejected.map((e) => ({ number: e.number, reason: e.reason })),
   refused: refused.map((r) => ({ number: r.number, reason: r.reason })),
   report: DO_REPORT ? REPORT_PATH : 'not written',
-  next_step: ejected.length
-    ? `${ejected.map((e) => '#' + e.number).join(', ')} were too big for this lane and are still open -- run them through process-issues as normal cars.`
-    : land?.merged
+  next_step: DO_MERGE && !land?.merged
+    ? `The batch did NOT land (CI ${land?.ci || 'unknown'}${land?.failing_check ? `: ${land.failing_check}` : ''}). Its PR is closed and ${committed.map((c) => '#' + c.number).join(', ')} are still open -- run them through process-issues as normal cars. The commits are still on ${BRANCH} if you want to bisect the batch.`
+    : ejected.length
+      ? `${ejected.map((e) => '#' + e.number).join(', ')} were too big for this lane and are still open -- run them through process-issues as normal cars.`
+      : land?.merged
       ? `All ${committed.length} landed as separate commits on ${BASE}.`
       : `PR ${ship?.pr_url || BRANCH} is open with ${committed.length} commit(s); merge it or re-run with { merge: true }.`,
 }

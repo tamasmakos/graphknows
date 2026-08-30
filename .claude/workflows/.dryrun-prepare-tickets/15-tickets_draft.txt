@@ -1,8 +1,15 @@
 You are breaking an approved spec into tickets for the GraphKnows repository at C:/Users/User/Documents/dev/graphknows.
 THE TOPIC: should window chunks carry their own episodic index?
 THE SPEC (title: Window chunks carry their own episodic index):
-## Problem Statement
-...
+## User Scenarios & Testing
+### User Story 1 - Recall by instant (Priority: P1)
+x
+## Requirements
+- **FR-001**: the chunk writer MUST derive an episodic index.
+## Success Criteria
+- **SC-001**: recall returns the right chunk for a known instant in 100% of cases.
+## Implementation Decisions
+Recorded in docs/adr/0004-episodic-index.md.
 ## Testing Decisions
 Tested at the chunk writer.
 

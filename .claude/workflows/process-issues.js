@@ -112,9 +112,19 @@ const GATE_LABEL = 'needs-triage'
 // repairs the pair rather than trusting a prompt not to create it.
 const READY_LABEL = 'ready-for-agent'
 
+// A change that rewrites the verification it must pass proves nothing by passing it: the
+// PR's green is the green of a CI this diff just edited. Same list as prepare-tickets' and
+// run-merge-train's HARNESS, and gates.test.mjs asserts all three agree -- top-level so it
+// can see this one. Duplicated because workflow scripts cannot import.
+const HARNESS = ['.github/workflows/ci.yml', '.github/workflows/release.yml', 'scripts/gate.sh', '.pre-commit-config.yaml']
+
 // .claude/ is gitignored, so skills and graphify-out do NOT exist inside a worktree.
-// Anything under here is read from the main checkout, by absolute path.
-const MAIN_REPO = 'C:/Users/User/Documents/dev/graphknows'
+// Anything under here is read from the main checkout, by absolute path. Overridable so the
+// pipeline is not pinned to one machine's checkout.
+const MAIN_REPO = opt.repo || 'C:/Users/User/Documents/dev/graphknows'
+// Worktrees are cut beside the checkout, not inside it. Derived so the examples in the
+// prompts below name a directory that exists on whichever machine this is running on.
+const SIBLING_DIR = MAIN_REPO.replace(/\/[^/]+$/, '')
 // Where an agent's own output goes, beside the rules agents READ. docs/agents/runs/ is
 // gitignored; the rule files beside it are not, deliberately -- a rule an agent cannot
 // open from a fresh clone gets restated into every ticket instead.
@@ -126,7 +136,7 @@ const winPath = (p) =>
     ? String(p)
         .replace(/\\/g, '/')
         .replace(/^\/([a-zA-Z])\//, (_, drive) => `${drive.toUpperCase()}:/`)
-    : '<ABSOLUTE PATH OF YOUR WORKTREE, drive-letter form, e.g. C:/Users/User/Documents/dev/gk-baseline>'
+    : `<ABSOLUTE PATH OF YOUR WORKTREE, drive-letter form, e.g. ${SIBLING_DIR}/gk-baseline>`
 
 // Every agent in this run is pinned, rather than inheriting whatever the launching
 // session happened to be set to: a workflow that reads differently depending on who
@@ -146,7 +156,7 @@ const call = (prompt, opts = {}) => agent(prompt, { ...RUN_ON, ...opts })
 
 // gh landed on the machine PATH at install time; a session started before that
 // still carries the stale PATH, so every gh-touching prompt gets the fallback.
-const GH = 'Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).'
+const GH = `Use \`gh\`. If it is not on PATH, fall back to "${opt.ghPath || '/c/Program Files/GitHub CLI/gh.exe'}" (quote it).`
 
 // Every push goes through the same pre-push hook, described once. Measured 2026-08-28:
 // whole gate ~5 minutes (pytest 1271 tests in 119s); 900000 ms is that plus headroom.
@@ -719,13 +729,26 @@ const CI_SCHEMA = {
     failing_jobs: { type: 'array', items: { type: 'string' }, description: 'job or step names that failed, with the error line' },
     fixed: { type: 'array', items: { type: 'string' }, description: 'what you changed to address them' },
     commit: { type: 'string', description: 'the sha you pushed, if you pushed' },
-    merged: { type: 'boolean', description: 'set only when this round was told to merge: true once the merge completed' },
+    discoveries: DISCOVERIES,
+    notes: { type: 'string' },
+  },
+}
+
+// Merging is the one irreversible act in this pipeline, so it is a call of its own rather
+// than a side effect of the watch above: the script issues it or it does not happen. A
+// prompt saying "you are not authorised" is advisory; not making the call is structural.
+const MERGE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['merged', 'notes'],
+  properties: {
+    merged: { type: 'boolean' },
+    method: { type: 'string', enum: ['squash', 'merge', 'rebase', 'none'] },
     merge_commit: { type: 'string' },
     issue_closed: { type: 'boolean', description: 'the linked issue closed itself via "Closes #n"' },
     tree_matches_ci: { type: 'boolean', description: "the merged main tip's tree is byte-identical to the tree the PR's CI tested" },
     post_merge_run_url: { type: 'string', description: 'the CI run the merge triggered on main' },
     post_merge_green: { type: 'boolean', description: 'true only if that run finished successfully; unset when the watch was skipped' },
-    discoveries: DISCOVERIES,
     notes: { type: 'string' },
   },
 }
@@ -788,6 +811,10 @@ const DIST_FACTS = d
 // -- Triage --------------------------------------------------------
 // One agent creates every worktree: concurrent `git worktree add` in the same
 // repo races on the index lock, and one sequential agent is cheaper than a lock.
+// Worktrees are hand-rolled rather than the runtime's `isolation: 'worktree'` on purpose:
+// that one is per-agent and ephemeral, and these must be named, outlive any single agent,
+// survive a killed session, and be reused by a dozen later stages -- and, on a train, by a
+// second workflow.
 phase('Triage')
 // Blocking edges come from prepare-tickets' tickets: it files them in dependency order
 // with a "## Blocked by" section naming real issue numbers. Working a blocked ticket first
@@ -844,7 +871,7 @@ const triage = await call(
     'Then, for EACH picked issue, sequentially (never in parallel):',
     '  1. `git fetch origin`',
     `  2. from the repo root: \`git worktree add ../gk-issue-<n> -b fix/issue-<n> origin/${BASE}\``,
-    '  3. record the ABSOLUTE path of that worktree in DRIVE-LETTER form -- `C:/Users/User/Documents/dev/gk-issue-<n>`, not `/c/Users/...`. Later stages mount that path into docker, which needs the drive letter.',
+    `  3. record the ABSOLUTE path of that worktree in DRIVE-LETTER form -- \`${SIBLING_DIR}/gk-issue-<n>\`, not the Git Bash \`/c/Users/...\` form. Later stages mount that path into docker, which needs the drive letter.`,
     // A leftover branch was cut from an older main and silently voids the train's safety
     // story -- #137 resumed one and shipped a duplicate of a fix already on the tip.
     'If a worktree or branch for an issue already exists locally, reuse the DIRECTORY rather than failing --',
@@ -1497,6 +1524,9 @@ const results = await pipeline(
   // run is green, then merge. Deliberately in this order: ci.yml triggers on
   // `pull_request` as well as `push`, so the PR run is available BEFORE main is touched,
   // and merging a red branch to prove it is red is not a thing worth doing.
+  //
+  // The watch never merges. Merging is a separate call the script issues only when
+  // mergeAllowed and the watch came back green -- see MERGE_SCHEMA above for why.
   async (ctx) => {
     if (!ctx) return null
     const { issue, ship, verify } = ctx
@@ -1506,8 +1536,6 @@ const results = await pipeline(
     }
 
     // A change that rewrites the verification it must pass proves nothing by passing it.
-    // Same list as run-merge-train's HARNESS (duplicated: scripts cannot import).
-    const HARNESS = ['.github/workflows/ci.yml', '.github/workflows/release.yml', 'scripts/gate.sh', '.pre-commit-config.yaml']
     const harnessTouched = (verify?.changed_files || []).map(norm).filter((f) => HARNESS.includes(f))
     const mergeAllowed = DO_MERGE && !harnessTouched.length
     if (DO_MERGE && !mergeAllowed) {
@@ -1521,10 +1549,8 @@ const results = await pipeline(
       ci = await call(
         [
           `cd ${issue.worktree}. You are round ${round} of at most ${CI_ROUNDS} on GitHub Actions for PR ${prRef} (branch ${issue.branch}, issue #${issue.number}). ${GH}`,
-          skill('ci-watch/SKILL.md', 'the whole round -- find and watch the run, the three failure causes, and the merge steps. Follow it exactly.'),
-          mergeAllowed
-            ? `Merging IS authorized this round: on green, run the skill's STEP 4 for PR ${prRef} and issue #${issue.number}. Watch-main mode: ${WATCH_MAIN === 'auto' ? 'auto' : WATCH_MAIN ? 'always' : 'never'}.`
-            : 'Merging is NOT authorized this round: on green, set outcome="green" and stop -- change nothing.',
+          skill('ci-watch/SKILL.md', 'STEPS 1 to 3 -- find and watch the run, and the three failure causes. Follow it exactly. STEP 4 is not yours: this round never merges.'),
+          'On green, set outcome="green" and stop -- change nothing. Whether this PR merges is decided by the caller afterwards, in a separate call.',
           `If STEP 3 has you push a fix: ${PREPUSH}`,
           BASELINE_NOTE,
           HOUSE,
@@ -1544,18 +1570,19 @@ const results = await pipeline(
       return { ...ctx, ci, merge: null }
     }
 
-    // The merge happened inside the final green CI round; reshape its fields into the
-    // same object the summary and the train have always read.
-    const merge = {
-      merged: ci.merged === true,
-      merge_commit: ci.merge_commit,
-      issue_closed: ci.issue_closed,
-      tree_matches_ci: ci.tree_matches_ci,
-      post_merge_run_url: ci.post_merge_run_url,
-      post_merge_green: ci.post_merge_green,
-      notes: ci.notes,
-    }
-    log(`#${issue.number}: ${merge.merged ? 'merged' : 'NOT merged'} -- ${merge.notes || ''}`)
+    // Everything above had to be true for this line to be reached: merging was asked for,
+    // the diff leaves the harness alone, and the PR's own run went green on this tree.
+    const merge = await call(
+      [
+        `CI is green on PR ${prRef} for issue #${issue.number} (branch ${issue.branch}). Merge it. ${GH}`,
+        `cd ${issue.worktree}.`,
+        skill('ci-watch/SKILL.md', 'STEP 4 only. Its preconditions are already met -- you are being called BECAUSE the run is green and the caller decided to merge. Do not re-run STEPS 1 to 3.'),
+        `Watch-main mode: ${WATCH_MAIN === 'auto' ? 'auto' : WATCH_MAIN ? 'always' : 'never'}.`,
+        'Do not tag, do not release, do not bump a version, do not upload anything.',
+      ].join('\n'),
+      { label: `merge#${issue.number}`, phase: 'CI', schema: MERGE_SCHEMA },
+    )
+    log(`#${issue.number}: ${merge?.merged ? 'merged' : 'NOT merged'} -- ${merge?.notes || ''}`)
     return { ...ctx, ci, merge }
   },
 )

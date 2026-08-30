@@ -4,7 +4,7 @@ Content: everything between the two marker lines below, byte for byte. The marke
 <<<REPORT-BEGINS>>>
 # express-lane -- 2 ticket(s) on one branch
 
-an express-lane run. Branch `express/205`, PR https://github.com/tamasmakos/graphknows/pull/950. Not merged.
+an express-lane run. Branch `express/205`, PR https://github.com/tamasmakos/graphknows/pull/950. Merged as ccc3333.
 
 One gate run, one CI run and one merge were shared across this batch. Through the normal lane each ticket
 would have paid its own -- roughly thirty-one minutes each, or about 62 minutes for these 2.

@@ -198,8 +198,9 @@ const CANNED = {
   },
   spec: {
     title: 'Window chunks carry their own episodic index',
-    body: '## Problem Statement\n...\n## Testing Decisions\nTested at the chunk writer.\n',
+    body: '## User Scenarios & Testing\n### User Story 1 - Recall by instant (Priority: P1)\nx\n## Requirements\n- **FR-001**: the chunk writer MUST derive an episodic index.\n## Success Criteria\n- **SC-001**: recall returns the right chunk for a known instant in 100% of cases.\n## Implementation Decisions\nRecorded in docs/adr/0004-episodic-index.md.\n## Testing Decisions\nTested at the chunk writer.\n',
     seams: ['the chunk writer'],
+    success_criteria: ['recall returns the right chunk for a known instant in 100% of cases'],
     out_of_scope: ['back-filling existing chunks'],
   },
   critic: {
@@ -220,11 +221,12 @@ const CANNED = {
     notes: 'two slices',
   },
   'tickets:draft': {
-    spec_body: '## Problem Statement\n...\n## Testing Decisions\nTested at the chunk writer.\n',
+    spec_body: '## User Scenarios & Testing\n### User Story 1 - Recall by instant (Priority: P1)\nx\n## Requirements\n- **FR-001**: the chunk writer MUST derive an episodic index.\n## Success Criteria\n- **SC-001**: recall returns the right chunk for a known instant in 100% of cases.\n## Implementation Decisions\nRecorded in docs/adr/0004-episodic-index.md.\n## Testing Decisions\nTested at the chunk writer.\n',
     tickets: [
       {
         title: 'derive an episodic index in the chunk writer',
         delivers: 'a stored chunk is retrievable by instant',
+        files_named: ['graphknows/storage/chunks.py'],
         body:
           '## Parent\nthe parent spec issue\n## What to build\nDerive the index in graphknows/storage/chunks.py at write time.\n## Acceptance criteria\n- [ ] WHEN a chunk is stored THE SYSTEM SHALL make it retrievable by its instant\n## Verify\n`pytest tests/storage/test_chunks.py -q` passes\n## Out of scope\nBack-filling chunks written before this lands.\n',
         verify: 'pytest tests/storage/test_chunks.py -q',
@@ -255,7 +257,7 @@ const CANNED = {
     feature_dir: 'specs/001-window-chunk-episodic-index',
     notes: 'stub',
   },
-  merge: { merged: true, method: 'squash', merge_commit: 'def5678', issue_closed: true, post_merge_run_url: 'https://github.com/tamasmakos/graphknows/actions/runs/1700', post_merge_green: true, notes: 'squashed' },
+  merge: { merged: true, method: 'squash', merge_commit: 'def5678', tree_matches_ci: true, issue_closed: true, post_merge_run_url: 'https://github.com/tamasmakos/graphknows/actions/runs/1700', post_merge_green: true, notes: 'squashed' },
   roster: {
     spec_title: 'Window chunks carry their own episodic index',
     spec_open: true,
@@ -263,8 +265,8 @@ const CANNED = {
       { number: 202, title: 'derive an episodic index in the chunk writer', state: 'OPEN', labels: ['enhancement', 'ready-for-agent'], blocked_by: [], expected_lines: 60, files_named: ['graphknows/storage/chunks.py'] },
       { number: 203, title: 'rank temporal candidates by episodic index', state: 'OPEN', labels: ['enhancement', 'ready-for-agent'], blocked_by: [202], expected_lines: 40, files_named: ['graphknows/symbolic/temporal.py'] },
       { number: 204, title: 'gated straggler', state: 'OPEN', labels: ['enhancement', 'needs-triage'], blocked_by: [] },
-      { number: 205, title: 'add 3.13 to the classifiers', state: 'OPEN', labels: ['enhancement', 'ready-for-agent'], blocked_by: [], expected_lines: 2, files_named: ['pyproject.toml'] },
-      { number: 206, title: 'fix a stale path in the deprecation table', state: 'OPEN', labels: ['enhancement', 'ready-for-agent'], blocked_by: [], expected_lines: 4, files_named: ['docs/versioning.md'] },
+      { number: 205, title: 'add 3.13 to the classifiers', state: 'OPEN', labels: ['enhancement', 'ready-for-agent'], blocked_by: [], expected_lines: 2, sizing: 'measured', sizing_evidence: 'pyproject.toml classifiers list, one line added', files_named: ['pyproject.toml'] },
+      { number: 206, title: 'fix a stale path in the deprecation table', state: 'OPEN', labels: ['enhancement', 'ready-for-agent'], blocked_by: [], expected_lines: 4, sizing: 'measured', sizing_evidence: 'one path string in a markdown table', files_named: ['docs/versioning.md'] },
     ],
     notes: '',
   },
@@ -340,6 +342,9 @@ const WORKFLOW_CANNED = {
       merge_commit: 'e0e0e0e',
       post_merge_green: true,
       landed,
+      // A batch that committed and then failed to land; empty on this green stub, but the
+      // train reads it and re-queues each number as a full car.
+      red_batch: [],
       ejected,
       refused: [],
       report: 'docs/agents/runs/express-lane-stub.md',
