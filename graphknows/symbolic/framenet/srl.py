@@ -38,8 +38,21 @@ _WORD = re.compile(r"\w+")
 
 @lru_cache(maxsize=1)
 def installed() -> bool:
-    """Whether the ``srl`` extra is importable, without importing it."""
-    return importlib.util.find_spec("frame_semantic_transformer") is not None
+    """Whether the ``srl`` extra is actually importable.
+
+    ``find_spec`` alone only proves a module spec exists — a broken or
+    partially-installed extra (spec present, a transitive dependency missing)
+    still finds one and then blows up in :func:`_load`. Doing the real import
+    here catches that up front, so ``srl_enabled`` degrades to the LU/embedding
+    identifier instead of ingest crashing on ``MissingExtraError``.
+    """
+    if importlib.util.find_spec("frame_semantic_transformer") is None:
+        return False
+    try:
+        import frame_semantic_transformer  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 def srl_enabled() -> bool:
