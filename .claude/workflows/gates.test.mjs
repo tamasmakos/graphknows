@@ -387,6 +387,23 @@ assert.equal(
 assert.match(isExpress(tiny({ expected_lines: 31 }), [9]), /over the 30/)
 assert.equal(isExpress(tiny({ expected_lines: 30 }), [9]), '', '30 is the ceiling, not over it')
 assert.match(isExpress(tiny({ files_named: ['a.py', 'b.py', 'c.py'] }), [9]), /over 2/)
+// files_named is every path the BODY MENTIONS -- it over-reports on purpose so admit()'s
+// harness veto cannot be dodged. The lane must not read it as "files this change edits":
+// doing so charged a two-line docs fix the full ~14-stage lane for citing three files it
+// only READ (#265), and put 10 of 14 group-P cars on the long road the same way.
+assert.equal(
+  isExpress(tiny({ files_named: ['docs/x.md', 'settings.py', 'docs/a.md', 'docs/b.md'], files_to_edit: ['docs/x.md'] }), [9]),
+  '',
+  'a one-file edit that merely cites three more files still belongs on the express lane',
+)
+assert.match(
+  isExpress(tiny({ files_named: ['a.py'], files_to_edit: ['a.py', 'b.py', 'c.py'] }), [9]),
+  /edits 3 files, over 2/,
+  'files_to_edit is what the ceiling applies to, even when files_named is shorter',
+)
+// Absent or empty, it falls back to files_named -- a roster that does not report the new
+// field behaves exactly as before rather than silently promoting every car into the lane.
+assert.match(isExpress(tiny({ files_named: ['a.py', 'b.py', 'c.py'], files_to_edit: [] }), [9]), /over 2/, 'empty files_to_edit falls back, it does not mean "edits nothing"')
 // A car waiting on another car cannot be in the batch: the batch is cut before its blocker
 // has landed, so it would be implemented against code that does not exist yet.
 assert.match(isExpress(tiny({ blocked_by: [7] }), [7, 9]), /blocked by another car/)

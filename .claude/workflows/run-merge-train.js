@@ -132,8 +132,16 @@ const isExpress = (car, rosterNumbers) => {
   if (car.sizing === 'measured' && !(car.files_named || []).length) return 'sized as measured but names no files to have read'
   if (!Number.isInteger(car.expected_lines) || car.expected_lines <= 0) return 'no usable size'
   if (car.expected_lines > EXPRESS_MAX_LINES) return `~${car.expected_lines} lines, over the ${EXPRESS_MAX_LINES} this lane takes`
-  const files = car.files_named || []
-  if (files.length > EXPRESS_MAX_FILES) return `names ${files.length} files, over ${EXPRESS_MAX_FILES}`
+  // files_named is every path the BODY MENTIONS, and it has to stay that way: the harness
+  // veto in admit() can only refuse a car that rewrites the CI or the gate if it sees every
+  // path, so that field fails closed by over-reporting. Counting it HERE asked it a
+  // different question -- how many files does this change EDIT -- and punished a ticket for
+  // citing its sources. Measured 2026-08-30: #265 (a two-line docs edit naming three files
+  // to READ) and #188 (a one-line Makefile fix naming five) each took the ~14-stage lane,
+  // about 28 wasted agents on one train, and a group-P roster put 10 of 14 cars on the long
+  // road the same way. Two questions, two fields.
+  const files = (car.files_to_edit || []).length ? car.files_to_edit : car.files_named || []
+  if (files.length > EXPRESS_MAX_FILES) return `edits ${files.length} files, over ${EXPRESS_MAX_FILES}`
   // Express cars all land in one commit range, so anything waiting on another car on this
   // train cannot be in it -- its blocker has not landed yet when the batch is cut.
   if ((car.blocked_by || []).some((b) => rosterNumbers.includes(b))) return 'blocked by another car on this train'
@@ -191,7 +199,8 @@ const roster = await call(
     '   - its labels and state, verbatim',
     '   - the issue numbers in its "## Blocked by" section (empty if it says it can start immediately)',
     '   - for each blocker that is NOT itself a sub-issue of the spec: whether that blocker is currently open (`gh issue view <b> --json state`)',
-    '   - every repository file path its body names, verbatim, under files_named. Miss none: the script refuses to board a car that rewrites the CI or the gate, and it can only see the paths you report.',
+    '   - every repository file path its body names, verbatim, under files_named. Miss none: the script refuses to board a car that rewrites the CI or the gate, and it can only see the paths you report. Over-report here rather than under-report.',
+    '   - under files_to_edit, the SUBSET of those the change actually MODIFIES. A well-written ticket cites more files than it touches: the module it reads for context, the file whose comment is the source of truth, the place the symptom was observed. Those belong in files_named and NOT here. Getting this wrong in the cautious direction is expensive, not safe -- an over-long files_to_edit sends a two-line fix down a lane that costs about two hours of gate, CI and main-watch it did not need.',
     '   - its size, under expected_lines + sizing, by ONE of these two routes:',
     '     * The body has an "Estimated diff: ~N lines" line -> expected_lines = N, sizing = "stated". The author committed to a number; take it.',
     '     * It does not -> SIZE IT YOURSELF FROM THE CODE, sizing = "measured". Open every path under files_named, find the functions the ticket actually changes, and count the lines that have to move. Put what you read in sizing_evidence: the symbols you found and why the change is that size. A number you did not get from reading the files is not measured -- report sizing = "unknown" instead, and say so.',
@@ -228,7 +237,12 @@ const roster = await call(
                 description: 'for blockers outside the spec: issue number -> is it still open',
               },
               open_pr: { type: 'string', description: 'URL of an already-open PR for this ticket, if any' },
-              files_named: { type: 'array', items: { type: 'string' }, description: 'every repository file path the ticket body names' },
+              files_named: { type: 'array', items: { type: 'string' }, description: 'every repository file path the ticket body names, including ones it only cites as context -- the harness veto reads this and must over-report, never under-report' },
+              files_to_edit: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'the SUBSET of files_named the change actually modifies, from the same reading that produced expected_lines. Omit a path the ticket only cites as a source to read, as the fix's source of truth, or as the place a symptom was observed. Empty or absent falls back to files_named.',
+              },
               expected_lines: { type: 'integer', description: 'lines the change is expected to move: the N from an "Estimated diff: ~N lines" line, or your own count from reading the files. 0 when you could not size it.' },
               sizing: {
                 type: 'string',
