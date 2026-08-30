@@ -271,6 +271,9 @@ class TestOntologyPredicateMapper:
 # ============================================================
 
 
+pytest.importorskip("dspy")
+
+
 class TestDspyExtractorExtractThenMap:
     """Verify the extract-then-map step in DSPyExtractor without live API."""
 
