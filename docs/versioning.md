@@ -24,13 +24,15 @@ public surface is pinned by `tests/api/test_public_surface.py`.
 
 A deprecated public name keeps working for **at least one minor release** and
 emits a `DeprecationWarning` pointing at the replacement, then is removed in the
-next major. Current deprecations (removed in 2.0):
+next major. There are no current deprecations.
 
-| Deprecated | Use instead |
+### Removed in 2.0
+
+| Removed | Use instead |
 | --- | --- |
 | `graphknows.GraphKnowsRuntime` | `graphknows.Memory` |
 | `graphknows.ports.*` | `graphknows.storage.arcadedb.graph_store` (`GraphStore`) |
-| `graphknows.config.llm._get_openrouter_api_key` | `graphknows.llm.get_openrouter_api_key` |
+| `graphknows.llm._get_openrouter_api_key` | `graphknows.llm.get_openrouter_api_key` |
 
 ## Releasing
 
