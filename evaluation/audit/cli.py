@@ -271,6 +271,7 @@ def _report(args: argparse.Namespace) -> int:
     rows = _read_sheet(args.sheet)
     if not rows:
         raise SystemExit(f"{args.sheet} has no rows")
+    manifest_path = args.manifest or args.sheet.with_suffix(".json")
     manifest = _read_manifest(args.sheet, args.manifest)
     populations = (manifest or {}).get("tier_population")
     tiers = aggregate(rows, populations)
@@ -282,7 +283,7 @@ def _report(args: argparse.Namespace) -> int:
             "seed": (manifest or {}).get("seed", "unknown"),
             "generated_at": datetime.now(UTC).isoformat(),
             "rows": len(rows),
-            "manifest": None if manifest is None else str(args.manifest or args.sheet.name),
+            "manifest": None if manifest is None else str(manifest_path),
         },
     )
     if manifest is None:
