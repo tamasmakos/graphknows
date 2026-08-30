@@ -68,6 +68,19 @@ def test_arcadedb_requirement_is_satisfiable_without_compose() -> None:
     )
 
 
+def test_links_are_absolute() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    targets = re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", readme)
+    relative = [t for t in targets if not t.startswith(("http://", "https://", "mailto:", "#"))]
+    assert not relative, (
+        'README.md is the PyPI long description (readme = "README.md" in '
+        "pyproject.toml); relative links resolve against pypi.org and 404 there. "
+        "Internal targets must be absolute GitHub blob URLs under "
+        "https://github.com/tamasmakos/graphknows/blob/main/ . Offending "
+        f"targets: {relative}"
+    )
+
+
 def test_scripts_path_is_qualified_as_checkout_only() -> None:
     section = _install_section()
     if "scripts/" not in section:

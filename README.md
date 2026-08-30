@@ -59,7 +59,7 @@ docker compose up -d arcadedb
 > rebuild never re-downloads gigabytes of weights. `python scripts/bake_models.py`
 > warms the volume ahead of time. CPU by default; for a GPU host:
 > `docker compose build --build-arg TORCH_BACKEND=cu128`.
-> See [.env.example](.env.example) and [docs/configuration.md](docs/configuration.md).
+> See [.env.example](https://github.com/tamasmakos/graphknows/blob/main/.env.example) and [docs/configuration.md](https://github.com/tamasmakos/graphknows/blob/main/docs/configuration.md).
 
 ## Quickstart
 
@@ -94,13 +94,16 @@ async with GraphKnowsMCPClient(command="graphknows-mcp") as client:
 ```
 
 Configuration is via `GRAPHKNOWS_*` environment variables (or a `.env` file) — see
-[.env.example](.env.example) and [docs/configuration.md](docs/configuration.md).
+[.env.example](https://github.com/tamasmakos/graphknows/blob/main/.env.example) and [docs/configuration.md](https://github.com/tamasmakos/graphknows/blob/main/docs/configuration.md).
 
 ## Running the server
 
 ```bash
 docker compose up -d            # arcadedb + mcp
 ```
+
+> Runs from a repo clone/checkout: the wheel ships only the `graphknows` package, so
+> `docker-compose.yaml` isn't available to a plain `pip install`.
 
 **MCP** (Claude Desktop / Claude Code) — register the stdio server:
 
@@ -121,8 +124,8 @@ Wire your framework's memory hooks to the `Memory` verbs. The
 LangGraph adapter is shipped as the reference; the generic recipe (write →
 `ingest_memory`, read → `recall_memory`, thread id → `session_id`, end of
 episode → `flush_memory`) covers any framework — see
-[docs/integrations.md](docs/integrations.md) and
-[examples/langgraph_agent.py](examples/langgraph_agent.py).
+[docs/integrations.md](https://github.com/tamasmakos/graphknows/blob/main/docs/integrations.md) and
+[examples/langgraph_agent.py](https://github.com/tamasmakos/graphknows/blob/main/examples/langgraph_agent.py).
 
 
 ### LangGraph
@@ -150,7 +153,7 @@ python examples/langgraph_agent.py --session s1   # teach it something
 python examples/langgraph_agent.py --session s2   # recall it in a new session
 ```
 
-Full runnable example: [examples/langgraph_agent.py](examples/langgraph_agent.py).
+Full runnable example: [examples/langgraph_agent.py](https://github.com/tamasmakos/graphknows/blob/main/examples/langgraph_agent.py).
 
 ## Benchmarks
 
@@ -171,26 +174,27 @@ extractive topics on, deterministic retrieval:
 | cost per question | $0.0026 |
 
 Retrieval delivers the evidence on ~98% of questions; the residual gap is
-generation, not retrieval. Full per-case report:
-[evaluation/results/locomo](evaluation/results/locomo).
+generation, not retrieval. See
+[evaluation/README.md](https://github.com/tamasmakos/graphknows/blob/main/evaluation/README.md)
+for how to reproduce.
 
 ## Documentation
 
-Full index: **[docs/](docs/README.md)**.
+Full index: **[docs/](https://github.com/tamasmakos/graphknows/blob/main/docs/README.md)**.
 
-- [docs/services.md](docs/services.md) — the main services and how they stack
-- [docs/architecture.md](docs/architecture.md) — lifecycle states, consolidation, RRF retrieval
-- [docs/modes.md](docs/modes.md) — llm_free vs llm_assisted
-- [docs/ontology.md](docs/ontology.md) — the bundled CCO ontology, and injecting your own
-- [docs/topics.md](docs/topics.md) — the re-runnable topic stage
-- [docs/configuration.md](docs/configuration.md) — full settings reference
-- [docs/integrations.md](docs/integrations.md) — framework integration recipe
-- [docs/multi-tenancy.md](docs/multi-tenancy.md) — namespaces, isolation and scaling
-- [docs/versioning.md](docs/versioning.md) — semver & deprecation policy
+- [docs/services.md](https://github.com/tamasmakos/graphknows/blob/main/docs/services.md) — the main services and how they stack
+- [docs/architecture.md](https://github.com/tamasmakos/graphknows/blob/main/docs/architecture.md) — lifecycle states, consolidation, RRF retrieval
+- [docs/modes.md](https://github.com/tamasmakos/graphknows/blob/main/docs/modes.md) — llm_free vs llm_assisted
+- [docs/ontology.md](https://github.com/tamasmakos/graphknows/blob/main/docs/ontology.md) — the bundled CCO ontology, and injecting your own
+- [docs/topics.md](https://github.com/tamasmakos/graphknows/blob/main/docs/topics.md) — the re-runnable topic stage
+- [docs/configuration.md](https://github.com/tamasmakos/graphknows/blob/main/docs/configuration.md) — full settings reference
+- [docs/integrations.md](https://github.com/tamasmakos/graphknows/blob/main/docs/integrations.md) — framework integration recipe
+- [docs/multi-tenancy.md](https://github.com/tamasmakos/graphknows/blob/main/docs/multi-tenancy.md) — namespaces, isolation and scaling
+- [docs/versioning.md](https://github.com/tamasmakos/graphknows/blob/main/docs/versioning.md) — semver & deprecation policy
 
 The `evaluation/` directory is internal LoCoMo/BEAM/LongMemEval benchmarking — not part
 of the installed package.
 
 ## License
 
-[Apache-2.0](LICENSE).
+[Apache-2.0](https://github.com/tamasmakos/graphknows/blob/main/LICENSE).
