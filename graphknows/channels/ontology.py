@@ -6,14 +6,16 @@ ONTOLOGY_CLASS node carries that definition's embedding, so this channel matches
 the query with a namespace-local graph vector search over them, exactly as
 :class:`~graphknows.channels.frames.FrameChannel` does over FRAME nodes.
 
-A matched class reaches chunks by two paths, both used:
+A matched class reaches chunks by one path:
 
 - ``CHUNK-[:MATCHES_CLASS]->ONTOLOGY_CLASS`` — the chunk itself evoked the
   class. Direct, and the stronger signal.
-- ``CHUNK-[:MENTIONS]->ENTITY-[:INSTANCE_OF]->ONTOLOGY_CLASS`` — the chunk
-  mentions something that *is* an instance of the class. Much denser (on
-  conv-26: 767 INSTANCE_OF edges against 189 MATCHES_CLASS), and discounted as
-  indirect evidence since the entity may be incidental to the chunk.
+
+A second route through ``CHUNK-[:MENTIONS]->ENTITY-[:INSTANCE_OF]->ONTOLOGY_CLASS``
+was measured byte-identical on conv-26 evidence_recall once the pool is
+cosine-reranked, and removed — see the comment in ``graph_store.py``'s
+``search_ontology_classes``. ``write_groundings`` still writes INSTANCE_OF
+edges, but nothing reads them at retrieval today.
 
 Where frames give abstract questions a route by the situation a chunk evokes,
 classes give them a route by the KIND of thing a chunk is about — "where did
