@@ -51,6 +51,9 @@ async with Memory(settings) as mem:
 | **Extraction / chunking** | | |
 | `GRAPHKNOWS_RELEX_MODEL` | `knowledgator/gliner-relex-large-v1.0` | Joint entity+relation extraction model (HuggingFace id). |
 | `GRAPHKNOWS_SPACY_MODEL` | `en_core_web_lg` | spaCy model for relation mining. |
+| **Frame layer** | | |
+| `GRAPHKNOWS_ENABLE_FRAMES` | `true` | Deterministic FrameNet frame layer (ingest + retrieval channel). On by default; set to `false` to disable. See [modes.md](modes.md). |
+| `GRAPHKNOWS_ENABLE_FE_TYPE_GATE` | `false` | Frame-element semantic-type veto: drops a role filler whose graph entity type conflicts with the frame element's FrameNet semantic type. Off by default; the FE plane's coreness / Requires / Excludes / CoreSet checks run regardless. See [architecture.md](architecture.md). |
 
 ## Model downloads
 
