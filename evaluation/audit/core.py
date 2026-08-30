@@ -416,6 +416,70 @@ def build_report(tiers: Sequence[TierPrecision], meta: Mapping[str, Any]) -> dic
     }
 
 
+def compare(baseline: Mapping[str, Any], current: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Per-tier, per-axis precision deltas between two reports (issue #232).
+
+    Reads point estimates and Wilson intervals straight out of both reports'
+    ``tiers[].precision``; never recomputes a Wilson interval, since
+    :func:`wilson_interval` already produced the ones serialised there.
+
+    Args:
+        baseline: An earlier report dict, as produced by :func:`build_report`.
+        current: The report being compared against it.
+
+    Returns:
+        One dict per (tier, axis) pair, in the reports' own tier and axis order,
+        with keys ``tier``, ``axis``, ``baseline``, ``current``, ``delta_points``,
+        ``overlapping``.
+
+    Raises:
+        ValueError: The two reports' ``axes`` or tier-name sequences differ, or
+            either is missing ``axes``/``tiers``.
+    """
+    if "axes" not in baseline or "axes" not in current:
+        raise ValueError("both reports must carry an 'axes' list")
+    if baseline["axes"] != current["axes"]:
+        raise ValueError(f"axes differ: baseline={baseline['axes']!r} current={current['axes']!r}")
+    if "tiers" not in baseline or "tiers" not in current:
+        raise ValueError("both reports must carry a 'tiers' list")
+    baseline_tier_names = [tier["tier"] for tier in baseline["tiers"]]
+    current_tier_names = [tier["tier"] for tier in current["tiers"]]
+    if baseline_tier_names != current_tier_names:
+        raise ValueError(
+            f"tiers differ: baseline={baseline_tier_names!r} current={current_tier_names!r}"
+        )
+
+    axes = current["axes"]
+    deltas: list[dict[str, Any]] = []
+    for baseline_tier, current_tier in zip(baseline["tiers"], current["tiers"], strict=True):
+        tier_name = current_tier["tier"]
+        for axis in axes:
+            baseline_entry = baseline_tier["precision"][axis]
+            current_entry = current_tier["precision"][axis]
+            baseline_precision = baseline_entry["precision"]
+            current_precision = current_entry["precision"]
+            if baseline_precision is None or current_precision is None:
+                delta_points = None
+                overlapping = False
+            else:
+                delta_points = round((current_precision - baseline_precision) * 100, 1)
+                overlapping = (
+                    baseline_entry["ci_low"] <= current_entry["ci_high"]
+                    and current_entry["ci_low"] <= baseline_entry["ci_high"]
+                )
+            deltas.append(
+                {
+                    "tier": tier_name,
+                    "axis": axis,
+                    "baseline": baseline_precision,
+                    "current": current_precision,
+                    "delta_points": delta_points,
+                    "overlapping": overlapping,
+                }
+            )
+    return deltas
+
+
 def _cell(entry: Mapping[str, Any]) -> str:
     """One precision cell: the point estimate with its interval, or an em dash."""
     if entry["judged"] == 0 or entry["precision"] is None:
@@ -473,6 +537,36 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         lines.append(
             f"| `{tier['tier']}` | {score['scored']} | {score['null']} | {mean} | {median} |"
         )
+
+    baseline = report.get("baseline")
+    if baseline is not None:
+        by_tier: dict[str, dict[str, dict[str, Any]]] = {}
+        for entry in baseline["deltas"]:
+            by_tier.setdefault(entry["tier"], {})[entry["axis"]] = entry
+        lines.extend(
+            [
+                "",
+                "## Change from baseline",
+                "",
+                f"Compared against `{baseline['report']}`. Each cell is the precision change"
+                " in points; `*` marks a cell whose Wilson intervals overlap the baseline's —"
+                " not distinguishable from noise at this sample size.",
+                "",
+                "| Tier | " + " | ".join(axes) + " |",
+                "|------|" + "|".join(["---"] * len(axes)) + "|",
+            ]
+        )
+        for tier in report["tiers"]:
+            tier_name = tier["tier"]
+            cell_values: list[str] = []
+            for axis in axes:
+                entry = by_tier[tier_name][axis]
+                if entry["delta_points"] is None:
+                    cell_values.append("—")
+                else:
+                    marker = "*" if entry["overlapping"] else ""
+                    cell_values.append(f"{entry['delta_points']:+.1f}{marker}")
+            lines.append(f"| `{tier_name}` | " + " | ".join(cell_values) + " |")
 
     lines.extend(["", "## Read this before quoting a number", ""])
     lines.extend(f"- {note}" for note in report["caveats"])

@@ -21,6 +21,7 @@ from evaluation.audit.core import (
     allocate,
     build_report,
     caveats,
+    compare,
     parse_verdict,
     render_markdown,
     stratified_sample,
@@ -362,3 +363,124 @@ class TestRender:
         assert len(set(SHEET_COLUMNS)) == len(SHEET_COLUMNS)
         assert "predicate" in SHEET_COLUMNS
         assert "judge_predicate" in SHEET_COLUMNS
+
+
+class TestCompare:
+    """`compare` is the missing piece behind #232: given two reports it must say,
+    per tier and axis, whether precision moved and whether that move is bigger
+    than the sampling noise — without recomputing any statistics itself."""
+
+    def test_delta_arithmetic_matches_the_two_reports_own_precisions(self) -> None:
+        # span verdict is the first character of each verdict string.
+        baseline_rows = [_row("frame", v) for v in ("0111", "0111", "1111", "1111")]
+        current_rows = [_row("frame", v) for v in ("1111", "1111", "1111", "0111")]
+        baseline = build_report(aggregate(baseline_rows), {"sheet": "old.csv"})
+        current = build_report(aggregate(current_rows), {"sheet": "new.csv"})
+
+        deltas = compare(baseline, current)
+        by_key = {(entry["tier"], entry["axis"]): entry for entry in deltas}
+
+        span = by_key[("frame", "span")]
+        baseline_precision = baseline["tiers"][0]["precision"]["span"]["precision"]
+        current_precision = current["tiers"][0]["precision"]["span"]["precision"]
+        assert span["baseline"] == baseline_precision
+        assert span["current"] == current_precision
+        assert span["delta_points"] == pytest.approx((current_precision - baseline_precision) * 100)
+
+        # `wordnet` has no rows on either side: nothing to compare, not a zero.
+        unjudged = by_key[("wordnet", "span")]
+        assert unjudged["baseline"] is None
+        assert unjudged["current"] is None
+        assert unjudged["delta_points"] is None
+
+    def test_entries_cover_every_tier_and_report_axis_in_order(self) -> None:
+        baseline = build_report(aggregate([_row("frame", "1111")]), {"sheet": "old.csv"})
+        current = build_report(aggregate([_row("frame", "1111")]), {"sheet": "new.csv"})
+        deltas = compare(baseline, current)
+        expected_keys = [(tier, axis) for tier in TIERS for axis in (*AXES, JOINT_AXIS)]
+        assert [(entry["tier"], entry["axis"]) for entry in deltas] == expected_keys
+
+    def test_small_change_over_few_rows_is_flagged_as_noise(self) -> None:
+        """Wide, overlapping Wilson intervals: the two point estimates differ but
+        the data cannot tell the difference from sampling noise."""
+        baseline_low, baseline_high = wilson_interval(5, 5)
+        current_low, current_high = wilson_interval(4, 5)
+        assert (
+            baseline_low <= current_high and current_low <= baseline_high
+        )  # self-evidently overlapping
+
+        baseline_rows = [_row("frame", "1111") for _ in range(5)]
+        current_rows = [_row("frame", "1111") for _ in range(4)] + [_row("frame", "0111")]
+        baseline = build_report(aggregate(baseline_rows), {"sheet": "old.csv"})
+        current = build_report(aggregate(current_rows), {"sheet": "new.csv"})
+
+        span = next(
+            e for e in compare(baseline, current) if e["tier"] == "frame" and e["axis"] == "span"
+        )
+        assert span["overlapping"] is True
+
+    def test_large_change_over_enough_rows_is_not_noise(self) -> None:
+        """Enough rows that the intervals no longer touch: a real, measurable move."""
+        baseline_low, baseline_high = wilson_interval(0, 20)
+        current_low, current_high = wilson_interval(20, 20)
+        assert baseline_high < current_low  # self-evidently disjoint
+
+        baseline_rows = [_row("frame", "0111") for _ in range(20)]
+        current_rows = [_row("frame", "1111") for _ in range(20)]
+        baseline = build_report(aggregate(baseline_rows), {"sheet": "old.csv"})
+        current = build_report(aggregate(current_rows), {"sheet": "new.csv"})
+
+        span = next(
+            e for e in compare(baseline, current) if e["tier"] == "frame" and e["axis"] == "span"
+        )
+        assert span["overlapping"] is False
+
+
+class TestCompareShapeMismatch:
+    """A comparison across incompatible report shapes must refuse rather than
+    silently pair up the wrong tiers or axes."""
+
+    def test_differing_axes_lists_raise(self) -> None:
+        current = build_report(aggregate([_row("frame", "1111")]), {"sheet": "new.csv"})
+        baseline = dict(current)
+        baseline["axes"] = current["axes"][:-1]  # drops all_four
+        with pytest.raises(ValueError, match="axes"):
+            compare(baseline, current)
+
+    def test_differing_tier_sequence_raises(self) -> None:
+        current = build_report(aggregate([_row("frame", "1111")]), {"sheet": "new.csv"})
+        baseline = dict(current)
+        baseline["tiers"] = list(reversed(current["tiers"]))
+        with pytest.raises(ValueError, match="tiers"):
+            compare(baseline, current)
+
+
+class TestRenderMarkdownBaseline:
+    """`render_markdown` grows a baseline section only when the report carries one;
+    every report produced before #232 must keep rendering exactly as it did."""
+
+    def test_baseline_section_present_when_report_carries_baseline(self) -> None:
+        baseline_rows = [_row("frame", v) for v in ("0111", "0111", "1111", "1111")]
+        current_rows = [_row("frame", v) for v in ("1111", "1111", "1111", "0111")]
+        baseline_report = build_report(aggregate(baseline_rows), {"sheet": "old-report.json"})
+        current_report = build_report(aggregate(current_rows), {"sheet": "new-report.json"})
+        deltas = compare(baseline_report, current_report)
+
+        report = {**current_report, "baseline": {"report": "old-report.json", "deltas": deltas}}
+        markdown = render_markdown(report)
+
+        assert "baseline" in markdown.lower()
+        assert any(
+            line.startswith("##") and "baseline" in line.lower() for line in markdown.splitlines()
+        )
+        assert "old-report.json" in markdown
+        # the frame/span delta is (0.75 - 0.5) * 100 == 25.0 points; the rendered
+        # section must show that number somewhere, however it formats the sign.
+        assert "25.0" in markdown
+
+    def test_no_baseline_section_when_report_has_no_baseline_key(self) -> None:
+        report = build_report(aggregate([_row("frame", "1111")]), {"sheet": "s.csv"})
+        markdown = render_markdown(report)
+        assert not any(
+            line.startswith("##") and "baseline" in line.lower() for line in markdown.splitlines()
+        )
