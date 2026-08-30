@@ -137,6 +137,23 @@ the current population/quota/`no evidence`/`verifier_score` figures rather
 than this paragraph, so redrawing the baseline can't leave stale numbers here
 disagreeing with the regenerated report.
 
+Pass `--baseline` to `report` to diff against it instead of eyeballing two
+Markdown tables:
+
+```bash
+python -m evaluation audit report --sheet <sheet>.csv \
+    --baseline evaluation/audit/baseline/conv-30-seed0-report.json
+```
+
+This adds a `## Change from baseline` section giving per-tier, per-axis
+precision change in points, with a marker on any change whose Wilson interval
+overlaps the baseline's — so the "audit up &ge;10 points on two tiers" half of
+spec #135's abandonment criterion is readable from the report instead of by
+eye. (The other half, `evidence_recall` flat, comes from the RAG eval
+pipeline, not this report.) The committed baseline's judgement columns are
+blank until a human completes a judging pass, so every delta against it reads
+as an em dash until then.
+
 ## Generation pipeline
 
 Answer generation is a plain chat completion (httpx → OpenRouter, temp 0):

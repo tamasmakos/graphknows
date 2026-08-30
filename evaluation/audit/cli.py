@@ -19,6 +19,10 @@ Two steps, with a human in between::
     # 2. a human fills the four judgement columns with 1/0, then
     python -m evaluation audit report --sheet evaluation/results/audit/<sheet>.csv
 
+    # 3. or compare against an earlier report
+    python -m evaluation audit report --sheet evaluation/results/audit/<sheet>.csv \\
+        --baseline evaluation/audit/baseline/conv-30-seed0-report.json
+
 ``sample`` writes ``<stem>.csv`` (the sheet) plus ``<stem>.json`` (the manifest:
 seed, database, per-tier populations and quota). ``report`` writes
 ``<stem>-report.json`` and ``<stem>-report.md``.
@@ -43,6 +47,7 @@ from evaluation.audit.core import (
     SHEET_COLUMNS,
     aggregate,
     build_report,
+    compare,
     render_markdown,
 )
 from evaluation.audit.core import stratified_sample as stratify
@@ -293,6 +298,12 @@ def _report(args: argparse.Namespace) -> int:
             "are unknown, so this report cannot say what fraction of each tier was sampled.",
         )
 
+    if args.baseline is not None:
+        baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+        if not isinstance(baseline, dict):
+            raise TypeError(f"baseline report {args.baseline} is not a JSON object")
+        report["baseline"] = {"report": str(args.baseline), "deltas": compare(baseline, report)}
+
     out_dir = args.out or args.sheet.parent
     out_dir.mkdir(parents=True, exist_ok=True)
     json_path = out_dir / f"{args.sheet.stem}-report.json"
@@ -348,6 +359,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report.add_argument(
         "--out", type=Path, default=None, help="Output directory (default: the sheet's directory)."
+    )
+    report.add_argument(
+        "--baseline",
+        type=Path,
+        default=None,
+        help="A previously generated report's JSON output to compare this run against.",
     )
     return parser
 
