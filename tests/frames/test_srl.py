@@ -86,6 +86,22 @@ def test_the_env_var_overrides_either_way(
     assert srl_enabled() is expected
 
 
+def test_installed_is_false_when_the_spec_exists_but_import_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A broken/partial install: find_spec sees a spec, but the real import
+    # still fails (here because the extra genuinely isn't installed). installed()
+    # must not trust find_spec alone, or ingest crashes on MissingExtraError.
+    from graphknows.symbolic.framenet import srl
+
+    srl.installed.cache_clear()
+    monkeypatch.setattr(srl.importlib.util, "find_spec", lambda name: object())
+    try:
+        assert srl.installed() is False
+    finally:
+        srl.installed.cache_clear()
+
+
 def test_unset_follows_whether_the_extra_is_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     # Default ON where the parser exists (measured: conv-30 0.778 -> 0.889), and
     # a base install without the extra keeps the LU identifier rather than
