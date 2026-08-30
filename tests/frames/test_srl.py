@@ -8,6 +8,7 @@ per trigger instead of at most one.
 
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -90,12 +91,16 @@ def test_installed_is_false_when_the_spec_exists_but_import_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A broken/partial install: find_spec sees a spec, but the real import
-    # still fails (here because the extra genuinely isn't installed). installed()
-    # must not trust find_spec alone, or ingest crashes on MissingExtraError.
+    # still fails -- a missing transitive dependency, say. installed() must not
+    # trust find_spec alone, or ingest crashes on MissingExtraError instead of
+    # degrading to the LU identifier.
     from graphknows.symbolic.framenet import srl
 
     srl.installed.cache_clear()
     monkeypatch.setattr(srl.importlib.util, "find_spec", lambda name: object())
+    # None in sys.modules makes `import frame_semantic_transformer` raise
+    # ImportError, so this holds whether or not the extra is really installed.
+    monkeypatch.setitem(sys.modules, "frame_semantic_transformer", None)
     try:
         assert srl.installed() is False
     finally:
