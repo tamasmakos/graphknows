@@ -9,7 +9,7 @@ CONTAINER ?= graphknows-workspace
 SVC     ?= workspace   # service `make shell`/`logs`/`restart`/`stop`/`build` targets
 
 .PHONY: up down restart stop build rebuild ps logs shell infra-up infra-down setup clean prune \
-        test test-integration lint typecheck arch build-wheel smoke eval-smoke sweep ci gate help
+        test test-integration lint typecheck arch build-wheel smoke bake eval-smoke sweep ci gate help
 
 # ── Lifecycle ──────────────────────────────────────────────────────
 up: ## Start all services
@@ -102,6 +102,13 @@ gate: ## Run the pre-push gate exactly as the hook runs it
 sweep: ## Dead-code sweep (report only, run every few weeks)
 	docker exec $(CONTAINER) sh -c "cd /app && uvx vulture graphknows \
 	  --min-confidence 60"
+
+# ── Model prep ─────────────────────────────────────────────────────
+# Run once after `make up` on a fresh model_cache volume, or after adding/
+# changing a model in graphknows/settings.py — populates model_cache so the
+# first real ingest doesn't pay the multi-GB download inline.
+bake: ## Pre-warm the GLiNER/sentence-transformers/spaCy/NLTK model cache
+	docker exec $(CONTAINER) sh -c "cd /app && python scripts/bake_models.py"
 
 eval-smoke: ## End-to-end acceptance: one LoCoMo conversation via the MCP client (needs services up)
 	python -m evaluation --limit 1
