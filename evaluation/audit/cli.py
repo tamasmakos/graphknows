@@ -332,7 +332,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_SAMPLE_SIZE,
         help=(
             f"Edges to draw across all tiers (default {DEFAULT_SAMPLE_SIZE}). Spread over four "
-            "tiers this is ~37 each, where a 95% interval is roughly +/-15pp near p=0.5."
+            "tiers this is ~37 each, where a 95%% interval is roughly +/-15pp near p=0.5."
         ),
     )
     sample.add_argument("--seed", type=int, default=0, help="PRNG seed; same seed, same sheet.")
