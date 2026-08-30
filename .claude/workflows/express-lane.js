@@ -59,6 +59,21 @@ const READY_LABEL = 'ready-for-agent'
 const MAIN_REPO = opt.repo || 'C:/Users/User/Documents/dev/graphknows'
 const RUNS_DIR = 'docs/agents/runs'
 const GH = `Use \`gh\`. If it is not on PATH, fall back to "${opt.ghPath || '/c/Program Files/GitHub CLI/gh.exe'}" (quote it).`
+
+// Stopping the stack a car started is part of finishing, not an afterthought for a human.
+// `docker compose` names its project after the worktree directory, so an issue's ArcadeDB
+// comes up as gk-issue-<n>-arcadedb-1 and NOTHING stops it: the workflows never start it
+// (a stage does, when it needs a live database) and so never brought it down. Measured
+// 2026-08-30: five leaked containers from issues closed days earlier held ~14.7GB of a
+// 31.2GB Docker allocation, and the pre-push gate died with `Killed` at 51% of the suite --
+// on every branch, for every car, until they were stopped by hand. A car that cannot push
+// still costs its full pipeline first, so this leak bills the whole batch.
+//
+// Only on success: a parked car keeps its stack AND its worktree, because that is the state
+// a human needs to debug it.
+const teardown = (worktree) =>
+  `Then tear down what this car started, in this order: \`cd ${worktree} && docker compose down --remove-orphans\` (its ArcadeDB stack is named after that directory and nothing else ever stops it -- leaked stacks OOM-kill the pre-push gate for every branch, not just this one), then \`git worktree remove ${worktree}\` from the repo root. If either refuses, say so in notes and leave it -- do not force past a refusal you have not read.`
+
 // Deterministic, so a resumed run reuses the same tree instead of stranding the first one.
 // Hand-rolled rather than the runtime's `isolation: 'worktree'` on purpose: that one is
 // per-agent and ephemeral, and this tree must be named, outlive any single agent, survive a
@@ -317,7 +332,7 @@ if (DO_SHIP && ship?.pr_number && DO_MERGE) {
       WATCH_MAIN
         ? '4. The merge triggers CI on main. Poll `gh run list --branch main --limit 3 --json databaseId,status,conclusion,url` until it completes and report post_merge_green. If it went red, say so plainly and do NOT try to fix main -- revert or roll forward is a human decision.'
         : '4. Do NOT wait for main\'s CI. Leave post_merge_green unset: nothing in this run acts on it, and the PR CI already went green on this exact tree.',
-      `5. Remove the worktree: \`git worktree remove ${WORKTREE}\` from the repo root (add --force only if it refuses over untracked files you have confirmed are build output).`,
+      `5. Only if the merge SUCCEEDED: ${teardown(WORKTREE)} If CI went red, leave both in place -- the branch and its tree are what a human bisects.`,
       'Do not tag, do not release, do not bump a version.',
     ].join('\n'),
     {

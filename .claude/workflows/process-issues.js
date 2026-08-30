@@ -158,6 +158,21 @@ const call = (prompt, opts = {}) => agent(prompt, { ...RUN_ON, ...opts })
 // still carries the stale PATH, so every gh-touching prompt gets the fallback.
 const GH = `Use \`gh\`. If it is not on PATH, fall back to "${opt.ghPath || '/c/Program Files/GitHub CLI/gh.exe'}" (quote it).`
 
+// Stopping the stack a car started is part of finishing, not an afterthought for a human.
+// `docker compose` names its project after the worktree directory, so an issue's ArcadeDB
+// comes up as gk-issue-<n>-arcadedb-1 and NOTHING stops it: the workflows never start it
+// (a stage does, when it needs a live database) and so never brought it down. Measured
+// 2026-08-30: five leaked containers from issues closed days earlier held ~14.7GB of a
+// 31.2GB Docker allocation, and the pre-push gate died with `Killed` at 51% of the suite --
+// on every branch, for every car, until they were stopped by hand. A car that cannot push
+// still costs its full pipeline first, so this leak bills the whole batch.
+//
+// Only on success: a parked car keeps its stack AND its worktree, because that is the state
+// a human needs to debug it.
+const teardown = (worktree) =>
+  `Then tear down what this car started, in this order: \`cd ${worktree} && docker compose down --remove-orphans\` (its ArcadeDB stack is named after that directory and nothing else ever stops it -- leaked stacks OOM-kill the pre-push gate for every branch, not just this one), then \`git worktree remove ${worktree}\` from the repo root. If either refuses, say so in notes and leave it -- do not force past a refusal you have not read.`
+
+
 // Every push goes through the same pre-push hook, described once. Measured 2026-08-28:
 // whole gate ~5 minutes (pytest 1271 tests in 119s); 900000 ms is that plus headroom.
 // A stale low number parked #137/#160 with all work done and nothing pushed -- re-measure
@@ -1578,6 +1593,7 @@ const results = await pipeline(
         `cd ${issue.worktree}.`,
         skill('ci-watch/SKILL.md', 'STEP 4 only. Its preconditions are already met -- you are being called BECAUSE the run is green and the caller decided to merge. Do not re-run STEPS 1 to 3.'),
         `Watch-main mode: ${WATCH_MAIN === 'auto' ? 'auto' : WATCH_MAIN ? 'always' : 'never'}.`,
+        `Only if the merge SUCCEEDS: ${teardown(issue.worktree)} If the merge is refused, change nothing -- the worktree and its stack are what a human debugs.`,
         'Do not tag, do not release, do not bump a version, do not upload anything.',
       ].join('\n'),
       { label: `merge#${issue.number}`, phase: 'CI', schema: MERGE_SCHEMA },
