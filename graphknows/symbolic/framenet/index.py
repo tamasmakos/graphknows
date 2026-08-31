@@ -84,8 +84,9 @@ def _frame_embed_text(name: str) -> str:
     from graphknows.symbolic.framenet.framenet import _frame_def, _framenet
 
     parts = [f"{name.replace('_', ' ')}. {_frame_def(name)}"]
+    fn = _framenet()
     try:
-        lex_units = _framenet().frame(name).lexUnit
+        lex_units = fn.frame(name).lexUnit
     except Exception:
         lex_units = {}
     words = sorted({lu_name.rpartition(".")[0] or lu_name for lu_name in lex_units})
