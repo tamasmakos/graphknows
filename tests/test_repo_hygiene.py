@@ -382,6 +382,45 @@ class TestPreflight:
             f"return '' when the declared dependency is installed, got: {result!r}"
         )
 
+    def test_declared_extras_are_asserted(self, tmp_path, monkeypatch) -> None:
+        module = self._load_module()
+        pyproject = tmp_path / "pyproject.toml"
+        monkeypatch.setattr(module, "APP", tmp_path)
+
+        # RED: image claims the `srl` extra but its distribution isn't installed.
+        pyproject.write_text(
+            "[project]\ndependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'srl = ["definitely-not-installed-pkg-xyz"]\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("GRAPHKNOWS_IMAGE_EXTRAS", "srl")
+        result = module.check_declared_extras_installed()
+        assert "srl" in result and "definitely-not-installed-pkg-xyz" in result, (
+            f"{PREFLIGHT}: check_declared_extras_installed() did not name the "
+            f"missing extra and package, got: {result!r}"
+        )
+
+        # An image that legitimately never claimed the extra is fine.
+        monkeypatch.delenv("GRAPHKNOWS_IMAGE_EXTRAS", raising=False)
+        result = module.check_declared_extras_installed()
+        assert result == "", (
+            f"{PREFLIGHT}: check_declared_extras_installed() should return "
+            f"'' when the image does not claim the extra, got: {result!r}"
+        )
+
+        # An image that claims the extra and actually has it is fine.
+        pyproject.write_text(
+            '[project]\ndependencies = []\n[project.optional-dependencies]\nsrl = ["pytest"]\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("GRAPHKNOWS_IMAGE_EXTRAS", "srl")
+        result = module.check_declared_extras_installed()
+        assert result == "", (
+            f"{PREFLIGHT}: check_declared_extras_installed() should return "
+            f"'' when the claimed extra's distributions are installed, got: {result!r}"
+        )
+
     def test_main_has_no_silent_degradation_guard(self) -> None:
         text = PREFLIGHT.read_text(encoding="utf-8")
         assert "except" not in text, (
