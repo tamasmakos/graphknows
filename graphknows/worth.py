@@ -14,18 +14,13 @@ from __future__ import annotations
 
 from typing import Any
 
-_NLP: Any = None
-
 
 def _nlp() -> Any:
-    """The shared spaCy pipeline, loaded once (same pattern as skos/entity_resolution)."""
-    global _NLP
-    if _NLP is None:
-        from graphknows.nlp import load_spacy_model
-        from graphknows.settings import GraphKnowsSettings
+    """The shared spaCy pipeline, memoized by :func:`graphknows.nlp.load_spacy_model`."""
+    from graphknows.nlp import load_spacy_model
+    from graphknows.settings import GraphKnowsSettings
 
-        _NLP = load_spacy_model(GraphKnowsSettings().spacy_model)
-    return _NLP
+    return load_spacy_model(GraphKnowsSettings().spacy_model)
 
 
 def worth_extracting(text: str) -> bool:
