@@ -274,13 +274,10 @@ class TestGateScript:
 # Sites in graphknows/ that fetch a corpus at runtime, on the failure path of a lookup.
 # This is a LEDGER THAT MUST SHRINK, not a list of blessed exceptions: every entry is a
 # package installed from PyPI reaching the network mid-ingest, which fails offline and
-# degrades silently. Tracked by #247; the provisioning step already exists in
-# scripts/bake_models.py and just is not wired up (#208).
+# degrades silently. The provisioning step already exists in scripts/bake_models.py.
 #
-# Removing the last entry is the goal. Adding one is the thing this test exists to stop.
-_KNOWN_RUNTIME_DOWNLOADS = {
-    "graphknows/symbolic/framenet/framenet.py",  # nltk.download("framenet_v17") — pre-existing
-}
+# The ledger is empty. Adding an entry is the thing this test exists to stop.
+_KNOWN_RUNTIME_DOWNLOADS: set[str] = set()
 
 
 def _downloads_at_runtime(source: str) -> bool:

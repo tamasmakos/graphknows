@@ -118,8 +118,9 @@ def frame_elements(frame: str) -> dict[str, FrameElement]:
     """
     from graphknows.symbolic.framenet.framenet import _framenet
 
+    fn = _framenet()
     try:
-        f = _framenet().frame(frame)
+        f = fn.frame(frame)
     except Exception:
         return {}
     return {
@@ -144,8 +145,9 @@ def core_sets(frame: str) -> frozenset[frozenset[str]]:
     """
     from graphknows.symbolic.framenet.framenet import _framenet
 
+    fn = _framenet()
     try:
-        f = _framenet().frame(frame)
+        f = fn.frame(frame)
     except Exception:
         return frozenset()
     return frozenset(frozenset(o.name for o in cs) for cs in f.FEcoreSets)

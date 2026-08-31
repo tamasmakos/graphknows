@@ -47,8 +47,9 @@ def frame_ontology(name: str) -> dict[str, Any]:
     """
     from graphknows.symbolic.framenet.framenet import _framenet, _ontology_up
 
+    fn = _framenet()
     try:
-        f = _framenet().frame(name)
+        f = fn.frame(name)
     except Exception:
         return {}
 
