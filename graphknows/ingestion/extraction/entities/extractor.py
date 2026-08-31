@@ -758,23 +758,14 @@ class _SpacySchemaMiner:
 
     def __init__(self, model_name: str = _SPACY_MODEL) -> None:
         self._model_name = model_name
-        self._nlp: Any | None = None
-
-    def _ensure_loaded(self) -> None:
-        if self._nlp is not None:
-            return
-        self._nlp = load_spacy_model(self._model_name)
 
     @property
     def nlp(self) -> Any:
-        """The loaded spaCy pipeline (loads on first access)."""
-        self._ensure_loaded()
-        return self._nlp
+        """The shared spaCy pipeline, memoized by :func:`graphknows.nlp.load_spacy_model`."""
+        return load_spacy_model(self._model_name)
 
     def build(self, text: str, speaker: str = "") -> _DynamicSchema:
-        self._ensure_loaded()
-        assert self._nlp is not None
-        return self._build_from_doc(self._nlp(text), speaker)
+        return self._build_from_doc(self.nlp(text), speaker)
 
     def build_batch(self, texts: list[str], speakers: Sequence[str] = ()) -> list[_DynamicSchema]:
         """Mine schemas for many chunks via one batched ``nlp.pipe`` pass.
@@ -782,11 +773,9 @@ class _SpacySchemaMiner:
         ``speakers`` is positional per text; a short or empty sequence simply
         leaves the remaining chunks to the turn-line fallback.
         """
-        self._ensure_loaded()
-        assert self._nlp is not None
         return [
             self._build_from_doc(doc, speakers[i] if i < len(speakers) else "")
-            for i, doc in enumerate(self._nlp.pipe(texts))
+            for i, doc in enumerate(self.nlp.pipe(texts))
         ]
 
     def _build_from_doc(self, doc: Any, speaker: str = "") -> _DynamicSchema:
@@ -849,8 +838,9 @@ class GLiNER2EntityExtractor:
     def nlp(self) -> Any:
         """The loaded spaCy pipeline (shared with the schema miner; loads lazily).
 
-        Reused by the frame-SRL ingest pass so a second ``en_core_web_lg`` is
-        never loaded.
+        ``load_spacy_model`` caches per ``(model, options)``, so every site
+        asking for this configuration — including the frame-SRL ingest pass —
+        shares this one resident pipeline.
         """
         return self._schema_miner.nlp
 

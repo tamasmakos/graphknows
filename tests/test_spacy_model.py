@@ -23,7 +23,6 @@ def test_missing_model_names_model_and_install_command(
     from graphknows.exceptions import MissingModelError
 
     module = importlib.import_module(module_path)
-    monkeypatch.setattr(module, "_NLP", None)
 
     with pytest.raises(MissingModelError) as exc_info:
         if attr == "_lemmatise":

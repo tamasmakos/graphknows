@@ -55,18 +55,14 @@ JUNK_FILLERS = frozenset(
 )
 _POS = {"VERB": "v", "NOUN": "n", "ADJ": "a"}
 
-_nlp: Any = None
 _lu_index: dict[tuple[str, str], set[str]] | None = None
 _onto_up: dict[str, set[str]] | None = None
 
 
 def _spacy() -> Any:
-    global _nlp
-    if _nlp is None:
-        from graphknows.nlp import load_spacy_model
+    from graphknows.nlp import load_spacy_model
 
-        _nlp = load_spacy_model("en_core_web_lg", disable=["ner"])
-    return _nlp
+    return load_spacy_model("en_core_web_lg", disable=["ner"])
 
 
 def _framenet() -> Any:
