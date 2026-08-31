@@ -53,6 +53,7 @@ from graphknows.ingestion.extraction.relations._lingfeatures import (
     parse_speaker,
     resolve_deixis,
 )
+from graphknows.nlp import load_spacy_model
 
 log = logging.getLogger(__name__)
 
@@ -755,30 +756,14 @@ class _SpacySchemaMiner:
     caller selected for the chunk. See the module docstring.
     """
 
-    def __init__(
-        self,
-        model_name: str = _SPACY_MODEL,
-        nlp_loader: Callable[[str], Any] | None = None,
-    ) -> None:
+    def __init__(self, model_name: str = _SPACY_MODEL) -> None:
         self._model_name = model_name
-        self._nlp_loader = nlp_loader
         self._nlp: Any | None = None
 
     def _ensure_loaded(self) -> None:
         if self._nlp is not None:
             return
-        loader = self._nlp_loader
-        if loader is None:
-            import spacy
-
-            loader = spacy.load
-        try:
-            self._nlp = loader(self._model_name)
-        except Exception as exc:
-            raise RuntimeError(
-                f"spaCy model '{self._model_name}' is required for GLiNER2 schemas. "
-                f"Install it with:  python -m spacy download {self._model_name}"
-            ) from exc
+        self._nlp = load_spacy_model(self._model_name)
 
     @property
     def nlp(self) -> Any:

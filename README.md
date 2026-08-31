@@ -21,7 +21,12 @@ server** (Claude Desktop / Claude Code).
 ```bash
 pip install graphknows              # full llm_free stack + MCP server
 pip install "graphknows[assisted]"  # + LLM extraction & injectable ontology
+python -m spacy download en_core_web_lg   # required: not on PyPI, so pip cannot pull it
 ```
+
+spaCy models aren't PyPI packages, so this one can't be declared as a dependency or
+an extra — skip it and the first spaCy-dependent call fails with an error naming this
+same command.
 
 | Extra | Adds |
 | --- | --- |
@@ -51,7 +56,7 @@ docker compose up -d arcadedb
 ```
 
 > A `pip` install downloads its models on first use (the relex extractor, the
-> embedder, the reranker, the spaCy pipeline and two NLTK corpora — a few GB).
+> embedder, the reranker and two NLTK corpora — a few GB).
 > To warm them ahead of time from a repo clone/checkout: `python scripts/bake_models.py`
 > (the wheel ships only the `graphknows` package, so this script isn't
 > available to a plain `pip install`).

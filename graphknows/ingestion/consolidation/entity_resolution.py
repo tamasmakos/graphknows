@@ -220,11 +220,10 @@ def _parser() -> Any:
     """The shared spaCy pipeline, loaded once. ``None`` when unavailable."""
     global _NLP
     if _NLP is None:
-        import spacy
-
+        from graphknows.nlp import load_spacy_model
         from graphknows.settings import GraphKnowsSettings
 
-        _NLP = spacy.load(GraphKnowsSettings().spacy_model)
+        _NLP = load_spacy_model(GraphKnowsSettings().spacy_model)
     return _NLP
 
 

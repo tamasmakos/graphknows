@@ -392,11 +392,10 @@ def _lemmatise(labels: set[str]) -> set[str]:
     """
     global _NLP
     if _NLP is None:
-        import spacy
-
+        from graphknows.nlp import load_spacy_model
         from graphknows.settings import GraphKnowsSettings
 
-        _NLP = spacy.load(GraphKnowsSettings().spacy_model)
+        _NLP = load_spacy_model(GraphKnowsSettings().spacy_model)
     out = set(labels)
     for label in labels:
         out.add(" ".join(t.lemma_.lower() for t in _NLP(label)))
