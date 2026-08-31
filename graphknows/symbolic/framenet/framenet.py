@@ -63,9 +63,9 @@ _onto_up: dict[str, set[str]] | None = None
 def _spacy() -> Any:
     global _nlp
     if _nlp is None:
-        import spacy
+        from graphknows.nlp import load_spacy_model
 
-        _nlp = spacy.load("en_core_web_lg", disable=["ner"])
+        _nlp = load_spacy_model("en_core_web_lg", disable=["ner"])
     return _nlp
 
 
