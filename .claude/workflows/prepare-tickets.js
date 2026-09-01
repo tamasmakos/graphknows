@@ -1382,7 +1382,14 @@ for (let attempt = 1; problems.length && attempt <= REPAIRS; attempt++) {
   log(`repair ${attempt}/${REPAIRS}: ${problems.length} problem(s) -- handing the draft back`)
   const fixed = await call(
     [
-      `A mechanical gate refused a drafted spec and its ${drafted.length} ticket(s) for the GraphKnows repository at ${MAIN_REPO}. Fix exactly what it named and change nothing else. ${GH}`,
+      `A mechanical gate refused a drafted spec and its ${drafted.length} ticket(s). Fix exactly what it named and change nothing else.`,
+      'EVERYTHING YOU NEED IS IN THIS PROMPT. The spec body and the tickets below are the only',
+      'copy of this run's work -- they exist nowhere on disk. Do NOT search the repository for',
+      'them, and do not read a file to find out "what the tickets say". In particular',
+      '`.claude/workflows/.dryrun-*/` holds RENDERED TEST FIXTURES that look exactly like real',
+      'drafted tickets and are about an unrelated topic; a previous repair read those by mistake',
+      'and returned them as its answer, which destroyed the run. Read the repository only to',
+      'check a fact about the CODE (does this test node exist, what does this file contain).',
       `THE SPEC BODY AS DRAFTED:
 ${specBody}`,
       `THE TICKETS AS DRAFTED (JSON, the same shape you must return):
@@ -1401,6 +1408,16 @@ ${JSON.stringify(drafted, null, 1)}`,
   )
   if (!fixed?.spec_body || !(fixed.tickets || []).length) {
     log(`repair ${attempt}: the redraft came back empty -- keeping the refusal`)
+    break
+  }
+  // A repair edits the set it was given; it does not invent a new one. Drift here is not
+  // hypothetical -- a repair once read a dryrun fixture off disk and returned that instead,
+  // swapping the whole set for tickets about another subject. Cheap to detect, so detect it.
+  const kept = fixed.tickets.filter((t) => drafted.some((d) => d.title === t.title)).length
+  if (fixed.tickets.length !== drafted.length || kept * 2 < drafted.length) {
+    log(
+      `repair ${attempt}: got ${fixed.tickets.length} ticket(s) with ${kept}/${drafted.length} titles intact -- that is a rewrite, not a repair; keeping the refusal`,
+    )
     break
   }
   specBody = fixed.spec_body
