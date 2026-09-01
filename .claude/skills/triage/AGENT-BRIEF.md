@@ -32,6 +32,21 @@ The agent needs to know when it's done. Every agent brief must have concrete, te
 - **Good:** "Running `gh issue list --label needs-triage` returns issues that have been through initial classification"
 - **Bad:** "Triage should work correctly"
 
+### One runnable Verify command
+
+Acceptance criteria say when the work is done. A **Verify** command lets a machine ask, cheaply, whether it is *already* done — and that question is worth real money.
+
+The merge train probes each ticket's Verify against the tip before cutting it a worktree. A ticket whose Verify runs and passes is closed for the cost of one agent. A ticket without one cannot be probed at all, so it pays for the full 15-stage pipeline even when the work is already finished.
+
+Measured on the #307 train, 2026-08-31: five of five tickets had no runnable Verify, the probe returned `ran=false` five times, and #247 — whose work was already on the branch — was rebuilt from scratch for roughly 1.5M tokens.
+
+So the Verify section must name **a command, not a description of one**:
+
+- **Good:** `pytest -q tests/test_repo_hygiene.py::TestNoRuntimeDownloads` — prints `2 passed` when fixed, fails today
+- **Bad:** "Build the image and run a default-settings ingest inside it — passing is frame extraction running without a missing-module error"
+
+The bad example is the real text from #278. It reads like a check and cannot be executed, which is the failure mode to watch for: prose that describes how someone *would* verify it. If the honest answer is that no single command can check it, say so explicitly in the Verify section rather than writing prose that looks runnable — then a reader knows the probe will skip it and why.
+
 ### Explicit scope boundaries
 
 State what is out of scope. This prevents the agent from gold-plating or making assumptions about adjacent features.
@@ -61,6 +76,12 @@ Be specific about edge cases and error conditions.
 - [ ] Specific, testable criterion 1
 - [ ] Specific, testable criterion 2
 - [ ] Specific, testable criterion 3
+
+**Verify:**
+```
+one command, runnable verbatim
+```
+What it prints today, and what it prints once the work is done.
 
 **Out of scope:**
 - Thing that should NOT be changed or addressed in this issue
