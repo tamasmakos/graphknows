@@ -59,6 +59,10 @@ const DO_BASELINE = opt.baseline !== false
 // Set by an orchestrator that has already read these issues' labels, state and blocking
 // edges. It removes a duplicated GitHub read at Triage; it never relaxes the label gate.
 const ROSTER_CHECKED = opt.rosterChecked === true
+// What the caller's roster already measured about this change: how big it is, which files
+// it edits, and the evidence behind both. Absent on a standalone run, and absent is fine --
+// every use below degrades to today's behaviour when it is missing.
+const ROSTER_SIZING = opt.rosterSizing || null
 // The train's admission rule, enforced at dispatch time: READY_LABEL must still be PRESENT,
 // not merely GATE_LABEL absent. A human's mid-train brake is removing that label, and the
 // agent already reading labels at Triage is the place to honour it -- a dedicated re-read
@@ -96,6 +100,12 @@ const CI_ROUNDS = opt.ciRounds || 3
 // can say "yes, I know, work it anyway" -- never so an orchestrator can pass the gate on
 // its own. An orchestrator that sets this has removed the only human in the loop.
 const FORCE = opt.force === true
+// Whether to run an issue's own "## Verify" against its worktree before spending an opus
+// plan on it, and again when a reproduction refuses to go red. 'shadow' reports the verdict
+// and carries on; 'on' stops the car; 'off' skips it. A train passes probes:'off' because it
+// already probed at dispatch -- see run-merge-train.js -- so this defaults to shadow for the
+// standalone runs, which are the ones with no other coverage.
+const PROBES = ['shadow', 'on', 'off'].includes(opt.probes) ? opt.probes : 'on'
 // Date.now()/new Date() throw inside a workflow (the journal must stay deterministic),
 // so run provenance in issue bodies comes from args, not the clock.
 const RUN = opt.runLabel || 'an automated process-issues run'
@@ -358,6 +368,11 @@ const ISSUES_SCHEMA = {
               'absolute path of the created worktree in DRIVE-LETTER form (C:/Users/.../gk-issue-<n>), not the Git Bash /c/... form -- later stages mount this path into docker',
           },
           branch: { type: 'string' },
+          verify: {
+            type: 'string',
+            description:
+              'the ONE runnable command from the issue body\'s "## Verify" section, verbatim and on one line. Empty string if the body has no such section, or if it holds prose rather than a command -- do not invent one, and do not assemble one out of a description.',
+          },
           resumed_from: {
             type: 'string',
             description:
@@ -472,6 +487,13 @@ const IMPL_SCHEMA = {
   properties: {
     summary: { type: 'string', description: 'what you changed, in a sentence or two' },
     files: { type: 'array', items: { type: 'string' } },
+    // Measured here rather than at Verify because Review runs in between, and Review is the
+    // expensive stage that most needs to know how big the diff is.
+    changed_lines: {
+      type: 'integer',
+      description:
+        'total lines added + deleted so far, from `git add -A -N && git diff --shortstat origin/' + BASE + '`. Report what it prints; do not estimate.',
+    },
     discoveries: DISCOVERIES,
   },
 }
@@ -589,6 +611,15 @@ const VERIFY_SCHEMA = {
         'every path this work touched, repo-relative with forward slashes, from `git add -A -N && git diff --name-only origin/' +
         BASE +
         '`',
+    },
+    // The size half of the same measurement. Every gate downstream classified by change KIND
+    // and nothing measured how BIG it was, so a four-line dependency pin bought exactly the
+    // pipeline a four-hundred-line refactor buys. Measured 2026-08-31 on #278: 4 lines,
+    // 11 agents, ~1.6M tokens.
+    changed_lines: {
+      type: 'integer',
+      description:
+        'total lines added + deleted by this work, from `git diff --shortstat origin/' + BASE + '` (add `git add -A -N` first so new files count). 0 only if nothing changed.',
     },
     fixed: { type: 'array', items: { type: 'string' } },
     unresolved: { type: 'array', items: { type: 'string' } },
@@ -883,6 +914,7 @@ const triage = await call(
     `You are triaging open GitHub issues for this repository. ${GH}`,
     filter,
     "Read each candidate's full body and comments (`gh issue view <n> --comments`) before judging it.",
+    'While you have the body open, record its "## Verify" command under verify: the ONE runnable command that section names, verbatim and on one line. A later stage RUNS it, so copy it rather than describing it, and leave it empty rather than assembling one out of prose -- an invented command that happens to pass would close a ticket that still has work in it.',
     'Then, for EACH picked issue, sequentially (never in parallel):',
     '  1. `git fetch origin`',
     `  2. from the repo root: \`git worktree add ../gk-issue-<n> -b fix/issue-<n> origin/${BASE}\``,
@@ -951,7 +983,11 @@ const classify = (plan, verify, pkg = 'graphknows') => {
         : 'test-only'
   // An unclassifiable change is the most expensive class, not the cheapest -- so with no
   // file list at all, assume it touches the package rather than skipping on ignorance.
-  return { kind, deps, api, meta, files, touchesPackage: touchesPackage || !files.length, measured: Boolean(verify?.changed_files?.length) }
+  // Size, when it has been measured. Deliberately NOT predicted from the plan: an estimate
+  // that shrinks the pipeline is the one number nobody should be allowed to guess, so an
+  // unmeasured change reports null and every size clause below fails closed.
+  const lines = Number.isInteger(verify?.changed_lines) ? verify.changed_lines : null
+  return { kind, deps, api, meta, files, lines, touchesPackage: touchesPackage || !files.length, measured: Boolean(verify?.changed_files?.length) }
 }
 
 // A stage RUNS unless this says otherwise, and every entry names the class of bug it is
@@ -971,6 +1007,23 @@ const SKIPPABLE = {
   docs: (c) => c.kind === 'test-only' && !c.api,
 }
 
+// How big a MEASURED change has to be before it earns an opus stage. Below this, plan and
+// review run on the default model; at or above it, nothing changes. An unmeasured change
+// (lines === null) is treated as large, so guessing never buys the cheap path.
+//
+// The number is the express lane's own ejection threshold. That lane already asserts a
+// change under 50 real lines is small enough to share ONE review across a whole batch; a
+// change that size does not need two extended-thinking agents to itself.
+const DEEP_MIN_LINES = 50
+const isSmall = (c) => c.lines !== null && c.lines < DEEP_MIN_LINES
+// DEEP for a change worth it, the default model otherwise. Stages that run BEFORE Verify
+// have no measurement, so they pass a classification with lines === null and stay DEEP.
+const deepIf = (c, issue, stage) => {
+  if (!isSmall(c)) return DEEP
+  log(`#${issue.number}: ${stage} on the default model -- ${c.lines} measured lines, under ${DEEP_MIN_LINES}`)
+  return {}
+}
+
 // Whether the stage should run. In shadow mode it always returns true and only reports the
 // decision it would have taken, so the policy can be watched before it is trusted.
 const gate = (stage, c, issue) => {
@@ -979,6 +1032,44 @@ const gate = (stage, c, issue) => {
   log(`#${issue.number}: ${GATES === 'shadow' ? 'WOULD skip' : 'skipped'} ${stage} -- ${why}`)
   return GATES === 'shadow'
 }
+
+// -- the acceptance probe -------------------------------------------
+// An issue's "## Verify" section is a falsifiable acceptance test that nothing has ever run.
+// Run it and the answer is one of three things, and the middle one is the normal one.
+//
+// A pass BEFORE any work is done means an earlier merge already did this -- the issue is
+// stale, not wrong, and the whole pipeline behind it would land a no-op.
+const probeIn = (worktree, cmd) =>
+  [
+    `Run one command and report what it did. Implement NOTHING, fix NOTHING, commit NOTHING -- you are measuring, not building.`,
+    `The command, verbatim: ${cmd}`,
+    `Run it in ${worktree}. If it names the test suite, run it in a container mounted on that tree:`,
+    '```',
+    `MSYS_NO_PATHCONV=1 docker run --rm -e GRAPHKNOWS_SKIP_PREFLIGHT=1 -v "${winPath(worktree)}:/app" -w /app graphknows-workspace \\`,
+    `  sh -c '${cmd}'`,
+    '```',
+    'Both env vars are load-bearing. Never run the suite on the host, and never report a result you did not observe.',
+    'Be exact about the difference between these two, because they mean opposite things:',
+    '  - It RAN and FAILED -- an assertion failed, a symbol does not exist, an import errors because the module is not written. That is ran=true, passes=false.',
+    '  - It could not be run AT ALL -- malformed, prose rather than a command, docker unavailable. That is ran=false.',
+    'Only a command that ran to a successful conclusion is passes=true. Do not adjust the command to make it run, and do not fix what it reveals.',
+  ].join('\n')
+
+const PROBE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['ran', 'passes'],
+  properties: {
+    ran: { type: 'boolean', description: 'true only if you executed the command and read its result. A command that runs and fails RAN.' },
+    passes: { type: 'boolean', description: 'true only if the command completed successfully' },
+    excerpt: { type: 'string', description: 'the last few lines of its output, or why it could not be run at all' },
+  },
+}
+
+// Issues that turned out to be already done, recorded beside the pipeline rather than in it:
+// every downstream stage already opens with `if (!ctx) return null`, so a stage that returns
+// null stops the car for free -- but null carries no reason, and the summary needs one.
+const satisfied = new Map()
 
 // The body an agent-found issue is filed with, checked the way prepare-tickets checks a
 // pipeline ticket's. Nothing enforced this before, and the path that files the MOST issues
@@ -1012,6 +1103,31 @@ const results = await pipeline(
 
   // Plan
   async (issue) => {
+    // Before the most expensive call in the pipeline, ask the cheapest question there is:
+    // is this already done? An issue satisfied on the tip pays an opus plan, an implement,
+    // a review, a verify, a ship and ~31 minutes of CI to land nothing.
+    //
+    // ROSTER_CHECKED means a train already probed this at dispatch and there is nothing to
+    // learn by paying for it twice. Standalone runs are the ones with no other coverage --
+    // and the only coverage at all for an enhancement, whose plan may have no test task, so
+    // the fails_now signal further down never exists for it.
+    if (PROBES !== 'off' && !ROSTER_CHECKED && (issue.verify || '').trim()) {
+      const probe = await call(probeIn(issue.worktree, issue.verify.trim()), {
+        label: `probe#${issue.number}`,
+        phase: 'Plan',
+        schema: PROBE_SCHEMA,
+      })
+      if (probe?.passes === true) {
+        log(
+          `#${issue.number}: its "## Verify" already passes on a fresh checkout of ${BASE} -- ` +
+            (PROBES === 'on' ? 'this work is already done, stopping before the plan' : 'WOULD stop here (probes: shadow), planning anyway'),
+        )
+        if (PROBES === 'on') {
+          satisfied.set(issue.number, `its "## Verify" passed on a fresh checkout of ${BASE} before any work was done${probe.excerpt ? `: ${probe.excerpt}` : ''}`)
+          return null
+        }
+      }
+    }
     const plan = await call(
       [
         `Issue #${issue.number}: ${issue.title}`,
@@ -1041,9 +1157,29 @@ const results = await pipeline(
         PACKAGING,
         'Fill in api_surface with the public importable names this fix changes (empty if purely internal), and new_dependencies with any third-party package the fix will need that is not already declared -- name the pyproject table it belongs in. Prefer a fix that needs no new dependency at all: every dependency you add is one every user must install.',
         'List under out_of_scope anything real you noticed while reading that this fix will NOT address -- a defect, a broken assumption, or a concrete enhancement the code is missing. Each one is deduped and filed as a GitHub issue at the end of this run, so be strict:\n' + EVIDENCE,
+        // Proportionality, stated as a budget rather than left to taste. An agent given no
+        // sense of scale explores until it feels done, which on a four-line change was 51
+        // turns. The roster's number is a starting point and explicitly falsifiable: finding
+        // it wrong is a useful result; quietly spending an hour to confirm it is not.
+        ROSTER_SIZING && ROSTER_SIZING.sizing !== 'unknown'
+          ? [
+              `A roster already sized this ticket by reading the code: about ${ROSTER_SIZING.expected_lines} changed line(s) (${ROSTER_SIZING.sizing})${(ROSTER_SIZING.files_to_edit || []).length ? `, editing ${ROSTER_SIZING.files_to_edit.join(', ')}` : ''}.`,
+              ROSTER_SIZING.evidence ? `What it read to get there: ${ROSTER_SIZING.evidence}` : '',
+              'Start from that rather than rediscovering it: read those files first and plan the change you find there.',
+              ROSTER_SIZING.expected_lines && ROSTER_SIZING.expected_lines <= 30
+                ? 'A change this small does not earn a survey of the codebase. Read the files named above, grep the callers of what you are about to change, and plan. If you are opening a tenth unrelated file to confirm something you already know, stop and plan with what you have.'
+                : '',
+              'If the roster is WRONG -- the real fix is much bigger, or lands somewhere else entirely -- say so plainly and size it yourself. That is a finding worth having, and the one reason to keep reading past the budget.',
+            ]
+              .filter(Boolean)
+              .join('
+')
+          : '',
         'Change nothing yourself.',
         HOUSE,
-      ].join('\n'),
+      ]
+        .filter(Boolean)
+        .join('\n'),
       { label: `plan#${issue.number}`, phase: 'Plan', schema: PLAN_SCHEMA, ...DEEP },
     )
     return plan ? { issue, plan } : null
@@ -1066,6 +1202,10 @@ const results = await pipeline(
     let red = null
     const done = []
     const discoveries = []
+    // The measured size of the diff so far, for the stages after this one. Max, not sum:
+    // each task reports the running total against origin/BASE, so the last honest number
+    // is the whole change. null until something reports, and null means "assume large".
+    let implLines = null
     for (let i = 0; i < tasks.length; i++) {
       const t = tasks[i]
       const isTest = t.kind === 'test'
@@ -1110,14 +1250,40 @@ const results = await pipeline(
       discoveries.push(...(out?.discoveries || []).map((x) => ({ source: `implement: ${t.title}`, ...x })))
       if (isTest) {
         red = out
-        if (!out?.fails_now) log(`#${issue.number}: WARNING -- reproduction never went red (${out?.note || 'no detail'})`)
+        // A reproduction that will not go red has always been read here as "your test is
+        // wrong". It is only that once something else says so. The other reading -- the work
+        // is already on the tip and there is nothing left to reproduce -- looks identical
+        // from inside the test, and it is the reading nothing in this pipeline could reach.
+        // So ask the issue's own acceptance, which is independent of the test just written.
+        if (out && out.fails_now === false && PROBES !== 'off' && (issue.verify || '').trim()) {
+          const probe = await call(probeIn(issue.worktree, issue.verify.trim()), {
+            label: `probe#${issue.number}:red`,
+            phase: 'Implement',
+            schema: PROBE_SCHEMA,
+          })
+          if (probe?.passes === true) {
+            log(
+              `#${issue.number}: the reproduction will not go red AND its "## Verify" passes -- this work is already on ${BASE}, not a bad test. ` +
+                (PROBES === 'on' ? 'Stopping before Dogfood; no PR.' : 'WOULD stop here (probes: shadow), carrying on.'),
+            )
+            if (PROBES === 'on') {
+              satisfied.set(issue.number, `the reproduction would not fail and its "## Verify" passes on ${issue.branch} -- an earlier merge already did this work${probe.excerpt ? `: ${probe.excerpt}` : ''}`)
+              return null
+            }
+          } else {
+            log(`#${issue.number}: WARNING -- reproduction never went red and "## Verify" does not pass either, so the test really is wrong (${out?.note || 'no detail'})`)
+          }
+        } else if (!out?.fails_now) {
+          log(`#${issue.number}: WARNING -- reproduction never went red (${out?.note || 'no detail'})`)
+        }
         done.push(`${t.title} -> added ${out?.test_id || 'a test'} (red: ${out?.fails_now === true})`)
       } else {
+        if (Number.isInteger(out?.changed_lines)) implLines = Math.max(implLines ?? 0, out.changed_lines)
         done.push(`${t.title} -> ${out?.summary || 'no output'}`)
       }
     }
     if (discoveries.length) log(`#${issue.number}: ${discoveries.length} discovery(ies) while implementing`)
-    return { ...ctx, red, done, discoveries }
+    return { ...ctx, red, done, discoveries, implLines }
   },
 
   // Dogfood -- eat what was cooked, before anyone reviews the recipe. Every earlier stage
@@ -1165,7 +1331,7 @@ const results = await pipeline(
   // Review -- adversarial, on the working diff only
   async (ctx) => {
     if (!ctx) return null
-    const { issue, plan, dogfood } = ctx
+    const { issue, plan, dogfood, implLines } = ctx
     const review = await call(
       [
         diffHowTo(issue),
@@ -1196,7 +1362,7 @@ const results = await pipeline(
         'Separately, list under out_of_scope_defects any real defect you noticed in the surrounding code that this diff did NOT cause and should NOT fix. Same evidence bar. These become their own issues later, so precision matters -- do not pad the list.',
         'Change nothing.',
       ].join('\n'),
-      { label: `review#${issue.number}`, phase: 'Review', schema: FINDINGS_SCHEMA, ...DEEP },
+      { label: `review#${issue.number}`, phase: 'Review', schema: FINDINGS_SCHEMA, ...deepIf(classify(plan, { changed_lines: implLines }, IMPORT_NAME), issue, 'review') },
     )
     return review ? { ...ctx, review } : null
   },
@@ -1232,7 +1398,7 @@ const results = await pipeline(
         HOUSE,
         `You get at most ${VERIFY_ROUNDS} attempts at getting green. If it is still red after that, STOP: set green=false, needs_human=true, and list exactly what fails. Do not keep grinding and do not disable, skip or xfail a test to get there.`,
         'List under new_failures anything failing that is not in the baseline above. Do not commit.',
-        `Finally, record changed_files: run \`git add -A -N && git diff --name-only origin/${BASE}\` and report every path it prints, verbatim. Later stages decide what still needs checking from that list, so an omission there silently removes a check.`,
+        `Finally, record changed_files and changed_lines: run \`git add -A -N && git diff --name-only origin/${BASE}\` and report every path it prints, verbatim, then \`git diff --shortstat origin/${BASE}\` and report insertions + deletions summed as changed_lines. Later stages decide what still needs checking from that list and that number, so an omission in either silently removes a check -- or buys a small change the pipeline a large one needs.`,
       ]
         .filter(Boolean)
         .join('\n'),
@@ -1605,6 +1771,36 @@ const results = await pipeline(
 
 const summary = issues.map((issue, i) => {
   const r = results[i]
+  // An issue whose own acceptance already passed before any work was done. Its stage returned
+  // null, so every `r?.` below would read as a failed car -- and it is the opposite: nothing
+  // went wrong, there was simply nothing to do. needs_human is false on purpose; a stale
+  // ticket is a slicing result to feed back, not a defect for someone to go and fix.
+  if (satisfied.has(issue.number)) {
+    return {
+      issue: issue.number,
+      title: issue.title,
+      branch: issue.branch,
+      worktree: issue.worktree,
+      state: 'already-satisfied',
+      reproduced: false,
+      green: false,
+      red_to_green: false,
+      dogfood: 'not run',
+      package_gate: 'not run',
+      docs: 'not run',
+      release_impact: 'none',
+      changelog_line: '',
+      shipped: false,
+      ci: 'not run',
+      merged: false,
+      merge_commit: '',
+      filed: [],
+      followup_body_problems: [],
+      discovered: 0,
+      needs_human: false,
+      notes: satisfied.get(issue.number),
+    }
+  }
   const pk = r?.review?.packaging || {}
   const pkgOk = !r?.pkg ? null : (r.pkg.problems || []).length === 0 && r.pkg.built === true
   return {
@@ -1646,7 +1842,11 @@ const summary = issues.map((issue, i) => {
 })
 
 const filed = summary.flatMap((s) => s.filed)
-log(`shipped ${summary.filter((s) => s.shipped).length}/${summary.length}; filed ${filed.length} follow-up issue(s)`)
+const alreadySatisfied = summary.filter((s) => s.state === 'already-satisfied')
+log(
+  `shipped ${summary.filter((s) => s.shipped).length}/${summary.length}; filed ${filed.length} follow-up issue(s)` +
+    (alreadySatisfied.length ? `; ${alreadySatisfied.length} already satisfied on ${BASE} before any work (${alreadySatisfied.map((s) => '#' + s.issue).join(', ')})` : ''),
+)
 
 // -- Run report ----------------------------------------------------
 // One agent, no judgement: the markdown is composed here and it only writes the bytes.
@@ -1778,15 +1978,21 @@ return {
   baseline: baseline ? { ran: baseline.ran, failing: baseline.failing, distribution: baseline.distribution, notes: baseline.notes } : null,
   skipped: triage?.skipped || [],
   filed_issues: filed,
+  probes: PROBES,
+  // Work that was already on the tip when the car was cut. Not a failure and not a defect --
+  // a slicing result, and the number the probe has to earn its keep with.
+  already_satisfied: alreadySatisfied.map((s) => ({ number: s.issue, why: s.notes })),
   needs_human: summary.filter((s) => s.needs_human).map((s) => s.issue),
   // The workflow deliberately never bumps a version, tags, or uploads. This is the
   // handover to whoever does: the changelog lines and the highest impact seen.
   release_notes: summary
     .filter((s) => s.shipped && s.changelog_line)
     .map((s) => `${s.release_impact}: ${s.changelog_line} (#${s.issue})`),
-  next_step: filed.length
-    ? `Review ${filed.map((n) => '#' + n).join(', ')} and remove the "${GATE_LABEL}" label from the ones worth doing -- until then this workflow will not pick them up.`
-    : 'nothing new filed',
+  next_step: alreadySatisfied.length
+    ? `${alreadySatisfied.map((s) => '#' + s.issue).join(', ')} ${alreadySatisfied.length === 1 ? 'was' : 'were'} already satisfied on ${BASE} before any work started -- close ${alreadySatisfied.length === 1 ? 'it' : 'them'}, and if they came from one spec, its slices overlapped.`
+    : filed.length
+      ? `Review ${filed.map((n) => '#' + n).join(', ')} and remove the "${GATE_LABEL}" label from the ones worth doing -- until then this workflow will not pick them up.`
+      : 'nothing new filed',
   cleanup: `worktrees left in place on purpose: ${[...issues.map((i) => i.worktree), DO_BASELINE ? '../gk-baseline' : null]
     .filter(Boolean)
     .join(', ')} (remove with \`git worktree remove <path>\`)`,

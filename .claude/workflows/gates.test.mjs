@@ -1,6 +1,15 @@
-// Self-checks for the decisions the two workflows make in plain JS rather than in a prompt.
+// Self-checks for the decisions the workflows make in plain JS rather than in a prompt.
 //
-// Four of them, all load-bearing and all silent when wrong:
+// THIS FILE IS THE ONLY THING HOLDING THE FOUR WORKFLOW SCRIPTS TOGETHER. Workflow scripts
+// cannot import, so prepare-tickets.js, process-issues.js, run-merge-train.js and
+// express-lane.js each re-declare the constants and rules they share -- the labels, the
+// harness list, Kahn's algorithm, the probe flag and its verdict vocabulary. Nothing at
+// runtime notices when two of them drift apart: the train files behind a gate the child no
+// longer checks, or probes with values the child does not recognise, and the only symptom is
+// work that quietly does not happen. Every check below is sliced out of the workflow SOURCE
+// rather than copied, because a copy drifts too and then the test tests the copy.
+//
+// All of them are load-bearing and all silent when wrong:
 //   - process-issues' change classifier, which decides whether the wheel gate runs -- the
 //     one skip in that pipeline with no post-submit safety net.
 //   - the label vocabulary the two workflows must share, with no imports to share it.
@@ -11,9 +20,12 @@
 //     which cars get reviewed as a batch instead of one at a time.
 //   - that .gitignore still covers where the workflows write, and still does NOT cover the
 //     rules they read.
-//
-// Every one is sliced out of the workflow source rather than copied: a copy drifts, and
-// then the test tests the copy.
+//   - the teardown instruction, which the three scripts that can complete a merge each
+//     declare -- a car that merges and leaves its compose stack up OOM-kills the pre-push
+//     gate for every later branch, and nothing reports it.
+//   - the `probes` flag and its verdict vocabulary, which all four scripts declare and which
+//     a train hands down to its children -- the acceptance probe decides whether a car runs
+//     at all, so a script that spells its values differently stops probing in silence.
 //
 //   node .claude/workflows/gates.test.mjs
 import assert from 'node:assert/strict'
@@ -164,6 +176,67 @@ for (const kept of ['docs/agents/definition-of-done.md', 'docs/agents/triage-lab
   )
 }
 
+// -- the three scripts that finish a merge must all stop the stack --
+//
+// `docker compose` names its project after the worktree directory, so a car's ArcadeDB comes
+// up as gk-issue-<n>-arcadedb-1 and nothing else ever stops it. Five leaked stacks held
+// ~14.7GB of a 31.2GB allocation and the pre-push gate died with `Killed` mid-suite -- on
+// EVERY branch, not just the one that leaked. So the rule is: a merge that succeeded tears
+// down its stack and its tree; anything else keeps both, because that is what a human
+// debugs. Three scripts merge -- process-issues per car, express-lane per batch, and
+// run-merge-train on the recovery path where the child already returned "not merged" and so
+// never ran its own teardown. Each declares the instruction itself; they must not drift.
+const TEARDOWN_MARK = 'docker compose down --remove-orphans'
+for (const [fname, text] of [['process-issues.js', src], ['express-lane.js', express], ['run-merge-train.js', train]]) {
+  assert.ok(text.includes(TEARDOWN_MARK), `${fname} never stops the compose stack it started -- a leaked stack OOM-kills the gate for every branch`)
+  assert.match(text, /Only if the merge SUCCEED|Only on success/i, `${fname} must tear down ONLY on a successful merge -- a parked car's stack is what a human debugs`)
+}
+// The instruction itself, verbatim in EVERY script that carries it -- the three above plus
+// prepare-tickets, which merges nothing but cuts a probe worktree and must stop whatever a
+// ticket's "## Verify" command started in it. A copy that drifted to `-f` or dropped
+// --remove-orphans would leak the orphans that were the actual 14.7GB.
+const teardownLine = (text) => text.match(/^const teardown = \(worktree\) =>\n(.*)$/m)?.[1]
+const teardownOwners = [['process-issues.js', src], ['express-lane.js', express], ['run-merge-train.js', train], ['prepare-tickets.js', rnd]]
+const teardowns = teardownOwners.map(([, text]) => teardownLine(text))
+for (const [i, [fname]] of teardownOwners.entries()) {
+  assert.ok(teardowns[i], `${fname} has no teardown helper -- it creates a worktree nothing else will clean up`)
+}
+assert.equal(new Set(teardowns).size, 1, 'the teardown instruction has drifted between the scripts that carry it')
+
+// -- all four scripts must mean the same thing by `probes` --
+//
+// The acceptance probe runs at four points across four files -- filing, dispatch, the
+// express batch, and a car whose reproduction will not go red -- and one flag governs all of
+// them. A train hands `probes` down to its children, so a script that spelled the values
+// differently, or defaulted to acting rather than watching, would either act on a verdict
+// nobody agreed to trust or silently stop probing. Neither errors.
+const PROBE_FLAG = "const PROBES = ['shadow', 'on', 'off'].includes(opt.probes) ? opt.probes : 'on'"
+for (const [fname, text] of [
+  ['process-issues.js', src],
+  ['prepare-tickets.js', rnd],
+  ['run-merge-train.js', train],
+  ['express-lane.js', express],
+]) {
+  assert.ok(text.includes(PROBE_FLAG), `${fname} does not declare the probes flag exactly as the other three do`)
+}
+// The probe defaults to ACTING, everywhere. It was 'shadow' first, on the rule that a
+// predicate deciding whether work happens is watched before it is trusted -- and the
+// watching produced its answer on the #307 train, 2026-08-31: the probe ran #247's
+// "## Verify" against the tip, reported passes=true, and shadow mode cut it a full 15-stage
+// car regardless. Roughly 1.5M tokens to redo work already on the branch. A measurement
+// taken and then ignored is worse than one never taken, so the counter earned the promotion.
+//
+// If THIS assertion is what fails, the question is the mirror of the old one: what did
+// acting on the verdict cost that watching it did not? The risk it accepts is a "## Verify"
+// too weak to see missing work, which closes a live ticket -- visible, and invited back by
+// the close comment. Demote it only with a case that concrete.
+assert.ok(PROBE_FLAG.endsWith("'on'"), 'the probe must default to acting on its verdict, not to reporting it')
+// The verdict vocabulary the four share. `ran` is the field that separates "this ticket has
+// work left in it" from "nobody can tell", and conflating them closes live tickets.
+for (const [fname, text] of [['process-issues.js', src], ['run-merge-train.js', train]]) {
+  assert.match(text, /required: \['ran', 'passes'\]/, `${fname}'s PROBE_SCHEMA must require both ran and passes`)
+}
+
 // -- the dry-run harness must not shadow its own fixtures --
 //
 // CANNED is one object literal keyed by agent-label prefix, shared by every workflow. A
@@ -207,7 +280,9 @@ const body =
   '## Parent\nthe parent spec issue\n## What to build\nx\n' +
   '## Acceptance criteria\n- [ ] WHEN a chunk is stored THE SYSTEM SHALL return it by instant\n' +
   '## Verify\n`pytest -q` passes\n## Out of scope\nBack-filling.\n'
-const tk = (blocked_by_index, over = {}) => ({ title: 't', body, blocked_by_index, ...over })
+// verify carries the one command the probe stage actually executes -- at filing, to prove
+// the ticket is not already satisfied, and again at dispatch to prove it still is not.
+const tk = (blocked_by_index, over = {}) => ({ title: 't', body, verify: 'pytest -q tests/test_chunks.py::test_by_instant', blocked_by_index, ...over })
 
 // clean set passes and comes back in dependency order
 const ok = checkHandover(SPEC, ['the chunk writer'], [tk([1]), tk([])])
@@ -233,6 +308,16 @@ assert.deepEqual(
   checkHandover(SPEC.replace('## Requirements', '## Requirements *(mandatory)*'), ['the chunk writer'], [tk([])]).problems,
   [],
   'a heading still carrying the template annotation *(mandatory)* is still that heading',
+)
+// The "## Verify" heading being present was never the same thing as a command existing, and
+// something has to RUN this one: at filing to prove the ticket is not already satisfied on
+// today's tip, and again at dispatch to prove it still is not. Prose cannot be run, and
+// neither can two commands.
+assert.match(checkHandover(SPEC, [], [tk([], { verify: '' })]).problems.join(), /no runnable command under verify/)
+assert.match(checkHandover(SPEC, [], [tk([], { verify: '   ' })]).problems.join(), /no runnable command under verify/, 'whitespace is not a command')
+assert.match(
+  checkHandover(SPEC, [], [tk([], { verify: 'pytest -q\nthen read the output' })]).problems.join(),
+  /gives 2 lines under verify where one command is required/,
 )
 // an unnumbered requirement or criterion cannot be cited by a ticket or counted by analyze
 assert.match(checkHandover(SPEC.replace('FR-001', 'FR'), [], [tk([])]).problems.join(), /no FR-### functional requirement/)

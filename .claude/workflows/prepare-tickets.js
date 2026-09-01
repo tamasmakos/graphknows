@@ -14,6 +14,7 @@ export const meta = {
     { title: 'Spec', detail: 'draft the spec from the chosen design (no filing yet)', model: 'opus' },
     { title: 'Critic', detail: 'adversarial read of the draft against the research brief', model: 'opus' },
     { title: 'Tickets', detail: 'draft the slices, check the bodies in JS, then file the spec and the tickets', model: 'opus' },
+    { title: 'Probe', detail: "run each drafted ticket's \"## Verify\" against the tip -- every one of them must fail", model: 'sonnet' },
     { title: 'Report', detail: 'one wrap-up agent: repair labels, post clarifications, mirror the spec to specs/, write the run report', model: 'sonnet' },
   ],
 }
@@ -76,6 +77,11 @@ const GATE_ALL = opt.gateAll === true
 // research and design; 'shallow' forces the skip.
 const DEPTH = ['auto', 'full', 'shallow'].includes(opt.depth) ? opt.depth : 'auto'
 const RUN = opt.runLabel || 'an automated prepare-tickets run'
+// Whether to run each drafted ticket's own "## Verify" against the tip before filing.
+// 'shadow' reports the verdict and files anyway; 'on' refuses the set the way every other
+// handover check does; 'off' skips it. Shadow by default: a new predicate that decides
+// whether a whole run's output is filed should be watched before it is trusted.
+const PROBES = ['shadow', 'on', 'off'].includes(opt.probes) ? opt.probes : 'on'
 // The run report. The return value lands in one session's context and dies with it; the
 // report is the copy still there tomorrow, and it is where a reader finds out what lost.
 const DO_REPORT = opt.report !== false
@@ -109,6 +115,21 @@ const MAIN_REPO = opt.repo || 'C:/Users/User/Documents/dev/graphknows'
 // agent cannot open from a fresh clone is a rule that gets restated into every ticket
 // instead, which is the bloat this whole pipeline was rebuilt to stop.
 const RUNS_DIR = 'docs/agents/runs'
+// The probe runs the tip, never the main checkout: a `git checkout` there would move a
+// person's working tree out from under them. Its own detached worktree, cut once and reused.
+const PROBE_TREE = `${MAIN_REPO.replace(/\/[^/]+$/, '')}/gk-probe`
+// Docker on Windows needs a drive-letter path; agents tend to report the Git Bash form.
+const winPath = (p) =>
+  String(p)
+    .replace(/\\/g, '/')
+    .replace(/^\/([a-zA-Z])\//, (_, drive) => `${drive.toUpperCase()}:/`)
+// Stopping what a run started is part of finishing. Same instruction as the three scripts
+// that merge, verbatim -- gates.test.mjs pins every copy of it against every other. Here it
+// is the probe tree: a "## Verify" command is copied out of a ticket body and run as given,
+// so one that brings up a compose stack leaves it named after PROBE_TREE, and nothing else
+// would ever stop it. Leaked stacks OOM-kill the pre-push gate for every branch.
+const teardown = (worktree) =>
+  `Then tear down what this car started, in this order: \`cd ${worktree} && docker compose down --remove-orphans\` (its ArcadeDB stack is named after that directory and nothing else ever stops it -- leaked stacks OOM-kill the pre-push gate for every branch, not just this one), then \`git worktree remove ${worktree}\` from the repo root. If either refuses, say so in notes and leave it -- do not force past a refusal you have not read.`
 const skill = (path, why) => `Read ${MAIN_REPO}/.claude/skills/${path} and follow it: ${why}`
 
 const GH = `Use \`gh\`. If it is not on PATH, fall back to "${opt.ghPath || '/c/Program Files/GitHub CLI/gh.exe'}" (quote it).`
@@ -375,7 +396,7 @@ const DRAFT_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['title', 'delivers', 'body', 'blocked_by_index'],
+        required: ['title', 'delivers', 'body', 'blocked_by_index', 'verify'],
         properties: {
           title: { type: 'string' },
           delivers: { type: 'string', description: 'the end-to-end behaviour this slice makes work' },
@@ -399,7 +420,14 @@ const DRAFT_SCHEMA = {
           needs_human: { type: 'boolean', description: 'true ONLY if a person must decide something before an agent can start. Default false.' },
           needs_human_why: { type: 'string', description: 'the specific decision a person owes this ticket, or an empty string' },
           files_named: { type: 'array', items: { type: 'string' }, maxItems: 30, description: 'every repository file path this body names' },
-          verify: { type: 'string', description: 'the one runnable command from "## Verify", verbatim' },
+          // Not decoration and not a duplicate of the body: this is the field the probe
+          // stage EXECUTES. A ticket whose acceptance already passes on today's tip is not a
+          // ticket, and that can only be discovered by running the thing.
+          verify: {
+            type: 'string',
+            description:
+              'the one runnable command from "## Verify", verbatim and on ONE line -- copy-pasteable, no prose around it, no "then check that ...". This command is actually run against the current tip before anything is filed.',
+          },
           expected_lines: { type: 'integer', description: 'estimated changed lines. Hours-to-two-days of work; over ~400 is a signal to split.' },
         },
       },
@@ -1159,6 +1187,15 @@ const checkHandover = (specBody, seams, drafted) => {
     if (/\[NEEDS CLARIFICATION/i.test(String(t.body || ''))) {
       problems.push(`ticket ${i + 1} ("${t.title}") still carries a [NEEDS CLARIFICATION] marker -- it is a question for the requester, not a ticket`)
     }
+    // The "## Verify" heading being present was never the same thing as a command existing.
+    // Something has to RUN this: at filing to prove the ticket is not already satisfied, and
+    // at dispatch to prove it still is not. Prose, or two commands, cannot be run.
+    const cmd = String(t.verify || '').trim()
+    if (!cmd) {
+      problems.push(`ticket ${i + 1} ("${t.title}") gives no runnable command under verify -- the "## Verify" heading alone cannot be executed, and a ticket whose acceptance nobody can run cannot be shown to be done`)
+    } else if (cmd.includes('\n')) {
+      problems.push(`ticket ${i + 1} ("${t.title}") gives ${cmd.split('\n').length} lines under verify where one command is required: "${cmd.split('\n')[0].slice(0, 60)}..."`)
+    }
     const boxes = (String(t.body || '').match(/^\s*[-*]\s*\[[ xX]\]/gm) || []).length
     if (boxes > MAX_ACCEPTANCE) {
       problems.push(`ticket ${i + 1} ("${t.title}") has ${boxes} acceptance criteria, over the ${MAX_ACCEPTANCE} a tracer bullet gets -- split it or drop the ones that are not load-bearing`)
@@ -1238,6 +1275,81 @@ const labelCheck = (rows) => {
 
 const drafted = draft.tickets
 const { problems, order } = checkHandover(draft.spec_body, spec.seams, drafted)
+
+// -- Probe ---------------------------------------------------------
+// Run every drafted ticket's own acceptance against today's tip. Each one MUST fail.
+//
+// This is what makes "## Verify" falsifiable. Until something executes it, a passing check
+// later in the line means nothing -- nobody ever established it failed to begin with. And a
+// ticket whose acceptance already passes at filing time is not a ticket: either the work is
+// already on main, or the command does not test the change it claims to. Both are the same
+// refusal, and both are far cheaper to catch here than after a car has paid for a plan.
+//
+// One agent for the whole set, in a detached worktree of its own -- never in the main
+// checkout, where a `git checkout` would move a person's working tree out from under them.
+const probeVerdicts = []
+if (PROBES !== 'off' && drafted.length) {
+  phase('Probe')
+  const probe = await call(
+    [
+      `Run ${drafted.length} drafted acceptance check(s) against the current tip of the GraphKnows repository. None of these tickets has been filed and none of this work exists yet. Implement NOTHING, fix NOTHING, commit NOTHING -- you are measuring, not building. ${GH}`,
+      `1. Get a clean tree at the tip, WITHOUT touching ${MAIN_REPO}'s own checkout -- a person may be working in it:`,
+      `   from ${MAIN_REPO}: \`git fetch origin\`, then \`git worktree add ${PROBE_TREE} --detach origin/main\` (if ${PROBE_TREE} already exists, cd there and \`git checkout -q --detach origin/main\` instead).`,
+      `2. In ${PROBE_TREE}, run each command below exactly as given. If one names the test suite, run it in a container mounted on that tree:`,
+      '```',
+      `MSYS_NO_PATHCONV=1 docker run --rm -e GRAPHKNOWS_SKIP_PREFLIGHT=1 -v "${winPath(PROBE_TREE)}:/app" -w /app graphknows-workspace \\`,
+      "  sh -c '<the command>'",
+      '```',
+      '   Both env vars are load-bearing. Never run the suite on the host, and never report a result you did not observe.',
+      '',
+      ...drafted.map((t, i) => `TICKET ${i + 1} -- ${t.title}\n  command: ${t.verify}`),
+      '',
+      '3. Report one verdict per ticket, by its 1-based index. Be exact about the difference between these two, because they mean opposite things here:',
+      '   - The command RAN and FAILED -- an assertion failed, a symbol does not exist, an import errors because the module has not been written, the file is not there. That is ran=true, passes=false, and it is the CORRECT and EXPECTED answer for every ticket in this set. Work that has not been done yet does not pass its own acceptance.',
+      '   - The command could not be run AT ALL -- it is malformed, it is prose rather than a command, docker is unavailable. That is ran=false.',
+      '   Only a command that ran to a successful conclusion is passes=true, and that would mean this ticket asks for something the repository already does.',
+      'Report facts. Do not fix a failing command, do not adjust one to make it run, and do not judge whether a ticket should be filed -- the script decides that from what you report.',
+    ].join('\n'),
+    {
+      label: 'filing-probe',
+      phase: 'Probe',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['verdicts'],
+        properties: {
+          verdicts: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['index', 'ran', 'passes'],
+              properties: {
+                index: { type: 'integer', description: '1-based index of the ticket above' },
+                ran: { type: 'boolean', description: 'true only if you executed the command and read its result. A command that runs and fails RAN.' },
+                passes: { type: 'boolean', description: 'true only if the command completed successfully on the tip' },
+                excerpt: { type: 'string', description: 'the last few lines of its output, or why it could not be run at all' },
+              },
+            },
+          },
+          tip_sha: { type: 'string' },
+          notes: { type: 'string' },
+        },
+      },
+    },
+  )
+  for (const v of probe?.verdicts || []) {
+    const i = (v.index || 0) - 1
+    if (i < 0 || i >= drafted.length) continue
+    probeVerdicts.push({ index: v.index, title: drafted[i].title, ran: v.ran === true, passes: v.passes === true })
+    if (v.passes !== true) continue
+    const line = `ticket ${v.index} ("${drafted[i].title}"): its "## Verify" already passes on ${probe.tip_sha || 'main'} today -- either there is nothing to build, or the command does not test the change${v.excerpt ? ` (${v.excerpt})` : ''}`
+    // Refuse-don't-repair, same as every other check above: the agent that drafted a ticket
+    // is not the one to decide which half of it survives.
+    if (PROBES === 'on') problems.push(line)
+    else log(`probe (shadow): ${line} -- WOULD have refused the whole set; filing anyway`)
+  }
+}
 
 for (const p of problems) log(`body check: ${p}`)
 
@@ -1663,6 +1775,13 @@ if (REPORT_BODY) {
   )
 }
 
+// The probe cut a detached tree at the tip and this run is the last thing that will look at
+// it. Unlike a car's worktree there is nothing to debug in it -- it holds no work, only a
+// checkout of main -- so it goes unconditionally once the probe has run.
+if (PROBES !== 'off' && probeVerdicts.length) {
+  wrapTasks.push(`Remove the probe worktree at ${PROBE_TREE}, which this run created to run the drafted acceptance checks against the tip. ${teardown(PROBE_TREE)}`)
+}
+
 let wrap = null
 if (wrapTasks.length) {
   wrap = await call(
@@ -1738,6 +1857,8 @@ return {
   contested: contested.length,
   refuted: refuted.map((r) => r.claim),
   body_check: problems,
+  probes: PROBES,
+  probe_verdicts: probeVerdicts,
   needs_human:
     critic?.verdict === 'not-ready' ||
     problems.length > 0 ||

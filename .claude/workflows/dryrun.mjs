@@ -42,6 +42,26 @@ const CANNED = {
     },
     notes: 'one pre-existing failure',
   },
+  // The acceptance probe, at every point that runs one. passes:false is the NORMAL answer --
+  // a ticket with work left in it does not pass its own acceptance -- so it is the default
+  // here, and the happy path stays the one a dry run exercises. Flip passes to true by hand
+  // to walk the already-satisfied branch in all four scripts.
+  'filing-probe': {
+    verdicts: [
+      { index: 1, ran: true, passes: false, excerpt: "E   ImportError: cannot import name 'TopicStage'" },
+      { index: 2, ran: true, passes: false, excerpt: '1 failed, 1270 passed' },
+    ],
+    tip_sha: 'c2fdb66',
+    notes: 'every drafted ticket fails its own acceptance, as it should before the work exists',
+  },
+  'express:probe': {
+    verdicts: [
+      { number: 205, ran: true, passes: false, excerpt: '1 failed, 1270 passed' },
+      { number: 206, ran: true, passes: false, excerpt: 'AssertionError: the deprecation table still names the old path' },
+    ],
+    notes: 'both still have work in them',
+  },
+  probe: { ran: true, passes: false, excerpt: '1 failed, 1270 passed', tip_sha: 'c2fdb66', closed: false },
   triage: {
     issues: [
       {
@@ -50,6 +70,7 @@ const CANNED = {
         summary: 'the score is computed once per class so it cannot rank entities',
         worktree: 'C:/Users/User/Documents/dev/gk-issue-157',
         branch: 'fix/issue-157',
+        verify: 'python -m pytest -q tests/test_typing.py::test_instance_of_score_is_per_entity',
       },
     ],
     skipped: [{ number: 160, reason: 'too vague to implement' }],
@@ -342,6 +363,10 @@ const WORKFLOW_CANNED = {
       merge_commit: 'e0e0e0e',
       post_merge_green: true,
       landed,
+      // Closed without a commit: their acceptance already passed on the tip. Empty on this
+      // stub, but the train reads it and must NOT re-queue them as full cars.
+      satisfied: [],
+      probe_verdicts: issues.map((n) => ({ number: n, ran: true, passes: false })),
       // A batch that committed and then failed to land; empty on this green stub, but the
       // train reads it and re-queues each number as a full car.
       red_batch: [],
@@ -357,10 +382,12 @@ const calls = []
 const logs = []
 const phases = []
 let current = null
+let groupSeq = 0
+let currentGroup = null
 
 const agent = async (prompt, opts = {}) => {
   const label = opts.label || '(no label)'
-  calls.push({ label, phase: opts.phase || current, prompt, schema: !!opts.schema, model: opts.model })
+  calls.push({ label, phase: opts.phase || current, prompt, schema: !!opts.schema, model: opts.model, effort: opts.effort, group: currentGroup })
   const key = Object.keys(CANNED).find((k) => label.startsWith(k))
   return key ? structuredClone(CANNED[key]) : `stub output for ${label}`
 }
@@ -373,12 +400,17 @@ const pipeline = async (items, ...stages) => {
   }
   return out
 }
-const parallel = async (thunks) => Promise.all(thunks.map((t) => Promise.resolve().then(t).catch(() => null)))
+const parallel = async (thunks) => {
+  currentGroup = ++groupSeq
+  const out = await Promise.all(thunks.map((t) => Promise.resolve().then(t).catch(() => null)))
+  currentGroup = null
+  return out
+}
 const workflowCalls = []
 const workflow = async (ref, wargs) => {
   const wname = typeof ref === 'string' ? ref : ref?.scriptPath || '(scriptPath)'
   workflowCalls.push({ name: wname, args: wargs })
-  calls.push({ label: `workflow:${wname}`, phase: current, prompt: `child workflow ${wname} with args ${JSON.stringify(wargs)}`, schema: false })
+  calls.push({ label: `workflow:${wname}`, phase: current, prompt: `child workflow ${wname} with args ${JSON.stringify(wargs)}`, schema: false, group: currentGroup })
   const canned = WORKFLOW_CANNED[wname]
   return canned ? structuredClone(canned(wargs)) : null
 }
@@ -413,6 +445,9 @@ calls.forEach((c, i) => {
   fs.writeFileSync(path.join(outDir, `${String(i + 1).padStart(2, '0')}-${safe}.txt`), c.prompt)
 })
 fs.writeFileSync(path.join(outDir, 'result.json'), JSON.stringify({ result, logs }, null, 2))
+// The same trace the report below prints, as data: viz.mjs builds the viewer from it.
+const trace = calls.map(({ prompt, ...c }, i) => ({ n: i + 1, ...c, chars: prompt.length }))
+fs.writeFileSync(path.join(outDir, 'calls.json'), JSON.stringify({ calls: trace, workflowCalls, phases }, null, 2))
 
 // -- checks -----------------------------------------------------------------
 const problems = []

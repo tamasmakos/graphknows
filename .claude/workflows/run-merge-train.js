@@ -6,7 +6,7 @@ export const meta = {
   phases: [
     { title: 'Roster', detail: 'read the spec\'s sub-issues, admit only human-approved tickets, order them', model: 'sonnet' },
     { title: 'Express', detail: 'the tiny tickets first, batched onto one branch with one CI run', model: 'sonnet' },
-    { title: 'Drain', detail: 'per car: re-check labels, dispatch process-issues with merge, classify the outcome', model: 'sonnet' },
+    { title: 'Drain', detail: "per car: run its own \"## Verify\" against the tip, dispatch process-issues with merge, classify the outcome", model: 'sonnet' },
     { title: 'Recover', detail: 'one rebase-and-resolve attempt when a green PR failed to merge', model: 'sonnet' },
     { title: 'Ledger', detail: 'departure, parked and halt comments post immediately; landed cars batch into the wrap-up', model: 'sonnet' },
     { title: 'Report', detail: 'one wrap-up agent: single main flake-check, the ledger comment, the train report', model: 'sonnet' },
@@ -53,6 +53,20 @@ if (opt.issues || opt.from) {
 const MAX_CARS = opt.maxCars || 8
 const RUN = opt.runLabel || 'a merge-train run'
 const DO_REPORT = opt.report !== false
+// Whether to run a car's own "## Verify" against the tip before cutting it a worktree.
+// 'shadow' reports the verdict and dispatches anyway; 'on' acts on it; 'off' skips it.
+//
+// Shadow WAS the default, on the theory that a new predicate deciding whether work happens
+// should be watched before it is trusted. The watching is done and the verdict is in.
+// Measured 2026-08-31 on the #307 train: the probe proved #247's "## Verify" already passed
+// (`pytest tests/test_repo_hygiene.py::TestNoRuntimeDownloads`, 2 passed), and shadow mode
+// dispatched a full 15-stage car for it anyway -- roughly 1.5M tokens to redo finished work.
+// Paying for a measurement and then ignoring it is worse than not measuring.
+//
+// So: act on it. The risk this accepts is a verify too weak to see missing work, which
+// closes a ticket early; the close comment says exactly that and invites a reopen. That is
+// a cheaper mistake than the one shadow mode made, and a visible one.
+const PROBES = ['shadow', 'on', 'off'].includes(opt.probes) ? opt.probes : 'on'
 // Extra args merged into every dispatch (e.g. { baseline: false } to skip the per-car
 // baseline once the tip is trusted). merge/issues/force stay ours.
 const CAR_ARGS = { ...(opt.car || {}) }
@@ -77,6 +91,78 @@ const GH = `Use \`gh\`. If it is not on PATH, fall back to "${opt.ghPath || '/c/
 
 const RUN_ON = { model: 'sonnet', effort: 'medium' }
 const call = (prompt, opts = {}) => agent(prompt, { ...RUN_ON, ...opts })
+
+// Stopping the stack a car started is part of finishing, not an afterthought for a human.
+// Third copy of this, after process-issues.js and express-lane.js -- workflow scripts cannot
+// import, and the train needs its own because the one path where IT merges is the one place
+// neither of the others can reach: a car recovered below merged AFTER its child had already
+// returned "not merged", so the child's own teardown-on-success never fired.
+//
+// `docker compose` names its project after the worktree directory, so a car's ArcadeDB comes
+// up as gk-issue-<n>-arcadedb-1 and NOTHING stops it. Measured 2026-08-30: five leaked
+// stacks from issues closed days earlier held ~14.7GB of a 31.2GB Docker allocation and the
+// pre-push gate died with `Killed` at 51% of the suite -- on every branch, for every car,
+// until they were stopped by hand. A recovered car is the likeliest one to have a stack up:
+// it went through the whole pipeline before its merge was refused.
+//
+// Only on success: a parked car keeps its stack AND its worktree, because that is the state
+// a human needs to debug it.
+const teardown = (worktree) =>
+  `Then tear down what this car started, in this order: \`cd ${worktree} && docker compose down --remove-orphans\` (its ArcadeDB stack is named after that directory and nothing else ever stops it -- leaked stacks OOM-kill the pre-push gate for every branch, not just this one), then \`git worktree remove ${worktree}\` from the repo root. If either refuses, say so in notes and leave it -- do not force past a refusal you have not read.`
+
+// -- the dispatch probe --------------------------------------------
+//
+// Every ticket carries a falsifiable acceptance test in its "## Verify" section and nothing
+// in this line has ever run it, at either end -- so neither its passing nor its failing has
+// meant anything anywhere. A ticket satisfied on main before it boards (by a sibling car, an
+// express batch, an overlapping slice, a human PR) therefore pays the whole car: baseline,
+// an opus plan, a red task, implement, review, verify, ship, ~31 minutes of gate and CI --
+// to land nothing. Its own acceptance would have said so in about a minute.
+//
+// Probing NEVER touches the main checkout: a `git checkout origin/main` there would move a
+// human's working tree out from under them. It gets a detached worktree of its own, cut once
+// and reused, exactly as Baseline does in process-issues.
+const SIBLING_DIR = MAIN_REPO.replace(/\/[^/]+$/, '')
+const PROBE_TREE = `${SIBLING_DIR}/gk-probe`
+const winPath = (p) =>
+  String(p)
+    .replace(/\\/g, '/')
+    .replace(/^\/([a-zA-Z])\//, (_, drive) => `${drive.toUpperCase()}:/`)
+
+const PROBE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['ran', 'passes'],
+  properties: {
+    ran: { type: 'boolean', description: 'true only if you executed the command and read its result. A command that runs and fails RAN.' },
+    passes: { type: 'boolean', description: 'true only if the command completed successfully on the current tip' },
+    excerpt: { type: 'string', description: 'the last few lines of its output, or why it could not be run at all' },
+    tip_sha: { type: 'string', description: 'the short SHA the probe ran against' },
+    closed: { type: 'boolean', description: 'true if you closed the issue' },
+  },
+}
+
+const probePrompt = (n, act) =>
+  [
+    `Run ONE issue's own acceptance check against the current tip of main. Change no code, fix nothing, implement nothing. ${GH}`,
+    `1. \`gh issue view ${n} --json body\` and find its "## Verify" section. It holds one runnable command. If there is no such section, or it holds prose rather than a command, set ran=false and say which -- do not invent a command.`,
+    `2. Get a clean tree at the tip, WITHOUT touching ${MAIN_REPO}'s own checkout -- a person may be working in it:`,
+    `   from ${MAIN_REPO}: \`git fetch origin\`, then \`git worktree add ${PROBE_TREE} --detach origin/main\` (if ${PROBE_TREE} already exists, cd there and \`git checkout -q --detach origin/main\` instead).`,
+    '   Report the short SHA under tip_sha.',
+    `3. Run that command in ${PROBE_TREE}. If it names the test suite, run it in a container mounted on that tree:`,
+    '```',
+    `MSYS_NO_PATHCONV=1 docker run --rm -e GRAPHKNOWS_SKIP_PREFLIGHT=1 -v "${winPath(PROBE_TREE)}:/app" -w /app graphknows-workspace \\`,
+    `  sh -c '<the command from "## Verify">'`,
+    '```',
+    '   Both env vars are load-bearing. Never run the suite on the host, and never report a result you did not observe.',
+    '4. Report the outcome, and be exact about the difference between these two:',
+    '   - The command RAN and FAILED -- an assertion failed, a symbol does not exist yet, an import errors because the module is not written. That is ran=true, passes=false, and it is the NORMAL answer for a ticket with work left in it.',
+    '   - The command could not be run AT ALL -- there is no command, it is malformed, docker is unavailable. That is ran=false.',
+    '   Only a command that ran to a successful conclusion is passes=true.',
+    act
+      ? `5. ONLY if passes=true: the work this ticket asks for is already on main. Close it: \`gh issue close ${n} --comment "Its \\"## Verify\\" already passes on main at <tip_sha> before any work was done on this ticket, so an earlier merge already satisfied it. Closed by ${RUN} at dispatch rather than cutting a car for a no-op. Reopen if the check is simply too weak to see the missing work."\` and set closed=true. If passes is anything else, close nothing.`
+      : '5. Close nothing and comment nowhere. This run is only measuring what the probe would have decided.',
+  ].join('\n')
 
 // -- pure helpers, sliced out and exercised by gates.test.mjs ------
 //
@@ -205,6 +291,10 @@ const roster = await call(
     '     * The body has an "Estimated diff: ~N lines" line -> expected_lines = N, sizing = "stated". The author committed to a number; take it.',
     '     * It does not -> SIZE IT YOURSELF FROM THE CODE, sizing = "measured". Open every path under files_named, find the functions the ticket actually changes, and count the lines that have to move. Put what you read in sizing_evidence: the symbols you found and why the change is that size. A number you did not get from reading the files is not measured -- report sizing = "unknown" instead, and say so.',
     '   Sizing is worth the legwork: a ticket wrongly sent down the long road costs about two hours of gate, CI and main-watch that a batched one shares. Guessing is not, so guessing has its own value that fails closed. Wrong-but-measured is cheap -- the express lane ejects anything over 50 real lines, commits nothing, and it goes back through the full pipeline.',
+    // A ticket with no runnable "## Verify" cannot be probed, so it can never be shown to be
+    // already done and always pays for a full car. On the #307 train every single candidate
+    // was in this state, which is why the probe returned ran=false five times out of five.
+    '   - under runnable_verify, whether its "## Verify" section names a command that could be run verbatim. Prose about how one WOULD check it is not a command, and neither is a checklist of acceptance criteria. Report what is there, do not judge whether it is a good check.',
     '4. Check work in flight: `gh pr list --state open --json number,headRefName,title,url` and `git ls-remote --heads origin "fix/issue-*"`. A candidate whose fix/issue-<n> branch has an open PR gets that PR URL under open_pr.',
     '5. From that same PR list, report every open PR that is NOT one of these candidates under other_prs, with its number, title and URL. A train lands N commits on main; a PR opened before it departed is the thing most likely to be made moot or unmergeable by them, and nobody finds out until the conflict.',
     'Sizing is the one place you measure rather than transcribe; everything else is facts as written. Do not decide who boards or which lane they take -- the script does that from what you report, and it will show its reasons.',
@@ -241,7 +331,7 @@ const roster = await call(
               files_to_edit: {
                 type: 'array',
                 items: { type: 'string' },
-                description: 'the SUBSET of files_named the change actually modifies, from the same reading that produced expected_lines. Omit a path the ticket only cites as a source to read, as the fix's source of truth, or as the place a symptom was observed. Empty or absent falls back to files_named.',
+                description: 'the SUBSET of files_named the change actually modifies, from the same reading that produced expected_lines. Omit a path the ticket only cites as a source to read, as the source of truth for the fix, or as the place a symptom was observed. Empty or absent falls back to files_named.',
               },
               expected_lines: { type: 'integer', description: 'lines the change is expected to move: the N from an "Estimated diff: ~N lines" line, or your own count from reading the files. 0 when you could not size it.' },
               sizing: {
@@ -252,6 +342,10 @@ const roster = await call(
               sizing_evidence: {
                 type: 'string',
                 description: 'required when sizing is "measured": the files and symbols you read, and why the change is that size',
+              },
+              runnable_verify: {
+                type: 'boolean',
+                description: 'true only if the body has a "## Verify" section naming a command that could be executed verbatim. Prose describing how one would check ("build the image and run an ingest"), an acceptance-criteria checklist, or no Verify section at all are all false.',
               },
             },
           },
@@ -289,6 +383,20 @@ for (const c of children) {
   else admitted.push(c)
 }
 for (const x of excluded) log(`#${x.number} not boarding: ${x.reason}`)
+
+// An unprobeable car cannot be shown to be already done, so it always pays for a full car
+// even when the work is finished. Not a refusal -- most of the existing backlog is in this
+// state -- but it must be visible BEFORE the tokens are spent, not discovered afterwards in
+// a wrap-up nobody reads. Measured 2026-08-31: 5 of 5 on the #307 train, and #247's car was
+// pure waste as a result.
+const unprobeable = admitted.filter((c) => c.runnable_verify === false)
+if (unprobeable.length) {
+  log(
+    `${unprobeable.length} of ${admitted.length} admitted car(s) have no runnable "## Verify" and cannot be probed: ${unprobeable
+      .map((c) => '#' + c.number)
+      .join(', ')}. Each pays for a full car even if its work is already done -- add a runnable Verify to the bodies to make the cheap check possible.`,
+  )
+}
 
 const { order, cyclic } = topoOrder(admitted)
 if (cyclic.length) {
@@ -381,6 +489,15 @@ await ledger(
 // One child workflow for the whole batch. It owns the worktree, the per-ticket commits and
 // the single PR; this train only decides WHO rides and what to do with whoever is ejected.
 const cars = []
+// What the probe decided, per car and per express ticket. Shadow mode is worthless without
+// this: a predicate that reports nothing countable can never be promoted, and the wrap-up
+// comment below is where the count is read. Declared here rather than beside the drain loop
+// because the express batch fills it first.
+const probeVerdicts = []
+// Whether a dispatch probe actually cut PROBE_TREE. Not derivable from probeVerdicts: the
+// express lane probes in its own batch tree and contributes verdicts without touching this
+// one, and a train halted by that batch never reaches a car, so nothing is created to remove.
+let probedTip = false
 let expressResult = null
 if (expressSet.length) {
   phase('Express')
@@ -392,11 +509,35 @@ if (expressSet.length) {
     // Same reason the full cars get it: post_merge_green is this train's halt condition,
     // and a batch that poisons main must stop everything behind it.
     watchMain: true,
+    // The express batch is cut before the drain loop runs, so nothing has probed these
+    // tickets yet -- the lane does it once for the whole batch in its own worktree.
+    probes: PROBES,
     runLabel: `${RUN} (express batch for #${SPEC})`,
   })
 
   const landed = expressResult?.landed || []
   const ejected = expressResult?.ejected || []
+  // Tickets whose own "## Verify" already passed on the tip the batch was cut from. The lane
+  // closed them and committed nothing. They are NOT re-queued -- unlike an ejected ticket,
+  // there is no work left in them to send down the long road.
+  const satisfied = expressResult?.satisfied || []
+  for (const s of satisfied) {
+    cars.push({ issue: s.number, title: byNumber.get(s.number)?.title || '', state: 'already-satisfied', reason: `its "## Verify" already passed before the batch was cut${s.excerpt ? ` -- ${s.excerpt}` : ''}` })
+  }
+  // A Commit agent's unverified claim that the work was already done. Deliberately neither
+  // closed nor re-queued: closing on an unverified claim has been wrong before (#278,
+  // 2026-08-31), and re-queueing runs 15 stages over finished work -- the exact waste that
+  // measured 1.6M tokens. It parks for a human instead, which is the only honest state.
+  const claimedSatisfied = expressResult?.claimed_satisfied || []
+  for (const c of claimedSatisfied) {
+    cars.push({
+      issue: c.number,
+      title: byNumber.get(c.number)?.title || '',
+      state: 'parked',
+      reason: `the express lane claimed this work is already done, but nothing verified it -- confirm and close, or re-queue as a full car. Claim: ${c.evidence}`,
+    })
+  }
+  for (const v of expressResult?.probe_verdicts || []) probeVerdicts.push(v)
   // Committed but not merged: a red shared CI, or a refused merge. The lane closed its PR,
   // so these tickets have no open claim on them and are ours to re-dispatch.
   const redBatch = expressResult?.red_batch || []
@@ -423,10 +564,10 @@ if (expressSet.length) {
     `express batch ${expressResult?.merged ? 'landed' : `did NOT land (CI ${expressResult?.ci || 'unknown'})`} — ${landed.length ? landed.map((n) => '#' + n).join(', ') : 'nothing'}${
       expressResult?.pr_url ? ` (${expressResult.pr_url})` : ''
     }.${ejected.length ? ` Ejected as bigger than rostered and re-queued as full cars: ${ejected.map((e) => '#' + e.number).join(', ')}.` : ''}${
-      redBatch.length ? ` Its PR is closed and ${redBatch.map((n) => '#' + n).join(', ')} ${redBatch.length === 1 ? 'is' : 'are'} re-queued as full cars.` : ''
-    }`,
+      satisfied.length ? ` Closed without a commit, their "## Verify" already passing on the tip: ${satisfied.map((s) => '#' + s.number).join(', ')}.` : ''
+    }${redBatch.length ? ` Its PR is closed and ${redBatch.map((n) => '#' + n).join(', ')} ${redBatch.length === 1 ? 'is' : 'are'} re-queued as full cars.` : ''}`,
   )
-  log(`express batch: ${landed.length} landed, ${ejected.length} ejected, ${redBatch.length} re-queued after a red CI, ${(expressResult?.refused || []).length} refused`)
+  log(`express batch: ${landed.length} landed, ${ejected.length} ejected, ${satisfied.length} already satisfied, ${claimedSatisfied.length} claimed-already-done (parked, unverified), ${redBatch.length} re-queued after a red CI, ${(expressResult?.refused || []).length} refused`)
 }
 
 // A poisoned main stops everything behind it, exactly as a full car's would.
@@ -454,8 +595,10 @@ for (const n of dispatchList) {
     cars.push({ issue: n, title: car.title, state, reason, ...extra })
     const line = `car #${n} ${state}${reason ? ` -- ${reason}` : ''}${extra.merge_commit ? ` (merged as ${extra.merge_commit})` : ''}${extra.pr_url ? ` ${extra.pr_url}` : ''}`
     ledgerLines.push(line)
-    // A parked car's reason lives nowhere else if this run is killed before the wrap-up.
-    if (state === 'parked') await ledger(`${RUN}: ${line}`)
+    // A parked car's reason lives nowhere else if this run is killed before the wrap-up --
+    // and neither does an already-satisfied one's: it leaves a closed issue with no PR and
+    // no run report, so without this comment nothing says why it closed.
+    if (state === 'parked' || state === 'already-satisfied') await ledger(`${RUN}: ${line}`)
   }
 
   if (halted) {
@@ -467,12 +610,44 @@ for (const n of dispatchList) {
     continue
   }
 
-  // No separate dispatch-time recheck agent: process-issues' own Triage re-reads state and
+  phase('Drain')
+
+  // The dispatch probe: this car's own acceptance, run against the tip it is about to be
+  // cut from. One spawn, no fragments, no worktree of its own beyond the shared detached
+  // one. A pass means an earlier merge already did this work, and the ~31 minutes of gate,
+  // CI and main-watch behind this dispatch would land nothing.
+  //
+  // The asymmetry below is the point. A satisfied car does NOT park its dependents: its work
+  // is on main, so everything blocked on it is now unblocked. A car whose acceptance cannot
+  // be run does park them -- that ticket failed its handover at filing and should not have
+  // boarded, and nothing downstream of it can be trusted to know what "done" means.
+  if (PROBES !== 'off') {
+    const probe = await call(probePrompt(n, PROBES === 'on'), { label: `probe#${n}`, phase: 'Drain', schema: PROBE_SCHEMA })
+    probedTip = true
+    probeVerdicts.push({ number: n, ran: probe?.ran === true, passes: probe?.passes === true })
+    if (probe?.passes === true) {
+      log(`#${n}: its "## Verify" already passes on ${probe.tip_sha || 'the tip'} -- ${PROBES === 'on' ? 'closed, no car cut' : 'WOULD close it and cut no car (probes: shadow)'}`)
+      if (PROBES === 'on') {
+        await finish('already-satisfied', `its "## Verify" already passes on ${probe.tip_sha || 'main'} -- an earlier merge did this work${probe.excerpt ? `: ${probe.excerpt}` : ''}`)
+        continue
+      }
+    } else if (probe?.ran === false) {
+      log(`#${n}: its "## Verify" could not be run -- ${probe.excerpt || 'no detail'}${PROBES === 'on' ? '' : ' (probes: shadow, dispatching anyway)'}`)
+      if (PROBES === 'on') {
+        await finish('parked', `its "## Verify" could not be run: ${probe.excerpt || 'no detail'}. A ticket whose acceptance does not exist cannot be shown to be done -- fix the body and re-triage it.`)
+        for (const d of dependentsOf(admitted, n)) parkedSet.add(d)
+        continue
+      }
+    }
+  }
+
+  // No separate dispatch-time LABEL recheck: process-issues' own Triage re-reads state and
   // labels on every named issue and refuses a gated or closed one whatever rosterChecked
   // says -- so the mid-train human brake (re-applying the gate label) still works, and the
   // refusal surfaces below through the child's `skipped` reason. A dedicated 40k-token
-  // agent per car re-read the same two fields the child was about to read anyway.
-  phase('Drain')
+  // agent per car re-read the same two fields the child was about to read anyway. The probe
+  // above is not that agent: it reads something nobody else reads, at the only moment the
+  // answer is worth anything.
 
   // One car, end to end: worktree, 13 phases, merge. process-issues re-fetches and cuts
   // its worktree at its own Triage, so the fresh tip needs no help from here.
@@ -506,6 +681,22 @@ for (const n of dispatchList) {
     // The machine this train is running on, passed down rather than re-guessed per script.
     repo: opt.repo,
     ghPath: opt.ghPath,
+    // Already probed at dispatch, a few lines above -- the child must not pay for it twice.
+    probes: 'off',
+    // Same principle, applied to the other thing already measured. The roster opened this
+    // ticket's files, found the symbols it changes and wrote down why the change is that
+    // size. Thrown away, the car's plan agent rediscovers all of it from scratch: measured
+    // 2026-08-31 on #278, 51 turns to re-derive a four-line Dockerfile edit. Passed down, it
+    // starts from what is already known. It is a STARTING POINT, never a cap -- the plan
+    // stage is free to find the roster wrong, and says so when it does.
+    rosterSizing: byNumber.get(n)
+      ? {
+          expected_lines: byNumber.get(n).expected_lines || 0,
+          sizing: byNumber.get(n).sizing || 'unknown',
+          evidence: byNumber.get(n).sizing_evidence || '',
+          files_to_edit: byNumber.get(n).files_to_edit || byNumber.get(n).files_named || [],
+        }
+      : null,
     // After the spread on purpose: neither is the operator's to relax on a train.
     requireReady: true,
     watchMain: 'auto',
@@ -516,6 +707,15 @@ for (const n of dispatchList) {
     const skip = (r?.skipped || []).find((x) => x.number === n)
     await finish('parked', skip ? `process-issues refused it: ${skip.reason}` : 'the run returned no summary -- see its journal')
     for (const d of dependentsOf(admitted, n)) parkedSet.add(d)
+    continue
+  }
+
+  // The child can reach the same verdict the dispatch probe does, by a different route: a
+  // reproduction that will not go red while the issue's acceptance passes. On a train the
+  // child is launched with probes:'off' so this normally cannot fire -- it is here so that
+  // changing that flag does not silently record a satisfied car as a parked one.
+  if (s.state === 'already-satisfied') {
+    await finish('already-satisfied', s.notes || 'the car found this work already on main')
     continue
   }
 
@@ -532,6 +732,9 @@ for (const n of dispatchList) {
         'Then push with `git push --force-with-lease` in the FOREGROUND, one Bash call, explicit timeout of 900000 ms (15 minutes) -- the pre-push hook runs the full container gate, ~5 minutes measured 2026-08-28 and longer on a cold cache or a loaded host, and the default timeout kills it mid-gate. Never --no-verify.',
         'Watch the PR checks to a conclusion (`gh pr checks <pr> --watch`), and if green: `gh pr merge <pr> --squash --delete-branch`.',
         'Then find the CI run the merge triggered on main (`gh run list --branch main --limit 3`), wait for it, and report post_merge_green.',
+        // The child already returned "not merged", so its own teardown-on-success never ran.
+        // If nothing does it here, a recovered car's stack and tree outlive the whole train.
+        `Only if the merge SUCCEEDED: ${teardown(s.worktree)} Set torn_down to what you actually stopped and removed. If the merge was refused or anything went red, change nothing -- the worktree and its stack are what a human debugs.`,
         'If anything fails -- a second conflict, red checks, a refused merge -- STOP and report it. Do not retry, do not improvise.',
       ].join('\n'),
       {
@@ -545,12 +748,18 @@ for (const n of dispatchList) {
             merged: { type: 'boolean' },
             merge_commit: { type: 'string' },
             post_merge_green: { type: 'boolean' },
+            torn_down: { type: 'string', description: 'what you stopped and removed after a successful merge -- the compose stack, the worktree, or why either refused. Empty when the merge did not succeed.' },
             reason: { type: 'string', description: 'what happened, in one or two sentences' },
           },
         },
       },
     )
-    if (rec?.merged) s = { ...s, merged: true, post_merge_green: rec.post_merge_green, notes: `recovered: ${rec.reason}` }
+    if (rec?.merged) {
+      // A teardown that refused is the one thing here worth saying out loud: it is silent,
+      // it survives the run, and the next car pays for it at the gate rather than this one.
+      log(`#${n}: recovered and merged -- ${rec.torn_down ? `cleaned up: ${rec.torn_down}` : 'NOTHING was torn down; check for a leftover compose stack and worktree'}`)
+      s = { ...s, merged: true, post_merge_green: rec.post_merge_green, notes: `recovered: ${rec.reason}` }
+    }
     else {
       await finish('parked', `merge refused and one recovery attempt failed: ${rec?.reason || 'no detail'}`, { pr_url: s.pr_url })
       for (const d of dependentsOf(admitted, n)) parkedSet.add(d)
@@ -588,6 +797,22 @@ const landed = cars.filter((c) => c.state === 'landed')
 // them flagged and the flags visible only per row reads as a clean run. Count them.
 const flagged = landed.filter((c) => c.reason).length
 const flagLine = flagged ? `, ${flagged} of them flagged needs_human -- read those cars' run reports` : ''
+// The promotion evidence for the probe, and the only thing that makes shadow mode worth
+// running: how often the predicate fired, and on what. Under 'shadow' nothing acted on it,
+// so this line is the whole record.
+// By ticket, not by probe run: a car ejected from the express batch is probed again when it
+// is re-queued, and counting it twice inflates the very number this line exists to justify.
+// Last verdict wins -- it was taken against the later tip.
+const probeByTicket = [...new Map(probeVerdicts.map((v) => [v.number, v])).values()]
+const probePassed = probeByTicket.filter((v) => v.passes)
+const probeUnrunnable = probeByTicket.filter((v) => !v.ran)
+const probeLine = !probeVerdicts.length
+  ? ''
+  : `probe (${PROBES}): ${probeByTicket.length} ticket(s) had their "## Verify" run against the tip; ` +
+    `${probePassed.length ? `${probePassed.length} already passed (${probePassed.map((v) => '#' + v.number).join(', ')})` : 'none already passed'}` +
+    `${probeUnrunnable.length ? `, ${probeUnrunnable.length} could not be run (${probeUnrunnable.map((v) => '#' + v.number).join(', ')})` : ''}` +
+    `${PROBES === 'shadow' && (probePassed.length || probeUnrunnable.length) ? ' — reported only; every car dispatched anyway' : ''}.`
+if (probeLine) log(probeLine)
 log(`train done: ${landed.length} landed${flagLine}, ${cars.filter((c) => c.state.startsWith('parked')).length} parked${halted ? ', HALTED on red main' : ''}`)
 
 // -- Wrap-up -------------------------------------------------------
@@ -600,6 +825,7 @@ const REPORT_PATH = opt.reportPath || `${RUNS_DIR}/run-merge-train-${SPEC}.md`
     '',
     `${RUN}. ${landed.length} of ${dispatchList.length} dispatched car(s) landed${flagLine}.${halted ? ' **The train halted: main went red after a merge.**' : ''}`,
     '',
+    probeLine ? `${probeLine}\n` : null,
     '## Cars',
     '',
     expressResult ? '## Express batch' : null,
@@ -655,6 +881,7 @@ const REPORT_PATH = opt.reportPath || `${RUNS_DIR}/run-merge-train-${SPEC}.md`
       '<<<COMMENT>>>',
       `${RUN}: train finished -- ${landed.length} of ${dispatchList.length} dispatched car(s) landed${flagLine}${halted ? '; **HALTED on a red main**' : ''}.`,
       ...ledgerLines.map((l) => `- ${l}`),
+      ...(probeLine ? [`- ${probeLine}`] : []),
       '<<<END COMMENT>>>',
       checkMain
         ? "Then ONE mechanical addition to that comment, decided by string comparison, not by judgement: if main_conclusion from step 1 is exactly \"success\", append nothing. For ANY other value, append this line verbatim: '**Main is RED after this train** -- revert or roll forward before anything else lands.'"
@@ -670,6 +897,12 @@ const REPORT_PATH = opt.reportPath || `${RUNS_DIR}/run-merge-train-${SPEC}.md`
             'Then confirm the file exists.',
           ].join('\n')
         : '3. No report file this run.',
+      // The probe cut a detached tree at the tip and this is the last thing that will look at
+      // it. Unlike a car's worktree there is nothing in it to debug -- it holds no work, only
+      // a checkout of main -- so it goes whether the train landed everything or halted.
+      // A "## Verify" command is copied out of a ticket body and run as given, so one that
+      // brings up a compose stack left it named after this directory, and nothing else stops it.
+      probedTip ? `4. Remove the probe worktree at ${PROBE_TREE}, which this train created to run each car's acceptance check against the tip. ${teardown(PROBE_TREE)} Report what you stopped and removed under notes.` : '',
     ]
       .filter(Boolean)
       .join('\n'),
@@ -703,6 +936,8 @@ return {
   cars,
   excluded,
   halted,
+  probes: PROBES,
+  probe_verdicts: probeVerdicts,
   landed: landed.map((c) => c.issue),
   release_notes: releaseNotes,
   report: DO_REPORT ? REPORT_PATH : 'not written',

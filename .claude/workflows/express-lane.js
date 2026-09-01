@@ -5,6 +5,7 @@ export const meta = {
     'For a handful of tickets that are each a few lines. The full per-issue pipeline spends about thirty-one minutes per ticket on the pre-push gate, the PR CI run and the post-merge main watch, and none of that shrinks with the diff -- so N tiny tickets cost N times thirty-one minutes for work that takes seconds. This lane shares all three across the batch: one worktree, one commit per ticket so history and issue-closing stay per-ticket, then a single gate, PR, CI watch and rebase-merge. run-merge-train calls it for the express cars it rosters; it can also be run directly on a list of small issues.',
   phases: [
     { title: 'Cut', detail: 'one worktree for the whole batch, from the current tip', model: 'sonnet' },
+    { title: 'Probe', detail: "run each ticket's own \"## Verify\" against the tip; one already passing has nothing to commit", model: 'sonnet' },
     { title: 'Commit', detail: 'one agent per ticket, sequential, one commit each', model: 'sonnet' },
     { title: 'Ship', detail: 'one gate run, one PR listing every ticket', model: 'sonnet' },
     { title: 'Land', detail: 'watch CI once, rebase-merge so each ticket keeps its own commit', model: 'sonnet' },
@@ -52,6 +53,12 @@ const MAX_LINES = opt.maxLines || 50
 // Only a train needs this: post_merge_green is its halt condition. A standalone run has
 // nothing that acts on the answer, so it does not spend eleven minutes measuring it.
 const WATCH_MAIN = opt.watchMain === true
+// Whether to run each ticket's own "## Verify" against the tip before committing anything.
+// 'shadow' reports the verdict and commits anyway; 'on' closes a ticket already satisfied on
+// main; 'off' skips it. On by default, like the caller's flag of the same name -- see the
+// note there for why shadow was demoted (it proved #247 was already done, then paid for a
+// full car anyway).
+const PROBES = ['shadow', 'on', 'off'].includes(opt.probes) ? opt.probes : 'on'
 const RUN = opt.runLabel || 'an express-lane run'
 
 const GATE_LABEL = 'needs-triage'
@@ -188,6 +195,111 @@ if (!boarded.length) {
   return { error: 'no ticket was eligible for the express lane', issues: ISSUES, refused, branch: BRANCH }
 }
 
+// -- Probe ---------------------------------------------------------
+// Every ticket carries a falsifiable acceptance test in "## Verify" and nothing has ever run
+// it. A ticket already satisfied on the tip this batch was cut from has nothing to commit,
+// and a Commit agent handed one either invents a diff to justify itself or reports "already
+// done" as a note nobody counts. One agent for the whole batch, not one per ticket: they
+// share this worktree and would share a container anyway.
+//
+// This is not the ejection net. Ejection catches a ticket BIGGER than rostered; this catches
+// one with nothing left in it. An ejected ticket goes back to the full pipeline, a satisfied
+// one is closed -- there is no work in it for the long road either.
+const satisfied = []
+const probeVerdicts = []
+if (PROBES !== 'off' && boarded.length) {
+  phase('Probe')
+  const probe = await call(
+    [
+      `cd ${WORKTREE}. It is a clean checkout of the current tip of ${BASE} and nothing has been committed to it yet. ${GH}`,
+      `Run each of these ${boarded.length} tickets' own acceptance check against that tree, and report one verdict each. Implement NOTHING, fix NOTHING, commit NOTHING -- you are measuring, not building.`,
+      '',
+      ...boarded.map((t) => [`TICKET #${t.number}: ${t.title}`, t.body, ''].join('\n')),
+      `For each ticket: find its "## Verify" section, which holds one runnable command, and run exactly that command in this worktree. If it names the test suite, run it in a container mounted on the tree:`,
+      '```',
+      `MSYS_NO_PATHCONV=1 docker run --rm -e GRAPHKNOWS_SKIP_PREFLIGHT=1 -v "${WORKTREE.replace(/\//g, '\\')}:/app" -w /app graphknows-workspace \\`,
+      `  sh -c '<the command from that ticket\'s "## Verify">'`,
+      '```',
+      'Both env vars are load-bearing. Never run the suite on the host, and never report a result you did not observe.',
+      'Be exact about the difference between these two, because they mean opposite things:',
+      '  - The command RAN and FAILED -- an assertion failed, a symbol does not exist yet, an import errors because the module is not written. That is ran=true, passes=false, and it is the NORMAL answer for a ticket with work left in it.',
+      '  - The command could not be run AT ALL -- there is no "## Verify" section, it holds prose rather than a command, or docker is unavailable. That is ran=false. Do not invent a command for a ticket that does not carry one.',
+      'Only a command that ran to a successful conclusion is passes=true, and that means an earlier merge already did this ticket\'s work.',
+      PROBES === 'on'
+        ? `Then, for each ticket with passes=true AND ONLY those: \`gh issue close <n> --comment "Its \\"## Verify\\" already passes on the tip this batch was cut from, before any work was done on it, so an earlier merge already satisfied it. Closed by ${RUN} rather than committing a no-op. Reopen if the check is simply too weak to see the missing work."\`. Close nothing else and comment nowhere else.`
+        : 'Close nothing and comment nowhere. This run is only measuring what the probe would have decided.',
+    ].join('\n'),
+    {
+      label: 'express:probe',
+      phase: 'Probe',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['verdicts'],
+        properties: {
+          verdicts: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['number', 'ran', 'passes'],
+              properties: {
+                number: { type: 'integer' },
+                ran: { type: 'boolean', description: 'true only if you executed the command and read its result. A command that runs and fails RAN.' },
+                passes: { type: 'boolean', description: 'true only if the command completed successfully on this tree' },
+                excerpt: { type: 'string', description: 'the last few lines of its output, or why it could not be run at all' },
+                closed: { type: 'boolean' },
+              },
+            },
+          },
+          notes: { type: 'string' },
+        },
+      },
+    },
+  )
+  for (const v of probe?.verdicts || []) probeVerdicts.push({ number: v.number, ran: v.ran === true, passes: v.passes === true })
+  const passing = new Set(probeVerdicts.filter((v) => v.passes).map((v) => v.number))
+  for (const v of probe?.verdicts || []) {
+    if (v.passes !== true) continue
+    log(`#${v.number}: its "## Verify" already passes on this tip -- ${PROBES === 'on' ? 'closed, nothing to commit' : 'WOULD close it (probes: shadow)'}`)
+    if (PROBES === 'on') satisfied.push({ number: v.number, title: (boarded.find((t) => t.number === v.number) || {}).title || '', excerpt: v.excerpt || '' })
+  }
+  if (PROBES === 'on' && passing.size) {
+    for (let i = boarded.length - 1; i >= 0; i--) if (passing.has(boarded[i].number)) boarded.splice(i, 1)
+  }
+  if (!boarded.length) {
+    // Cut made a worktree and the probe may have left a stack in it. Nothing downstream will
+    // reach the Land stage that normally cleans both up, so this path has to do it itself --
+    // a tree nobody committed to is exactly the one nobody remembers to remove, and a leaked
+    // stack OOM-kills the pre-push gate for every branch, not just this one.
+    await call([`cd ${WORKTREE}. Nothing was committed here and nothing is going to be. ${teardown(WORKTREE)}`].join('\n'), {
+      label: 'express:teardown',
+      phase: 'Probe',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['removed'],
+        properties: {
+          removed: { type: 'boolean', description: 'true if both the compose stack and the worktree are gone' },
+          notes: { type: 'string', description: 'what refused, if either did' },
+        },
+      },
+    })
+    return {
+      lane: 'express',
+      branch: BRANCH,
+      worktree: WORKTREE,
+      landed: [],
+      satisfied,
+      ejected: [],
+      refused: refused.map((r) => ({ number: r.number, reason: r.reason })),
+      probes: PROBES,
+      probe_verdicts: probeVerdicts,
+      next_step: `Every ticket in this batch already passed its own "## Verify" on the tip and was closed. Nothing was committed, and the worktree and its stack have been torn down.`,
+    }
+  }
+}
+
 // -- Commit --------------------------------------------------------
 // Serial, on purpose: one worktree, and parallel writers to one tree collide. This is a
 // loop, not a fan-out -- there is nothing here to parallelise and pretending otherwise
@@ -195,6 +307,9 @@ if (!boarded.length) {
 phase('Commit')
 const committed = []
 const ejected = []
+// Distinct from `satisfied`, which the Probe proved by running the ticket's own "## Verify".
+// This one is only a Commit agent's unverified claim, so it is reported, never acted on.
+const claimedSatisfied = []
 for (const t of boarded) {
   const out = await call(
     [
@@ -208,7 +323,12 @@ for (const t of boarded) {
       // genuinely small. An agent that discovers otherwise and carries on has removed
       // that justification without telling anyone, so it is told to stop instead.
       `STOP AND EJECT if any of these turns out to be true, and commit NOTHING when it does: the change needs more than about ${MAX_LINES} changed lines; it needs a file the ticket does not name; it needs a new dependency; it touches \`.github/workflows/\`, \`scripts/gate.sh\` or \`.pre-commit-config.yaml\`; or the ticket turns out to be ambiguous about what to build.`,
-      'Ejecting is a normal outcome and costs nothing -- the ticket goes back to the full pipeline, which reviews it properly. Set ejected=true with the reason. Carrying on regardless is the failure: this lane reviews the whole batch once, so an oversized change here gets a fraction of the scrutiny it would get on its own.',
+      'Ejecting is the right call for an oversized or ambiguous ticket, but it is NOT free: the ticket goes back to the full pipeline, which is 15 agent stages. Measured 2026-08-31 on #278, a four-line Dockerfile change: 11 agents, 54 minutes, ~1.6M tokens. Eject when the ticket really is too big for this lane, and say so precisely -- but do not eject to avoid a judgement call, and never eject a ticket whose work is simply already done (see below). Carrying on regardless is the other failure: this lane reviews the whole batch once, so an oversized change here gets a fraction of the scrutiny it would get on its own.',
+      '',
+      // An ejected ticket is re-queued as a full car; a satisfied one is closed. Reporting
+      // "already done" as an ejection buys the most expensive outcome for the cheapest
+      // finding, so the two need separate channels -- see the Probe note above.
+      `If you find this ticket's work is ALREADY DONE -- an earlier commit in this batch, or an earlier merge, already did it -- set satisfied=true with the evidence in eject_reason (the commit sha or the code that already does it) and commit NOTHING. Do NOT set ejected=true for this: an ejected ticket is re-run through the whole 15-stage pipeline, and re-doing work that is already finished is the single most wasteful thing this lane can do. A satisfied ticket is just closed.`,
       '',
       'If it IS small, implement it fully, then:',
       `  1. Run the ticket's "## Verify" command. ${CHECKS}`,
@@ -228,6 +348,7 @@ for (const t of boarded) {
         required: ['ejected', 'committed'],
         properties: {
           ejected: { type: 'boolean' },
+          satisfied: { type: 'boolean', description: 'the work this ticket asks for is ALREADY on this branch -- nothing to commit, and nothing for the full pipeline to do either. Not the same as ejected: satisfied closes the ticket, ejected re-runs it through all 15 stages.' },
           eject_reason: { type: 'string' },
           committed: { type: 'boolean' },
           sha: { type: 'string' },
@@ -240,6 +361,18 @@ for (const t of boarded) {
       },
     },
   )
+
+  // A claim of "already done" is NOT auto-closed. Measured 2026-08-31: #278's commit agent
+  // claimed the work was already on the branch, and was wrong -- the full car then found
+  // real missing transitive deps and shipped them. So a satisfied claim buys the cheap
+  // outcome (no 15-stage re-run) but not the destructive one (closing the ticket): it is
+  // recorded with its evidence for a human, who confirms or re-queues it.
+  if (out && !out.committed && out.satisfied && !out.ejected) {
+    const evidence = out.eject_reason || out.notes || 'the agent gave no evidence -- see the run journal'
+    claimedSatisfied.push({ number: t.number, title: t.title, evidence })
+    log(`#${t.number} claimed already-satisfied (UNVERIFIED, not closed, not re-queued): ${evidence}`)
+    continue
+  }
 
   if (!out || out.ejected || !out.committed) {
     const reason = out?.eject_reason || out?.notes || 'the agent returned nothing -- see the run journal'
@@ -258,8 +391,13 @@ if (!committed.length) {
     branch: BRANCH,
     worktree: WORKTREE,
     ejected,
+    claimed_satisfied: claimedSatisfied,
     refused,
-    next_step: 'Run these through process-issues as normal cars; the express lane found none of them small enough.',
+    next_step: `Run the ejected ones through process-issues as normal cars; the express lane found none of them small enough.${
+      claimedSatisfied.length
+        ? ` ${claimedSatisfied.map((c) => '#' + c.number).join(', ')} were claimed already-done and are NOT re-queued: confirm the evidence and close them, or re-queue them by hand. Do not take the claim on trust -- it is unverified.`
+        : ''
+    }`,
   }
 }
 const notGreen = committed.filter((c) => !c.green)
@@ -385,6 +523,16 @@ if (DO_REPORT) {
           .map((e) => `- #${e.number} ${e.title} — ${e.reason}`)
           .join('\n')}`
       : null,
+    satisfied.length
+      ? `## Already satisfied\n\nTheir "## Verify" passed on the tip this batch was cut from, before anything was committed — an earlier merge had already done the work. Closed, not committed, and NOT re-queued as full cars.\n\n${satisfied
+          .map((s) => `- #${s.number} ${s.title}${s.excerpt ? ` — ${s.excerpt}` : ''}`)
+          .join('\n')}`
+      : null,
+    claimedSatisfied.length
+      ? `## Claimed already done — needs a human\n\nTheir Commit agent reported the work was already on the branch and committed nothing. **This claim is unverified**: nothing ran their "## Verify". It has been wrong before — on 2026-08-31 #278's commit agent claimed already-fixed, and the full car then found real missing transitive dependencies and shipped them.\n\nSo these are neither closed nor re-queued. Confirm the evidence and close, or re-queue as a full car.\n\n${claimedSatisfied
+          .map((c) => `- #${c.number} ${c.title} — claimed: ${c.evidence}`)
+          .join('\n')}`
+      : null,
     refused.length
       ? `## Refused at the door\n\n${refused.map((r) => `- #${r.number} ${r.title} — ${r.reason}`).join('\n')}`
       : null,
@@ -427,7 +575,17 @@ return {
   // claiming these tickets and they need the lane that reviews one at a time.
   red_batch: DO_MERGE && !land?.merged ? committed.map((c) => c.number) : [],
   ejected: ejected.map((e) => ({ number: e.number, reason: e.reason })),
+  // Closed without a commit: their acceptance already passed on the tip this batch was cut
+  // from. Unlike an ejected ticket these are NOT re-queued as full cars -- there is no work
+  // left in them for the long road either, and the caller must not send them down it.
+  satisfied,
+  // A Commit agent's UNVERIFIED claim that the work was already done. Not closed (the claim
+  // has been wrong before) and not re-queued (re-running 15 stages on finished work is the
+  // waste this channel exists to stop). A human confirms or re-queues each one.
+  claimed_satisfied: claimedSatisfied,
   refused: refused.map((r) => ({ number: r.number, reason: r.reason })),
+  probes: PROBES,
+  probe_verdicts: probeVerdicts,
   report: DO_REPORT ? REPORT_PATH : 'not written',
   next_step: DO_MERGE && !land?.merged
     ? `The batch did NOT land (CI ${land?.ci || 'unknown'}${land?.failing_check ? `: ${land.failing_check}` : ''}). Its PR is closed and ${committed.map((c) => '#' + c.number).join(', ')} are still open -- run them through process-issues as normal cars. The commits are still on ${BRANCH} if you want to bisect the batch.`
