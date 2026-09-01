@@ -255,7 +255,7 @@ assert.deepEqual([...new Set(dupes)], [], 'duplicate keys in dryrun.mjs CANNED -
 // The issue body is the only thing process-issues reads, so a missing section is a broken
 // handover. Sliced out of prepare-tickets.js rather than copied, for the same reason as above.
 const from2 = rnd.indexOf('const checkHandover = ')
-const to2 = rnd.indexOf('const drafted = draft.tickets')
+const to2 = rnd.indexOf('let drafted = draft.tickets')
 assert.ok(from2 > 0 && to2 > from2, 'checkHandover not found in prepare-tickets.js -- did the markers move?')
 // labelCheck names the two labels, which are declared far above the slice. Inject them --
 // and assert first that what we inject still matches what the file declares, or the test

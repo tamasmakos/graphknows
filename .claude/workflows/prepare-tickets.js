@@ -23,6 +23,7 @@ export const meta = {
 //         topic?: 'the question, in one sentence',  // escape hatch: run with no filed form
 //         notes?: 'anything already decided', angles?: 4, designs?: 3, maxTickets?: 6,
 //         prototype?: 'auto', file?: true, gateAll?: false, depth?: 'auto',
+//         repairs?: 2,  // times a refused draft is handed back before the run gives up
 //         report?: true, reportPath?: 'docs/agents/runs/x.md',
 //         slug?: 'window-chunk-recall', date?: '2026-08-26', kind?: 'enhancement', runLabel?: 'nightly' }
 //
@@ -82,6 +83,13 @@ const RUN = opt.runLabel || 'an automated prepare-tickets run'
 // handover check does; 'off' skips it. Shadow by default: a new predicate that decides
 // whether a whole run's output is filed should be watched before it is trusted.
 const PROBES = ['shadow', 'on', 'off'].includes(opt.probes) ? opt.probes : 'on'
+// How many times a refused draft is handed back to be fixed before the run gives up. The
+// checks below are cheap and mechanical; the dozen agents that produced the draft are not.
+// Refusing the whole set over a missing heading throws all of that away and leaves a full
+// re-run as the only remedy, at the same price. A repair names the problems back to one
+// drafter and re-runs the SAME gate -- nothing is filed that the gate has not passed, and
+// the drafter still never chooses which half of its own set survives.
+const REPAIRS = Number.isInteger(opt.repairs) && opt.repairs >= 0 ? opt.repairs : 2
 // The run report. The return value lands in one session's context and dies with it; the
 // report is the copy still there tomorrow, and it is where a reader finds out what lost.
 const DO_REPORT = opt.report !== false
@@ -1273,8 +1281,10 @@ const labelCheck = (rows) => {
   return problems
 }
 
-const drafted = draft.tickets
-const { problems, order } = checkHandover(draft.spec_body, spec.seams, drafted)
+// Mutable: a repair pass replaces both, and the gate is re-run over what comes back.
+let drafted = draft.tickets
+let specBody = draft.spec_body
+let { problems, order } = checkHandover(specBody, spec.seams, drafted)
 
 // -- Probe ---------------------------------------------------------
 // Run every drafted ticket's own acceptance against today's tip. Each one MUST fail.
@@ -1288,7 +1298,11 @@ const { problems, order } = checkHandover(draft.spec_body, spec.seams, drafted)
 // One agent for the whole set, in a detached worktree of its own -- never in the main
 // checkout, where a `git checkout` would move a person's working tree out from under them.
 const probeVerdicts = []
-if (PROBES !== 'off' && drafted.length) {
+// Re-runnable, because a repair redrafts the tickets and a redrafted "## Verify" is
+// unproven until something has run it again. Reads the current `drafted` on each call.
+const probeDrafts = async () => {
+  probeVerdicts.length = 0
+  if (PROBES === 'off' || !drafted.length) return
   phase('Probe')
   const probe = await call(
     [
@@ -1351,6 +1365,51 @@ if (PROBES !== 'off' && drafted.length) {
   }
 }
 
+await probeDrafts()
+
+// -- Repair ---------------------------------------------------------
+// Everything above is a dozen agents deep. Every check between here and filing is cheap,
+// mechanical and about the SHAPE of a string -- a missing heading, an unnamed seam, a
+// criterion phrased about the tree instead of the behaviour. Refusing the whole set over
+// those throws away the expensive half and leaves a full re-run as the only remedy, which
+// is how three runs in a row can cost a fortune and file nothing.
+//
+// So: name the problems back to one drafter, then re-run the SAME gate over what returns,
+// including the probe -- a redrafted "## Verify" is unproven until it has been run again.
+// This is not repair-instead-of-refuse. The gate still decides, it just gets something to
+// decide about more than once.
+for (let attempt = 1; problems.length && attempt <= REPAIRS; attempt++) {
+  log(`repair ${attempt}/${REPAIRS}: ${problems.length} problem(s) -- handing the draft back`)
+  const fixed = await call(
+    [
+      `A mechanical gate refused a drafted spec and its ${drafted.length} ticket(s) for the GraphKnows repository at ${MAIN_REPO}. Fix exactly what it named and change nothing else. ${GH}`,
+      `THE SPEC BODY AS DRAFTED:
+${specBody}`,
+      `THE TICKETS AS DRAFTED (JSON, the same shape you must return):
+${JSON.stringify(drafted, null, 1)}`,
+      'WHAT THE GATE REFUSED -- every one of these must be gone from what you return:',
+      ...problems.map((x) => `- ${x}`),
+      '',
+      'The rules behind those refusals, because the gate re-runs over what you return:',
+      '- Every seam the spec rests on must be NAMED in its Testing Decisions section, in the words the refusal quoted.',
+      '- No acceptance criterion may assert the state of the tree ("a file exists", "the compose declares"). Say what the system DOES once the change lands.',
+      '- No ticket may still carry a [NEEDS CLARIFICATION] marker. That is a question for the requester, not a ticket: fold it into the one ticket that owns it as a stated assumption, or drop that ticket from the set.',
+      `- A "## Verify" command MUST FAIL against today's tip. That failure is the only proof the work is not already done. Point it at the assertion that does not exist yet, never at a test file that already passes -- it gets RUN, so it must be one runnable line.`,
+      'Return the COMPLETE spec body and the COMPLETE ticket set, not a diff and not only the parts you touched.',
+    ],
+    { label: `tickets:repair-${attempt}`, phase: 'Tickets', schema: DRAFT_SCHEMA, ...DEEP },
+  )
+  if (!fixed?.spec_body || !(fixed.tickets || []).length) {
+    log(`repair ${attempt}: the redraft came back empty -- keeping the refusal`)
+    break
+  }
+  specBody = fixed.spec_body
+  drafted = fixed.tickets
+  ;({ problems, order } = checkHandover(specBody, spec.seams, drafted))
+  await probeDrafts()
+  log(`repair ${attempt}: ${problems.length ? `${problems.length} problem(s) remain` : 'the gate is satisfied'}`)
+}
+
 for (const p of problems) log(`body check: ${p}`)
 
 const gateReason = drafted.map((t) =>
@@ -1387,7 +1446,7 @@ const BANNER = [
   .filter(Boolean)
   .join('\n>\n')
 
-const SPEC_BODY = [BANNER, draft.spec_body].filter(Boolean).join('\n\n')
+const SPEC_BODY = [BANNER, specBody].filter(Boolean).join('\n\n')
 
 let filedRes = null
 const notFiling = !FILE ? 'file: false' : problems.length ? `${problems.length} problem(s) in the drafted bodies` : ''
