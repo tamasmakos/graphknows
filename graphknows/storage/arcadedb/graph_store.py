@@ -31,15 +31,18 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from graphknows.exceptions import StoreError
+from graphknows.exceptions import SchemaVersionMismatchError, StoreError
 from graphknows.storage.arcadedb._base import ArcadeStoreBase
-from graphknows.storage.arcadedb._schema import _CORE_DDL
+from graphknows.storage.arcadedb._schema import _CORE_DDL, schema_version
 from graphknows.storage.arcadedb._sql import is_missing_type, quote, quoted_list, sanitize
 from graphknows.storage.arcadedb.client import ArcadeDBClient
 
 logger = logging.getLogger(__name__)
 
 _DB = "mem"
+
+# Key of the SCHEMA_STAMP singleton; the UNIQUE index on it is the singleton.
+_STAMP_ID = "singleton"
 
 # Co-role REL edges written per frame instance. A 7-role instance is 21 ordered
 # pairs, and the tail of that list is co-role trivia rather than fact.
@@ -373,13 +376,65 @@ class GraphStore(ArcadeStoreBase):
         Args:
             dims: Embedding dimension for the LSM_VECTOR indexes (must match
                 the configured embedder).
+
+        Raises:
+            SchemaVersionMismatchError: The database was built by a different
+                schema version, so it is refused before the caller's first
+                query (contracts/schema-stamp.md).
         """
+        # Asked BEFORE _apply_ddl, which creates the database: afterwards
+        # "did this database already exist?" is unanswerable.
+        pre_existing = await self._c.database_exists(self._db)
         await self._apply_ddl(_CORE_DDL, dims=dims)
+        await self._check_schema_stamp(dims, pre_existing=pre_existing)
         # This database may have been dropped and recreated under us, so nothing
         # written by a previous life of this object can be assumed present.
         self._frames_materialised.clear()
         self._functional_predicates_cache = None
         logger.info("GraphStore schema ensured (db=%s, dims=%d)", self._db, dims)
+
+    async def _check_schema_stamp(self, dims: int, *, pre_existing: bool) -> None:
+        """Refuse this database unless the schema version it records is ours.
+
+        A fresh database carries no stamp and gets one. A pre-existing database
+        that carries none predates stamping and is not assumed compatible
+        (FR-014) — the same refusal as a differing stamp, hence one comparison.
+        """
+        running = schema_version(dims)
+        recorded = await self._read_stamp()
+        if recorded is None and not pre_existing:
+            recorded = await self._write_stamp(running)
+        if recorded != running:
+            namespace = "" if self._db == _DB else self._db.removeprefix(f"{_DB}_")
+            raise SchemaVersionMismatchError(namespace, self._db, recorded, running)
+
+    async def _read_stamp(self) -> str | None:
+        """Version on the SCHEMA_STAMP singleton, or None if it is unstamped."""
+        rows = await self.query(
+            "MATCH (s:SCHEMA_STAMP {stamp_id: $id}) RETURN s.version AS version",
+            id=_STAMP_ID,
+        )
+        return rows[0].get("version") if rows else None
+
+    async def _write_stamp(self, running: str) -> str:
+        """Stamp a fresh database, returning the version that ended up on it.
+
+        A concurrent first connect may have stamped it between the read and
+        this insert; the UNIQUE index on stamp_id rejects the second writer,
+        who re-reads rather than failing (FR-016).
+        """
+        try:
+            await self.command(
+                "CREATE (s:SCHEMA_STAMP {stamp_id: $id, version: $v})",
+                id=_STAMP_ID,
+                v=running,
+            )
+        except Exception as exc:
+            exc_s = str(exc).lower()
+            if "already exists" not in exc_s and "duplicate" not in exc_s:
+                raise
+            return await self._read_stamp() or running
+        return running
 
     async def _set_embedding(
         self, vertex_type: str, key_prop: str, key: str, emb: list[float]
