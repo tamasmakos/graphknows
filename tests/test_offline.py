@@ -43,6 +43,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_DOCKERFILE = REPO_ROOT / "deploy" / "Dockerfile"
 DEPLOY_COMPOSE = REPO_ROOT / "deploy" / "compose.yaml"
 DEPLOY_ACCEPTANCE = REPO_ROOT / "deploy" / "acceptance.sh"
+ENTRYPOINT = REPO_ROOT / "scripts" / "docker-entrypoint.sh"
 VERSION_FILE = REPO_ROOT / "graphknows" / "_version.py"
 
 Instruction = tuple[str, str]
@@ -174,6 +175,11 @@ def _uncommented(path: Path) -> str:
     )
 
 
+def _index_of_line(lines: list[str], needle: str) -> int:
+    """Index of the first line in *lines* containing *needle*."""
+    return next(i for i, line in enumerate(lines) if needle in line)
+
+
 def _service_blocks(compose: str) -> dict[str, str]:
     """Every service in *compose*, mapped to the block indented under its name."""
     services = re.split(r"\n(?=\S)", compose.partition("\nservices:\n")[2])[0]
@@ -204,6 +210,37 @@ def test_compose_overrides_no_offline_variable() -> None:
             "value wins over the image's and would silently undo the offline guarantee "
             "(contracts/deployment-environment.md)"
         )
+
+
+def test_entrypoint_checks_baked_models_only_when_required() -> None:
+    """The boot check is gated, shallow, and runs before the handoff.
+
+    All three properties are load-bearing and none is visible from a green
+    container: ungated it would break the dev image's lazy cold start (FR-006),
+    `--check` would deep-load every model for a ~5x ingest tax (research.md R2),
+    and after `exec` it would never run at all.
+    """
+    assert ENTRYPOINT.is_file(), f"{ENTRYPOINT}: does not exist"
+    lines = _uncommented(ENTRYPOINT).splitlines()
+
+    checks = [line for line in lines if "bake_models.py" in line]
+    assert len(checks) == 1, (
+        f"{ENTRYPOINT}: expected one bake_models.py check, found {len(checks)} — on an "
+        "air-gapped host an empty cache must fail at boot, not mid-ingest (FR-005)"
+    )
+    check = checks[0]
+    assert "GRAPHKNOWS_REQUIRE_BAKED" in check, (
+        f"{ENTRYPOINT}: the check is ungated: {check.strip()!r} — the dev container sets no "
+        "such variable and would pay a full bake on every cold start (FR-006)"
+    )
+    assert "--present" in check and "--check" not in check, (
+        f"{ENTRYPOINT}: the check runs {check.strip()!r} — `--present` is files-on-disk; "
+        "`--check` deep-loads every model and costs ~5x an ingest (research.md R2)"
+    )
+    assert lines.index(check) < _index_of_line(lines, 'exec "$@"'), (
+        f'{ENTRYPOINT}: the check sits after `exec "$@"`, which replaces this shell — '
+        "nothing below that line ever runs"
+    )
 
 
 # The three ways a host actually stops outbound traffic. The acceptance run's own
