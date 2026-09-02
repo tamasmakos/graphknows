@@ -6,6 +6,7 @@ stops to ask.
 
 | Step | Who | Does |
 |---|---|---|
+| `/triage-issues` | automatic; human reads the report | Optional, for an existing backlog. One screen per open issue against the current tree; labels decided in code and applied only with `{apply: true}`; `ready-for-agent` is never applied by a script. Returns candidate specs (paste into `/speckit-specify`), single-task fixes, and issues to close by hand. |
 | `/speckit-constitution` | human authors | Once. Today `.specify/memory/constitution.md` is the unfilled template; seed it from `CLAUDE.md`. |
 | `/speckit-specify` | automatic | `specs/NNN-slug/spec.md` and the feature branch. |
 | `/speckit-clarify` | human answers | The cheapest correction point in the whole line. |
