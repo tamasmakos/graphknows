@@ -271,7 +271,7 @@ def extract(
     except ImportError as exc:
         from graphknows.exceptions import MissingExtraError
 
-        raise MissingExtraError("Extracting an RDF taxonomy", "assisted") from exc
+        raise MissingExtraError("Extracting an RDF taxonomy", "ontology") from exc
 
     kept = {iri: n for iri, n in nodes.items() if not _is_non_taxonomic(n)}
     stats: dict[str, Any] = {"non_taxonomic_skipped": len(nodes) - len(kept)}

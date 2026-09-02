@@ -127,7 +127,7 @@ error they see when it is missing names the right extra.
 **Independent Test**: Install `graphknows[ontology]` in a clean environment, import
 `graphknows.symbolic.ontology.rdf_io`, and confirm `pip show dspy` finds nothing.
 
-- [ ] T012 [US4] Change the five ontology `MissingExtraError` call sites from `"assisted"` to `"ontology"` — `graphknows/symbolic/ontology/rdf_io.py:109`, `graphknows/symbolic/ontology/rdf/taxonomy.py:274`, `graphknows/symbolic/ontology/rdf/projection.py:531`, `graphknows/symbolic/ontology/rdf/prefixes.py:170`, `graphknows/symbolic/ontology/digest.py:324` — leaving `graphknows/ingestion/extraction/relations/llm_assisted/dspy.py:34` on `"assisted"`, which is the real dspy path (FR-019); add node `test_ontology_call_sites_name_the_ontology_extra` to `tests/test_packaging.py` pinning all six
+- [X] T012 [US4] Change the five ontology `MissingExtraError` call sites from `"assisted"` to `"ontology"` — `graphknows/symbolic/ontology/rdf_io.py:109`, `graphknows/symbolic/ontology/rdf/taxonomy.py:274`, `graphknows/symbolic/ontology/rdf/projection.py:531`, `graphknows/symbolic/ontology/rdf/prefixes.py:170`, `graphknows/symbolic/ontology/digest.py:324` — leaving `graphknows/ingestion/extraction/relations/llm_assisted/dspy.py:34` on `"assisted"`, which is the real dspy path (FR-019); add node `test_ontology_call_sites_name_the_ontology_extra` to `tests/test_packaging.py` pinning all six
   - Verify: `pytest -q tests/test_packaging.py::test_ontology_call_sites_name_the_ontology_extra`
 
 **Checkpoint**: ontology support installs and errors independently of the LLM stack.
