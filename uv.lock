@@ -1302,6 +1302,10 @@ observability = [
     { name = "langchain" },
     { name = "langfuse" },
 ]
+ontology = [
+    { name = "networkx" },
+    { name = "rdflib" },
+]
 srl = [
     { name = "frame-semantic-transformer" },
 ]
@@ -1339,18 +1343,20 @@ requires-dist = [
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.2.0" },
     { name = "mcp", specifier = ">=1.0.0,<2" },
     { name = "networkx", marker = "extra == 'assisted'", specifier = ">=3.0" },
+    { name = "networkx", marker = "extra == 'ontology'", specifier = ">=3.0" },
     { name = "nltk", specifier = ">=3.10.2" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "pydantic", specifier = ">=2.7.0" },
     { name = "pydantic-settings", specifier = ">=2.2.0" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
     { name = "rdflib", marker = "extra == 'assisted'", specifier = ">=7.0.0" },
+    { name = "rdflib", marker = "extra == 'ontology'", specifier = ">=7.0.0" },
     { name = "sentence-transformers", specifier = ">=3.0.0" },
     { name = "spacy", specifier = ">=3.7.0" },
     { name = "torch", specifier = ">=2.4.0" },
     { name = "transformers", specifier = ">=4.44.0" },
 ]
-provides-extras = ["assisted", "langgraph", "observability", "srl"]
+provides-extras = ["assisted", "langgraph", "observability", "ontology", "srl"]
 
 [package.metadata.requires-dev]
 dev = [

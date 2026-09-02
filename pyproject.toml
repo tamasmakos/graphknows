@@ -91,6 +91,12 @@ dependencies = [
 # functions behind the same MissingExtraError guard, so a base install never
 # pulls it either.
 assisted = ["dspy>=2.5.0", "rdflib>=7.0.0", "networkx>=3.0"]
+# Injectable RDF/OWL ontology without the LLM-extraction stack: what the release
+# image installs (`deploy/Dockerfile`) and what the five ontology
+# MissingExtraError call sites name. Deliberately a subset of `assisted` rather
+# than a slice cut out of it — `assisted` keeps rdflib/networkx so no existing
+# install, image or CI leg loses them.
+ontology = ["rdflib>=7.0.0", "networkx>=3.0"]
 # Framework adapter. Genuinely optional — nothing in the core paths imports it,
 # and it is lazily imported behind a MissingExtraError guard. The `langchain`
 # extra was removed with its adapter: `GraphKnowsRetriever` had zero importers
