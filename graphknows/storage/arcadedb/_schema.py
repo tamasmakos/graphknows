@@ -7,6 +7,8 @@ of table definitions.
 
 from __future__ import annotations
 
+import hashlib
+
 from graphknows.storage.arcadedb._base import VEC_DIM_TOKEN
 
 _VEC_DIM = VEC_DIM_TOKEN
@@ -18,6 +20,14 @@ _VEC_DIM = VEC_DIM_TOKEN
 
 _CORE_DDL: list[tuple[str, str]] = [
     # ---- Vertex types -----------------------------------------------------
+    # Singleton per database, recording the schema shape that created the graph
+    # (see schema_version below). The UNIQUE index on stamp_id is what makes it a
+    # singleton rather than a convention: a concurrent second insert is rejected
+    # by the index, not by a race-prone read-then-write.
+    ("sql", "CREATE VERTEX TYPE SCHEMA_STAMP IF NOT EXISTS"),
+    ("sql", "CREATE PROPERTY SCHEMA_STAMP.stamp_id IF NOT EXISTS STRING"),
+    ("sql", "CREATE PROPERTY SCHEMA_STAMP.version IF NOT EXISTS STRING"),
+    ("sql", "CREATE INDEX ON SCHEMA_STAMP(stamp_id) UNIQUE"),
     ("sql", "CREATE VERTEX TYPE SESSION IF NOT EXISTS"),
     ("sql", "CREATE PROPERTY SESSION.session_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY SESSION.started_at IF NOT EXISTS STRING"),
@@ -415,3 +425,20 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY HAS_SENSE.span IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY HAS_SENSE.synset IF NOT EXISTS STRING"),
 ]
+
+
+def schema_version(dims: int) -> str:
+    """Short digest of the schema shape a graph was built with.
+
+    Derived from the DDL statement text — ``_CORE_DDL`` is
+    ``list[tuple[str, str]]``, so the statement is projected out of each pair —
+    combined with ``dims``, which the DDL interpolates into the ``LSM_VECTOR``
+    indexes: a graph built at one embedding dimension cannot serve another.
+
+    Because the digest is over the text, editing ``_CORE_DDL`` at all — a
+    reworded comment inside a statement included — is now a client-visible
+    event: every existing graph is stranded and must be rebuilt from its
+    original sources. There is no migration.
+    """
+    ddl_text = "\n".join(stmt for _lang, stmt in _CORE_DDL)
+    return hashlib.sha256(f"{ddl_text}\n{dims}".encode()).hexdigest()[:16]
