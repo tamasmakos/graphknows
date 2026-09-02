@@ -461,3 +461,59 @@ async def test_llm_free_ingest_and_recall_attempt_no_egress(
         "ingest and recall gave up before reaching it, and an absence of egress is not "
         "evidence when the path under test never ran"
     )
+
+
+# --- The doc that has to say what the image cannot: where the guarantee stops ---
+
+DEPLOYMENT_DOC = REPO_ROOT / "docs" / "deployment.md"
+DOCS_INDEX = REPO_ROOT / "docs" / "README.md"
+SETTINGS = REPO_ROOT / "graphknows" / "settings.py"
+
+# Each requirement is checked against one `##` section rather than the whole
+# page: an operator reads the section a heading sent them to, and three facts
+# scattered across three sections answer nobody. Needles are matched casefolded.
+GUARANTEE_BOUNDARIES = (
+    # FR-020 — the build reaching Hugging Face is the build working.
+    ("FR-020", ("build", "network", "running")),
+    # FR-021 — both escapes named where they can be found and avoided.
+    ("FR-021", ("llm_assisted", "GRAPHKNOWS_EMBED_API_BASE")),
+    # FR-022 — a schema change is a rebuild from the original sources.
+    ("FR-022", ("schema version", "re-ingest", "no migration")),
+)
+
+
+def _sections(doc: str) -> list[str]:
+    """Each `##` heading of *doc* with the body under it, casefolded."""
+    return [section.casefold() for section in re.split(r"\n(?=## )", doc)]
+
+
+def test_deployment_doc_states_the_guarantee_boundaries() -> None:
+    assert DEPLOYMENT_DOC.is_file(), (
+        f"{DEPLOYMENT_DOC}: does not exist — FR-020…FR-022 are stated nowhere a client reads"
+    )
+    doc = DEPLOYMENT_DOC.read_text(encoding="utf-8")
+    assert "deployment.md" in DOCS_INDEX.read_text(encoding="utf-8"), (
+        f"{DOCS_INDEX}: does not link deployment.md — a page missing from the index is a "
+        "page nobody finds"
+    )
+
+    sections = _sections(doc)
+    for requirement, needles in GUARANTEE_BOUNDARIES:
+        stated = any(
+            all(needle.casefold() in section for needle in needles) for section in sections
+        )
+        assert stated, (
+            f"{DEPLOYMENT_DOC}: no single section says all of {list(needles)} ({requirement})"
+        )
+
+    # Every knob the page names must exist. A setting spelled wrong here is worse
+    # than an unmentioned one: the operator sets it, sees no effect, and reads
+    # the silence as the guarantee holding.
+    declared = "\n".join(
+        path.read_text(encoding="utf-8") for path in (SETTINGS, DEPLOY_DOCKERFILE, ENTRYPOINT)
+    )
+    for name in sorted(set(re.findall(r"GRAPHKNOWS_[A-Z_]+", doc))):
+        assert name in declared, (
+            f"{DEPLOYMENT_DOC}: names {name}, which neither graphknows/settings.py nor the "
+            "deploy recipe declares — an operator would set it and change nothing"
+        )
