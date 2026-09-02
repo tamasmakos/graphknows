@@ -1,6 +1,0 @@
-CI is green on PR https://github.com/tamasmakos/graphknows/pull/163 for issue #157 (branch fix/issue-157). Merge it. Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
-cd C:/Users/User/Documents/dev/gk-issue-157.
-Read C:/Users/User/Documents/dev/graphknows/.claude/skills/ci-watch/SKILL.md and follow it: STEP 4 only. Its preconditions are already met -- you are being called BECAUSE the run is green and the caller decided to merge. Do not re-run STEPS 1 to 3.
-Watch-main mode: never.
-Only if the merge SUCCEEDS: Then tear down what this car started, in this order: `cd C:/Users/User/Documents/dev/gk-issue-157 && docker compose down --remove-orphans` (its ArcadeDB stack is named after that directory and nothing else ever stops it -- leaked stacks OOM-kill the pre-push gate for every branch, not just this one), then `git worktree remove C:/Users/User/Documents/dev/gk-issue-157` from the repo root. If either refuses, say so in notes and leave it -- do not force past a refusal you have not read. If the merge is refused, change nothing -- the worktree and its stack are what a human debugs.
-Do not tag, do not release, do not bump a version, do not upload anything.
