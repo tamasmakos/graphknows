@@ -11,6 +11,12 @@ break the one step that is allowed to use the network.
 The Dockerfile is read as an ordered list of instructions rather than as a blob
 of text, because two of those questions are about *order*: `HF_HUB_OFFLINE=1`
 before the bake would fail the build, and after it is the whole point.
+
+The compose file is read as text split into service blocks rather than through
+PyYAML — the project declares no yaml dependency, the same reason
+`tests/test_release_workflow.py` reads workflows with `re` — because the only
+questions asked of it are which service carries which key, and whether a name
+appears at all.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_DOCKERFILE = REPO_ROOT / "deploy" / "Dockerfile"
+DEPLOY_COMPOSE = REPO_ROOT / "deploy" / "compose.yaml"
 VERSION_FILE = REPO_ROOT / "graphknows" / "_version.py"
 
 Instruction = tuple[str, str]
@@ -128,3 +135,56 @@ def test_release_image_is_pinned_offline_and_self_contained() -> None:
         f"{DEPLOY_DOCKERFILE}: the offline variables are set before the bake, which is the one "
         "step permitted to use the network — the build would fail with an empty cache"
     )
+
+
+# The six the release image owns (contracts/deployment-environment.md). The compose
+# file may name none of them: whichever value it set would win over the image's.
+OFFLINE_VARIABLES = (
+    "HF_HUB_OFFLINE",
+    "TRANSFORMERS_OFFLINE",
+    "HF_DATASETS_OFFLINE",
+    "HF_HOME",
+    "NLTK_DATA",
+    "GRAPHKNOWS_REQUIRE_BAKED",
+)
+
+
+def _uncommented(path: Path) -> str:
+    """*path* without its comment lines — a variable named in prose is not a setting."""
+    return "\n".join(
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
+def _service_blocks(compose: str) -> dict[str, str]:
+    """Every service in *compose*, mapped to the block indented under its name."""
+    services = re.split(r"\n(?=\S)", compose.partition("\nservices:\n")[2])[0]
+    parts = re.split(r"^  ([\w.-]+):$", services, flags=re.MULTILINE)
+    return dict(zip(parts[1::2], parts[2::2], strict=True))
+
+
+def test_compose_overrides_no_offline_variable() -> None:
+    assert DEPLOY_COMPOSE.is_file(), f"{DEPLOY_COMPOSE}: does not exist"
+    compose = _uncommented(DEPLOY_COMPOSE)
+
+    app = _service_blocks(compose).get("app")
+    assert app is not None, (
+        f"{DEPLOY_COMPOSE}: no `app` service — the release stack is the memory service "
+        f"and its database, found {sorted(_service_blocks(compose))}"
+    )
+    # The client builds locally, so there is no registry to pull the app from
+    # (research.md R8) — an `image:` here would name one that does not exist.
+    assert "build:" in app, f"{DEPLOY_COMPOSE}: the app service declares no `build:`"
+    assert "image:" not in app, (
+        f"{DEPLOY_COMPOSE}: the app service names an `image:` — the client builds the "
+        "release image from the wheel and there is nothing to pull it from"
+    )
+
+    for name in OFFLINE_VARIABLES:
+        assert name not in compose, (
+            f"{DEPLOY_COMPOSE}: sets {name}, which deploy/Dockerfile owns — a compose "
+            "value wins over the image's and would silently undo the offline guarantee "
+            "(contracts/deployment-environment.md)"
+        )
