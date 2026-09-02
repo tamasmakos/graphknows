@@ -37,7 +37,11 @@ const IN_DOCKER = (dir) =>
   [
     'Run anything Python (pytest, ruff, mypy, python) inside the running workspace container, which mounts this',
     `checkout at /app: \`docker exec graphknows-workspace sh -c 'cd /app && <command>'\`. Never on the host.`,
-    `First run \`docker exec graphknows-workspace test -f /app/${dir}/tasks.md\`; if that fails the container is`,
+    `First run \`docker exec graphknows-workspace sh -c 'test -f /app/${dir}/tasks.md'\`; if that fails the container is`,
+    // The `sh -c` wrapper is load-bearing on a Windows host, not style: Git Bash rewrites a bare
+    // /app/... argument into a Windows path before docker sees it (`docker exec c echo /app` prints
+    // `C:/Program Files/Git/app`), so the guard tested a path that cannot exist and every task it
+    // guarded stopped with "the container mounts another tree". Quoted, the path reaches the container intact.
     'down or mounts another tree: report ran=false and stop. Do not start it, do not fall back to host python,',
     'and never report a result you did not observe.',
   ].join(' ')
