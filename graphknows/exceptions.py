@@ -67,3 +67,41 @@ class BrokenInstallError(GraphKnowsError, ImportError):
         self.feature = feature
         self.distribution = distribution
         self.hint = hint
+
+
+class SchemaVersionMismatchError(StoreError):
+    """A namespace's recorded schema version is not the running one.
+
+    Raised before any read or write, so a graph built by a different schema is
+    never touched. No migration is attempted and nothing is dropped
+    automatically — the operator decides, so the message names the remedy: a
+    rebuild from the original sources.
+
+    ``recorded`` is ``None`` for a pre-existing database that carries no stamp
+    at all, which is a mismatch too (FR-014) — it predates stamping and is not
+    assumed compatible.
+
+    Subclasses :class:`StoreError` so existing store-failure handlers keep
+    working.
+    """
+
+    def __init__(
+        self,
+        namespace: str,
+        database: str,
+        recorded: str | None,
+        running: str,
+    ) -> None:
+        super().__init__(
+            f"Namespace {namespace or '(default)'} (database '{database}') was built by "
+            f"schema version {recorded or 'none recorded — it predates schema stamping'}, "
+            f"but this code runs schema version {running}. Refusing to read or write it.\n"
+            f"Rebuild it from its original sources: drop the namespace with "
+            f"Memory.drop_namespace() (MCP tool 'memory_drop_namespace'), or for the "
+            f"default namespace Memory.purge_memory() (MCP tool 'memory_purge'), then "
+            f"re-ingest."
+        )
+        self.namespace = namespace
+        self.database = database
+        self.recorded = recorded
+        self.running = running
