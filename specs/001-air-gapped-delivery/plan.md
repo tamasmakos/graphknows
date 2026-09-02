@@ -106,7 +106,7 @@ deploy/                              # NEW — client-facing deployment, nothing
 └── acceptance.sh                    # the offline acceptance run (SC-001..SC-003)
 
 graphknows/
-├── exceptions.py                    # + SchemaVersionMismatch, + "ontology" in KNOWN_EXTRAS
+├── exceptions.py                    # + SchemaVersionMismatchError, + "ontology" in KNOWN_EXTRAS
 ├── storage/arcadedb/
 │   ├── _schema.py                   # + SCHEMA_STAMP DDL, + SCHEMA_VERSION derivation
 │   └── graph_store.py               # ensure_schema() reads/writes the stamp

@@ -22,12 +22,14 @@ exist?" is unanswerable. This ordering is forced by `_base.py`, not a preference
 | `pre_existing` | Stamp | Outcome |
 |---|---|---|
 | false | absent | Insert current version. Proceed. |
-| true | absent | **Raise** `SchemaVersionMismatch`. Graph predates stamping; not assumed compatible. |
+| true | absent | **Raise** `SchemaVersionMismatchError`. Graph predates stamping; not assumed compatible. |
 | either | equal | Proceed. No log line — a matching version is not news. |
-| either | differs | **Raise** `SchemaVersionMismatch`. |
+| either | differs | **Raise** `SchemaVersionMismatchError`. |
 | false | absent, then insert rejected as duplicate | A concurrent connect stamped it first. Re-read, then apply the rows above. Never fail for this reason. |
 
-## `SchemaVersionMismatch`
+## `SchemaVersionMismatchError`
+
+The `Error` suffix is required, not stylistic: ruff's `N818` is enabled via the `"N"` select group and every existing exception in `graphknows/exceptions.py` carries it. An earlier draft of this contract mandated `SchemaVersionMismatch`, which introduced a lint error and was correctly refused at validation.
 
 New exception in `graphknows/exceptions.py`, subclassing the existing `StoreError` so callers
 already handling store failures keep working.
