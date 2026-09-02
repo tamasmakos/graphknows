@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import ipaddress
+import itertools
 import re
 import socket
 from dataclasses import dataclass, field
@@ -41,6 +42,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_DOCKERFILE = REPO_ROOT / "deploy" / "Dockerfile"
 DEPLOY_COMPOSE = REPO_ROOT / "deploy" / "compose.yaml"
+DEPLOY_ACCEPTANCE = REPO_ROOT / "deploy" / "acceptance.sh"
 VERSION_FILE = REPO_ROOT / "graphknows" / "_version.py"
 
 Instruction = tuple[str, str]
@@ -202,6 +204,37 @@ def test_compose_overrides_no_offline_variable() -> None:
             "value wins over the image's and would silently undo the offline guarantee "
             "(contracts/deployment-environment.md)"
         )
+
+
+# The three ways a host actually stops outbound traffic. The acceptance run's own
+# output cannot tell them apart from no blocking at all — it looks identical on a
+# networked laptop — so naming the method in the script is the only thing that
+# lets a reviewer read a green run as evidence rather than as a smoke test.
+EGRESS_METHODS = ("internal: true", "--network none", "firewall")
+
+
+def _header_comment(script: Path) -> str:
+    """The comment block at the top of *script*, shebang and body excluded.
+
+    Read as the leading run of `#` lines rather than as the whole file, so a
+    method named down in the code — an echo, a variable, a `docker network`
+    invocation — does not count as having documented it where a reviewer looks.
+    """
+    lines = script.read_text(encoding="utf-8").splitlines()
+    header = itertools.takewhile(lambda line: line.startswith("#"), lines[1:])
+    return "\n".join(header)
+
+
+def test_acceptance_script_names_how_egress_is_blocked() -> None:
+    assert DEPLOY_ACCEPTANCE.is_file(), (
+        f"{DEPLOY_ACCEPTANCE}: does not exist — SC-001…SC-003 have no runnable form"
+    )
+    header = _header_comment(DEPLOY_ACCEPTANCE)
+    assert any(method in header for method in EGRESS_METHODS), (
+        f"{DEPLOY_ACCEPTANCE}: its header comment names none of {list(EGRESS_METHODS)}, so a "
+        "reviewer cannot tell whether a passing run was made on a blocked host or a networked "
+        "one — and the two produce the same output"
+    )
 
 
 # --- The runtime promise: an llm_free ingest and recall dial only the database ---
