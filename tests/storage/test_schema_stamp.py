@@ -5,6 +5,7 @@ The decision table under test is contracts/schema-stamp.md.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -86,3 +87,48 @@ async def test_mismatched_stamp_refuses_naming_both_versions_and_the_remedy() ->
     assert "0123456789abcdef" in message  # recorded version
     assert _schema.schema_version(8) in message  # running version
     assert "drop_namespace" in message and "re-ingest" in message  # the remedy
+
+
+class _RacingClient:
+    """One shared database whose UNIQUE index on stamp_id admits a single stamp.
+
+    Both openers are held at the stamp read until each has seen the database
+    unstamped, so the second CREATE really is the loser of the race.
+    """
+
+    def __init__(self) -> None:
+        self.stamps: list[str] = []
+        self._unstamped_read = asyncio.Barrier(2)
+
+    async def database_exists(self, db: str) -> bool:
+        return False
+
+    async def create_database(self, db: str) -> None:
+        return None
+
+    async def query(self, db: str, cypher: str, params: dict | None = None) -> list[dict]:
+        if not cypher.startswith("MATCH (s:SCHEMA_STAMP"):
+            return []
+        if not self.stamps:
+            await self._unstamped_read.wait()
+        return [{"version": self.stamps[0]}] if self.stamps else []
+
+    async def command(
+        self, db: str, cypher: str, params: dict | None = None, language: str = "sql"
+    ) -> list[dict]:
+        if cypher.startswith("CREATE (s:SCHEMA_STAMP"):
+            if self.stamps:
+                raise RuntimeError("Duplicate key found on index SCHEMA_STAMP[stamp_id]")
+            self.stamps.append((params or {})["v"])
+        return []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_open_leaves_exactly_one_stamp() -> None:
+    """The rejected writer re-reads the winner's stamp instead of failing (FR-016)."""
+    client = _RacingClient()
+    await asyncio.gather(
+        *(GraphStore(client=client, db="mem_acme").ensure_schema(dims=8) for _ in range(2))
+    )
+
+    assert client.stamps == [_schema.schema_version(8)]
