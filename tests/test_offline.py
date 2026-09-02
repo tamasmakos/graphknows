@@ -17,12 +17,26 @@ PyYAML — the project declares no yaml dependency, the same reason
 `tests/test_release_workflow.py` reads workflows with `re` — because the only
 questions asked of it are which service carries which key, and whether a name
 appears at all.
+
+One node here is not about the recipe: `test_llm_free_ingest_and_recall_attempt_no_egress`
+runs the `llm_free` write and read paths behind a monkeypatched
+`socket.socket.connect` and asserts they dialled nothing but the database. It is
+the closest this suite gets to the runtime promise itself.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import ipaddress
 import re
+import socket
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_DOCKERFILE = REPO_ROOT / "deploy" / "Dockerfile"
@@ -188,3 +202,192 @@ def test_compose_overrides_no_offline_variable() -> None:
             "value wins over the image's and would silently undo the offline guarantee "
             "(contracts/deployment-environment.md)"
         )
+
+
+# --- The runtime promise: an llm_free ingest and recall dial only the database ---
+
+# Ordinary prose on purpose: two entities in one sentence is enough to send the
+# write path through the same extraction a client's document takes.
+EGRESS_DOCUMENT = "Ada Lovelace wrote the first algorithm for the Analytical Engine in London."
+
+# A namespace of its own (`mem_offline_egress`) rather than the shared default,
+# so a developer with a live ArcadeDB does not find test prose in the golden
+# layer. Dropped in the `finally` below.
+EGRESS_NAMESPACE = "offline_egress"
+
+
+class _EgressBlockedError(AssertionError):
+    """Raised in place of a connect() to an address outside the allowlist."""
+
+
+@dataclass
+class _Dials:
+    """Every (host, port) the guard was asked to dial, split by the allowlist.
+
+    Both halves are read. `blocked` failing the test is the point; `allowed`
+    proves the paths under test actually reached the database, because a test
+    asserting an absence has to show it was watching something.
+    """
+
+    allowed: list[tuple[str, int]] = field(default_factory=list)
+    blocked: list[tuple[str, int]] = field(default_factory=list)
+
+
+def _database_addresses(url: str) -> frozenset[str]:
+    """Every address the host in *url* answers to, plus the name itself.
+
+    Under compose the database is `http://arcadedb:2480`, which is not loopback
+    (research.md R5): an allowlist of `127.0.0.1`/`::1` alone would block the one
+    connection the offline stack is supposed to make, and fail this node for a
+    reason that has nothing to do with egress.
+    """
+    split = urlsplit(url)
+    host = split.hostname or ""
+    if not host:
+        return frozenset()
+    try:
+        infos = socket.getaddrinfo(host, split.port, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        # Nothing resolves the name here — no compose network, or no resolver at
+        # all. The name is then the whole allowance, which is all an unresolved
+        # host could ever be handed to connect() anyway.
+        return frozenset({host})
+    return frozenset({host, *(str(info[4][0]) for info in infos)})
+
+
+def _dialled(address: object) -> tuple[str, int] | None:
+    """The (host, port) a connect() argument names, or None when nothing leaves the machine.
+
+    AF_INET hands connect() a 2-tuple and AF_INET6 a 4-tuple, both host-first;
+    AF_UNIX hands it a path, which has no host to judge.
+    """
+    if isinstance(address, tuple) and len(address) >= 2 and isinstance(address[0], str):
+        return address[0], int(address[1])
+    return None
+
+
+def _is_allowed(host: str, allowed: frozenset[str]) -> bool:
+    """True for the database's own addresses and for every flavour of loopback."""
+    if host in allowed:
+        return True
+    try:
+        # `%eth0` — a scoped IPv6 address; ip_address rejects the suffix, and the
+        # scope has no bearing on whether the address is local.
+        return ipaddress.ip_address(host.partition("%")[0]).is_loopback
+    except ValueError:
+        return False  # a name the resolver never turned into an address: not ours
+
+
+class _EgressGuard:
+    """An allowlist over every outbound connection the process attempts.
+
+    Stdlib monkeypatching rather than a `pytest-socket` dependency (research.md
+    R5). Dials are recorded as well as refused: the ingest path catches broadly
+    at its I/O boundaries, so a raise alone could be swallowed before the test
+    ever sees it.
+    """
+
+    def __init__(self, allowed: frozenset[str]) -> None:
+        self.allowed = allowed
+        self.dials = _Dials()
+
+    def check(self, address: object) -> None:
+        """Record where a connect() is headed, and refuse it if it leaves the allowlist."""
+        dial = _dialled(address)
+        if dial is None:
+            return
+        if _is_allowed(dial[0], self.allowed):
+            self.dials.allowed.append(dial)
+            return
+        self.dials.blocked.append(dial)
+        raise _EgressBlockedError(
+            f"egress to {dial[0]}:{dial[1]} blocked; allowed: {sorted(self.allowed)} plus loopback"
+        )
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Patch both ways a connection is opened, for the duration of one test."""
+        real_connect = socket.socket.connect
+
+        def guarded_connect(sock: socket.socket, address: Any) -> Any:
+            self.check(address)
+            return real_connect(sock, address)
+
+        monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+
+        # The release image is Linux, where asyncio's selector loop dials through
+        # the socket object patched above. On Windows the default proactor loop
+        # dials with ConnectEx on the socket's handle instead and never calls
+        # `socket.socket.connect`, so patching only that would leave this node
+        # watching an empty road on the platform it is developed on.
+        windows_events = getattr(asyncio, "windows_events", None)
+        if windows_events is None:
+            return
+        real_iocp_connect = windows_events.IocpProactor.connect
+
+        def guarded_iocp_connect(proactor: Any, conn: socket.socket, address: Any) -> Any:
+            self.check(address)
+            return real_iocp_connect(proactor, conn, address)
+
+        monkeypatch.setattr(windows_events.IocpProactor, "connect", guarded_iocp_connect)
+
+
+async def test_llm_free_ingest_and_recall_attempt_no_egress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The llm_free write and read paths connect to the database and to nothing else."""
+    # Three of the four switches deploy/Dockerfile bakes in
+    # (contracts/deployment-environment.md). They are part of what is under test,
+    # not a way around it: with them set a cached model loads from disk, and
+    # without them huggingface_hub revalidates each cached file against the hub —
+    # a request the release image never makes and this node would report as the
+    # client's egress.
+    for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE"):
+        monkeypatch.setenv(name, "1")
+    monkeypatch.setenv("GRAPHKNOWS_MODE", "llm_free")
+
+    from graphknows.memory import Memory
+    from graphknows.settings import GraphKnowsSettings, MemoryMode
+
+    settings = GraphKnowsSettings()
+    assert settings.mode is MemoryMode.llm_free, (
+        f"the mode under test resolved to {settings.mode!r}: llm_assisted calls a network "
+        "LLM by design, and would fail this node for a reason it is not asking about"
+    )
+
+    # The database host is resolved HERE, before the block goes in: connect() is
+    # handed addresses the resolver has already produced, so an allowlist built
+    # after the guard could never match one. The honest consequence (research.md
+    # R5) is that this test is kinder than the field — on a genuinely DNS-less
+    # host the lookup fails out here rather than inside the guarded block, so a
+    # green run is not proof that the deployed stack never needs a resolver.
+    guard = _EgressGuard(_database_addresses(settings.arcadedb_url))
+    guard.install(monkeypatch)
+
+    memory = Memory(settings, namespace=EGRESS_NAMESPACE)
+    try:
+        # Neither call has to succeed — with no database up they both end in a
+        # refused connection to an allowed address, which is what "attempt" in
+        # the node's name means. Under test is where they dialled, which the
+        # guard records either way; an _EgressBlockedError swallowed in here is
+        # read back off `guard.dials` below.
+        with contextlib.suppress(Exception):
+            await memory.ingest_memory(text=EGRESS_DOCUMENT, session_id="egress-guard")
+        with contextlib.suppress(Exception):
+            await memory.recall_memory("Analytical Engine", session_id="egress-guard")
+    finally:
+        with contextlib.suppress(Exception):
+            await memory.drop_namespace()
+        with contextlib.suppress(Exception):
+            await memory.close()
+
+    assert not guard.dials.blocked, (
+        f"the llm_free path dialled {sorted(set(guard.dials.blocked))}, outside an allowlist "
+        f"of loopback plus {settings.arcadedb_url} — on an air-gapped host that is a hang or "
+        "a stack trace, not a slower answer"
+    )
+    database_port = urlsplit(settings.arcadedb_url).port or 2480
+    assert any(port == database_port for _host, port in guard.dials.allowed), (
+        f"nothing dialled the database on port {database_port}, so this node proved nothing: "
+        "ingest and recall gave up before reaching it, and an absence of egress is not "
+        "evidence when the path under test never ran"
+    )
