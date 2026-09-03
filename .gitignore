@@ -52,8 +52,7 @@ lib/
 research
 .briefs
 # NOT .github: a workflow that exists only on one laptop enforces nothing and
-# does not survive a clone - the same reason .claude/hooks/ is version
-# controlled below. Ignoring it is why this repo had no CI.
+# does not survive a clone. Ignoring it is why this repo had no CI.
 .opencode
 .hermes
 research
@@ -65,21 +64,12 @@ llm-wiki
 .venv
 .agents
 skills-lock.json
-.claude/*
-# The enforcement layer IS the gate for agent-authored code, so it is version
-# controlled: a hook that only exists on one laptop protects nothing and does
-# not survive a clone. Skills and workflows are that same layer -- run-merge-train's
-# lane rules and process-issues' HOUSE rules decide what agents may ship -- so they
-# are tracked too. Only per-machine config (settings.local.json: permissions and
-# MCP toggles, not policy) stays out.
-!.claude/settings.json
-!.claude/hooks/
-!.claude/skills/
-!.claude/workflows/
-# A stray browser download: byte-identical to .claude/skills/wizard/SKILL.md, but named
-# .yaml, so check-yaml reads its `---` frontmatter as two documents and fails. Left on
-# disk rather than deleted -- it is not this change's to remove -- but never tracked.
-.claude/skills/openai (3).yaml
+# Local tooling, not project deliverable: skills, workflows and the constitution live here
+# purely for portability (copy the folder to move the whole line to another repo), not for
+# git to sync them across clones or worktrees. Nothing in CI or scripts/gate.sh reads .claude
+# -- the harness and dependency gates that matter live in tracked files outside it. A spec is
+# published by `/specify {github:true}`, which force-adds just that one feature directory.
+.claude/
 AGENTS.md
 .codegraph
 # local analysis scratch (not committed)
@@ -104,6 +94,6 @@ prototypes
 # by `git add graphknows/`, and the large-file hook then rejects the whole
 # commit on a 4.6 MB .owl that was never meant to be committed.
 graphknows/symbolic/ontology/assets/cco-extensions/candidates/
-# machine-written run reports; the rules beside runs/ stay tracked (gates.test.mjs asserts both)
+# machine-written run reports; the rules beside runs/ stay tracked
 docs/agents/runs/
-.specify
+docs\adr

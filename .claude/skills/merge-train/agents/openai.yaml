@@ -1,5 +1,0 @@
-interface:
-  display_name: "Merge Train"
-  short_description: "Land a backlog of ready issues, one car at a time"
-policy:
-  allow_implicit_invocation: false
