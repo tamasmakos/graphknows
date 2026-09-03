@@ -122,7 +122,7 @@ srl = ["frame-semantic-transformer>=1.1.0"]
 observability = ["langfuse>=3.0", "langchain>=1.0"]
 
 # Every extra named by a MissingExtraError call site MUST appear above;
-# `MissingExtraError.KNOWN_EXTRAS` and tests/test_extras.py enforce it. For a
+# `MissingExtraError.KNOWN_EXTRAS` and tests/test_packaging.py enforce it. For a
 # missing *core* dependency raise BrokenInstallError instead — there is no
 # extra to install, and suggesting one is a dead end.
 

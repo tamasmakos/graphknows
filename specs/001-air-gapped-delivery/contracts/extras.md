@@ -10,12 +10,19 @@ The public installation surface. Enforced by `tests/test_packaging.py`, which as
 |---|---|---|
 | *(base)* | GLiNER/GLiNER2, spaCy, sentence-transformers, torch, BM25, nltk, mcp | Working `llm_free` memory service and MCP server, zero API keys |
 | `ontology` | `rdflib>=7.0.0`, `networkx>=3.0` | **NEW.** Import and project an RDF/OWL ontology. No LLM stack. |
-| `assisted` | `dspy>=2.5.0` | LLM-driven relation extraction. Reaches the network. |
+| `assisted` | `dspy>=2.5.0`, `rdflib>=7.0.0`, `networkx>=3.0` | LLM-driven relation extraction. Reaches the network. |
 | `langgraph` | `langgraph>=0.2.0` | Framework adapter. Unsupported. |
 | `srl` | `frame-semantic-transformer>=1.1.0` | Transformer frame identification. Unsupported. |
 | `observability` | `langfuse>=3.0`, `langchain>=1.0` | Tracing for the example. Unsupported. |
 
-`rdflib` and `networkx` **move out of** `assisted`, which is reduced to `dspy` alone.
+The split is **additive**: `ontology` is a subset of `assisted`, not a slice cut out of it, so
+`assisted` keeps `rdflib` and `networkx` and no existing install, image or CI leg loses a dependency
+it has today.
+
+An earlier draft of this contract reduced `assisted` to `dspy` alone. That was a preference, not a
+requirement — every requirement here (FR-017, SC-006, and guarantee 2 below) is satisfied either
+way, and the additive form removes nothing from anyone. Implementation chose it deliberately and
+recorded the reason in `pyproject.toml`; this contract follows.
 
 ## Guarantees
 

@@ -191,6 +191,24 @@ def test_known_extras_constant_matches_pyproject() -> None:
     assert set(MissingExtraError.KNOWN_EXTRAS) == declared
 
 
+def test_ontology_extra_excludes_dspy() -> None:
+    """`[ontology]` gives RDF support without the LLM-extraction stack.
+
+    This is the whole reason the extra exists: a client who brings their own OWL
+    ontology and runs air-gapped must not be made to install dspy to parse a
+    file. The split is additive on purpose — `assisted` keeps rdflib/networkx,
+    so no existing install, image or CI leg loses anything.
+    """
+    extras = _pyproject()["project"].get("optional-dependencies", {})
+    assert "ontology" in extras, "the `ontology` extra is not declared"
+
+    ontology = _requirement_names(extras["ontology"])
+    assert {"rdflib", "networkx"} <= ontology, (
+        f"[ontology] must carry the RDF stack: {sorted(ontology)}"
+    )
+    assert "dspy" not in ontology, f"[ontology] must not pull the LLM stack: {sorted(ontology)}"
+
+
 @pytest.mark.parametrize(
     "distribution",
     [

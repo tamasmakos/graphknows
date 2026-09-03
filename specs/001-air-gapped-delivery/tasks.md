@@ -42,8 +42,6 @@ for its own sake (Principle IV).
 **Purpose**: The one item that blocks a user story other than its own. `deploy/Dockerfile` (T002)
 installs `graphknows[ontology]`, so the extra has to be declared before the release image can build.
 
-- [ ] T001 Declare the `ontology` extra in `pyproject.toml` (move `rdflib>=7.0.0` and `networkx>=3.0` out of `assisted`, leaving `assisted = ["dspy>=2.5.0"]`), add `"ontology"` to `MissingExtraError.KNOWN_EXTRAS` in `graphknows/exceptions.py` **in the same commit** (`tests/test_packaging.py::test_known_extras_constant_matches_pyproject` asserts they agree), correct the stale `tests/test_extras.py` reference in the `pyproject.toml` comment to `tests/test_packaging.py`, and add the new node `test_ontology_extra_excludes_dspy` to `tests/test_packaging.py` asserting the extra is declared, holds `rdflib` and `networkx`, and holds no `dspy`
-  - Verify: `pytest -q tests/test_packaging.py::test_ontology_extra_excludes_dspy`
 
 **Checkpoint**: the installable surface is split; user story work can begin.
 
