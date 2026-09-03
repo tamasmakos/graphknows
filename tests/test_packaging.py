@@ -113,12 +113,100 @@ def test_missing_extra_call_sites_name_declared_extras() -> None:
     )
 
 
+def _missing_extra_call_sites() -> dict[str, set[str]]:
+    """{repo-relative source file: the extras its MissingExtraError calls name}.
+
+    An AST walk rather than a line scan: it survives a call reflowed across
+    lines, reads the extra whether it is positional or `extra=`, and never
+    matches the extra's name where it only appears in prose.
+    """
+    sites: dict[str, set[str]] = {}
+    for path in _source_files():
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:  # pragma: no cover - vendored/broken files are excluded
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if called != "MissingExtraError":
+                continue
+            extra = node.args[1] if len(node.args) > 1 else None
+            for keyword in node.keywords:
+                if keyword.arg == "extra":
+                    extra = keyword.value
+            if isinstance(extra, ast.Constant) and isinstance(extra.value, str):
+                rel = path.relative_to(REPO_ROOT).as_posix()
+                sites.setdefault(rel, set()).add(extra.value)
+    return sites
+
+
+#: The extra each MissingExtraError call site must name once `ontology` is split
+#: off `assisted`. Only the dspy path stays on `assisted`: it is the only one
+#: that actually needs dspy, and pointing an ontology user at it would install
+#: the whole LLM-extraction stack they asked not to have.
+ONTOLOGY_SPLIT_CALL_SITES = {
+    "graphknows/symbolic/ontology/rdf_io.py": "ontology",
+    "graphknows/symbolic/ontology/rdf/taxonomy.py": "ontology",
+    "graphknows/symbolic/ontology/rdf/projection.py": "ontology",
+    "graphknows/symbolic/ontology/rdf/prefixes.py": "ontology",
+    "graphknows/symbolic/ontology/digest.py": "ontology",
+    "graphknows/ingestion/extraction/relations/llm_assisted/dspy.py": "assisted",
+}
+
+
+def test_ontology_call_sites_name_the_ontology_extra() -> None:
+    """The RDF paths must send the user to `ontology`, the dspy path to `assisted`.
+
+    Both halves matter. An ontology call site left on `assisted` tells someone
+    who only wants to load their own RDF to install dspy; the dspy call site
+    moved to `ontology` sends the LLM-extraction user to an install that has no
+    dspy in it, and the error they get next is a bare ImportError.
+    """
+    found = _missing_extra_call_sites()
+    actual = {rel: sorted(found.get(rel, set())) for rel in ONTOLOGY_SPLIT_CALL_SITES}
+    expected = {rel: [extra] for rel, extra in ONTOLOGY_SPLIT_CALL_SITES.items()}
+    assert actual == expected, (
+        "MissingExtraError call sites name the wrong extra (or the file moved, "
+        f"leaving none to find):\n  expected {expected}\n  found    {actual}"
+    )
+
+    # A call site added to the ontology package later must not silently revive
+    # `assisted`: the split is a property of the package, not of six lines.
+    strays = {
+        rel: sorted(extras)
+        for rel, extras in found.items()
+        if rel.startswith("graphknows/symbolic/ontology/") and extras != {"ontology"}
+    }
+    assert not strays, f"ontology modules naming an extra other than 'ontology': {strays}"
+
+
 def test_known_extras_constant_matches_pyproject() -> None:
     """MissingExtraError.KNOWN_EXTRAS must track the real extras."""
     from graphknows.exceptions import MissingExtraError
 
     declared = set(_pyproject()["project"].get("optional-dependencies", {}))
     assert set(MissingExtraError.KNOWN_EXTRAS) == declared
+
+
+def test_ontology_extra_excludes_dspy() -> None:
+    """`[ontology]` gives RDF support without the LLM-extraction stack.
+
+    This is the whole reason the extra exists: a client who brings their own OWL
+    ontology and runs air-gapped must not be made to install dspy to parse a
+    file. The split is additive on purpose — `assisted` keeps rdflib/networkx,
+    so no existing install, image or CI leg loses anything.
+    """
+    extras = _pyproject()["project"].get("optional-dependencies", {})
+    assert "ontology" in extras, "the `ontology` extra is not declared"
+
+    ontology = _requirement_names(extras["ontology"])
+    assert {"rdflib", "networkx"} <= ontology, (
+        f"[ontology] must carry the RDF stack: {sorted(ontology)}"
+    )
+    assert "dspy" not in ontology, f"[ontology] must not pull the LLM stack: {sorted(ontology)}"
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,0 @@
-{
-  "result": {
-    "error": "run-merge-train needs a spec issue number. Pass args as an OBJECT: { spec: 201, merge: true }."
-  },
-  "logs": []
-}

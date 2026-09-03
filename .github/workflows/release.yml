@@ -27,14 +27,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      # Scoped here alone: PyPI exchanges this short-lived identity token for an
-      # upload token. No API token is stored anywhere.
-      id-token: write
+      # Scoped here alone: attaching a release asset writes to this repository.
+      # Nothing is published to a public index, so no OIDC identity is needed
+      # and no API token is stored anywhere.
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # This job authenticates to PyPI over OIDC, not with the git token,
-          # so persisting it on disk buys nothing.
+          # `gh` authenticates from GH_TOKEN at the step that needs it, so a
+          # credential persisted on disk buys nothing.
           persist-credentials: false
 
       - name: assert the tag matches the packaged version
@@ -63,7 +64,31 @@ jobs:
           name: dist
           path: dist/
 
-      - name: publish to PyPI
-        # Pinned to a full commit SHA: a mutable tag is a supply-chain surface
-        # on the one path that can publish under this project's name.
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+      - name: assemble the deployment bundle
+        # The layout mirrors the repository -- deploy/ and scripts/ at the
+        # archive root beside the wheel -- so deploy/Dockerfile builds
+        # identically from an unpacked bundle or from a checkout, and the
+        # recipient never needs access to this repository.
+        #
+        # The scripts are copied in here rather than committed under deploy/:
+        # two files that must stay byte-identical are a sync problem, and there
+        # is nothing to keep in sync if only one copy exists.
+        run: |
+          set -eu
+          bundle="graphknows-deploy-${GITHUB_REF_NAME#v}"
+          mkdir -p "${bundle}/deploy" "${bundle}/scripts"
+          cp deploy/Dockerfile deploy/compose.yaml deploy/acceptance.sh "${bundle}/deploy/"
+          cp scripts/bake_models.py scripts/preflight.py scripts/docker-entrypoint.sh "${bundle}/scripts/"
+          cp dist/*.whl "${bundle}/"
+          tar -czf "${bundle}.tar.gz" "${bundle}"
+          echo "BUNDLE=${bundle}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: attach the wheel and the deployment bundle to the release
+        # This repository is private, so its Release IS the private channel.
+        # Nothing here reaches a public package index.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1             || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/*.whl "$BUNDLE" --clobber

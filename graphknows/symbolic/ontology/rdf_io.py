@@ -1,7 +1,7 @@
 """Local-only RDF loading: the offline guard, the ``owl:imports`` closure, stable ids.
 
 Everything here runs at install/digest time. ``rdflib`` is imported INSIDE the
-functions and never at module scope — it ships in the ``assisted`` extra, and the
+functions and never at module scope — it ships in the ``ontology`` extra, and the
 runtime path reads a pre-parsed JSON digest that must stay free of an RDF stack.
 
 Four things this module exists to make structural rather than conventional.
@@ -106,7 +106,7 @@ def new_graph() -> Any:
     except ImportError as exc:
         from graphknows.exceptions import MissingExtraError
 
-        raise MissingExtraError("Parsing RDF", "assisted") from exc
+        raise MissingExtraError("Parsing RDF", "ontology") from exc
     return rdflib.Graph()
 
 

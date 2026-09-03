@@ -6,11 +6,11 @@ default, but any RDF source becomes usable by digesting it here and pointing
 ``GRAPHKNOWS_ONTOLOGY`` at the result — the loader reads a digest identically
 whichever ontology produced it. It lives in the package rather than in the repo's
 ``scripts/`` for exactly that reason: it is a user-facing tool, not a build step
-of ours. Needs the ``assisted`` extra (rdflib); nothing else here does.
+of ours. Needs the ``ontology`` extra (rdflib); nothing else here does.
 
 Why a digest rather than the raw ``.ttl``:
 
-* **No rdflib at runtime.** ``rdflib`` is in the ``assisted`` extra, but the
+* **No rdflib at runtime.** ``rdflib`` is in the ``ontology`` extra, but the
   ontology layer is always on, including in the default ``llm_free`` mode that a
   bare ``pip install graphknows`` gives you. Reading a plain JSON digest keeps
   the base install free of an RDF stack it would otherwise need on every ingest,
@@ -314,14 +314,14 @@ class _Reader:
 def build(sources: Sequence[Path]) -> dict[str, Any]:
     """Parse *sources* into ``{"classes": [...], "properties": [...]}``."""
     # Deferred, and the only door into rdflib in this module: `_Reader` is built
-    # here and nowhere else. rdflib ships in the `assisted` extra, so a base
+    # here and nowhere else. rdflib ships in the `ontology` extra, so a base
     # install can import this module (and load a digest) without an RDF stack.
     try:
         from rdflib import OWL, RDF, RDFS, SKOS
     except ImportError as exc:
         from graphknows.exceptions import MissingExtraError
 
-        raise MissingExtraError("Building an ontology digest", "assisted") from exc
+        raise MissingExtraError("Building an ontology digest", "ontology") from exc
 
     paths = _files(sources)
     # rdflib loads exactly one document per parse and follows no `owl:imports`,

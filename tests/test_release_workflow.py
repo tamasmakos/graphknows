@@ -160,54 +160,72 @@ def test_version_is_never_hand_restated_in_the_workflow() -> None:
     )
 
 
-def test_publishes_via_trusted_publisher_sha_pinned_no_stored_token() -> None:
-    """Publishing must go through PyPI's Trusted Publisher (OIDC) with the
-    publish action SHA-pinned (a mutable tag is a supply-chain hole) and no
-    stored API token."""
+def test_publishes_wheel_as_private_release_asset() -> None:
+    """The wheel is attached to this private repository's Release, never sent to
+    a public package index.
+
+    This replaces the Trusted Publisher assertions this file used to carry.
+    FR-007 reversed the requirement they encoded, so the check moves with the
+    requirement rather than being deleted: everything the old node protected is
+    still protected here -- no stored token, no build in the publish job, and
+    now additionally no public index.
+    """
     text = _release_text()
-    assert re.search(r"uses:\s*pypa/gh-action-pypi-publish@([0-9a-f]{40})\b", text), (
-        f"{RELEASE}: `pypa/gh-action-pypi-publish` is not pinned to a 40-char "
-        "commit SHA — a mutable tag (e.g. @v1.2.3) is a supply-chain risk"
+    assert "gh release upload" in text, (
+        f"{RELEASE}: the wheel is not attached to the Release -- `gh release upload` is absent"
     )
-    assert "secrets.PYPI" not in text, (
-        f"{RELEASE}: references `secrets.PYPI*` — publishing must use "
-        "Trusted Publisher (OIDC), not a stored token"
+    assert "pypa/gh-action-pypi-publish" not in text, (
+        f"{RELEASE}: still publishes to PyPI; the artifact must stay private"
     )
-    assert "password:" not in text, (
-        f"{RELEASE}: has a `password:` line — publishing must use Trusted "
-        "Publisher (OIDC), not a stored token"
-    )
-    assert "api_token" not in text, (
-        f"{RELEASE}: references `api_token` — publishing must use Trusted "
-        "Publisher (OIDC), not a stored token"
-    )
+    for forbidden, why in (
+        ("secrets.PYPI", "a stored PyPI token"),
+        ("password:", "a stored password"),
+        ("api_token", "a stored API token"),
+        ("id-token", "an OIDC identity, which only a public index needs"),
+    ):
+        assert forbidden not in text, (
+            f"{RELEASE}: references {forbidden} -- {why} has no place here"
+        )
 
 
-def test_id_token_write_is_scoped_to_the_publish_job_only() -> None:
-    """`id-token: write` must appear exactly once, indented as a job-level
-    `permissions:` entry — never granted at the workflow's top-level
-    `permissions:` block, which would over-grant it to every job."""
+def test_contents_write_is_scoped_to_the_publish_job_only() -> None:
+    """`contents: write` must appear exactly once, indented as a job-level
+    `permissions:` entry -- never at the workflow's top-level `permissions:`
+    block, which would over-grant write to every job."""
     text = _release_text()
-    occurrences = [line for line in text.splitlines() if re.search(r"id-token:\s*write", line)]
+    occurrences = [line for line in text.splitlines() if re.search(r"contents:\s*write", line)]
     assert len(occurrences) == 1, (
-        f"{RELEASE}: expected exactly one `id-token: write` line, found {len(occurrences)}"
+        f"{RELEASE}: expected exactly one `contents: write` line, found {len(occurrences)}"
     )
-    line = occurrences[0]
-    leading_spaces = len(line) - len(line.lstrip(" "))
-    assert leading_spaces >= 6, (
-        f"{RELEASE}: `id-token: write` is indented {leading_spaces} spaces — "
-        f"expected a job-level `permissions:` block (>=6 spaces), got: {line.strip()!r}"
+    assert occurrences[0].startswith("      "), (
+        f"{RELEASE}: `contents: write` is not indented as a job-level permission: {occurrences[0]!r}"
     )
-    top_level_permissions = re.search(r"^permissions:\n((?:^\s{2}.*\n?)*)", text, re.MULTILINE)
-    assert top_level_permissions is not None, f"{RELEASE}: no top-level `permissions:` block found"
-    top_block = top_level_permissions.group(1)
-    assert "contents: read" in top_block, (
-        f"{RELEASE}: top-level `permissions:` block does not grant `contents: read`"
+
+
+def test_release_attaches_a_self_contained_deployment_bundle() -> None:
+    """The Release must carry a bundle a client can build from without any
+    access to this repository (FR-010, FR-010a).
+
+    It has to hold the deployment definition AND the operational scripts, which
+    are in no wheel, arranged in the repo-relative layout `deploy/Dockerfile`
+    expects -- otherwise the same Dockerfile cannot serve both a bundle and a
+    checkout.
+    """
+    text = _release_text()
+    for needed in (
+        "deploy/Dockerfile",
+        "deploy/compose.yaml",
+        "deploy/acceptance.sh",
+        "scripts/bake_models.py",
+        "scripts/preflight.py",
+        "scripts/docker-entrypoint.sh",
+    ):
+        assert needed in text, f"{RELEASE}: the deployment bundle does not carry {needed}"
+    assert re.search(r'mkdir -p "\$\{bundle\}/deploy" "\$\{bundle\}/scripts"', text), (
+        f"{RELEASE}: the bundle does not mirror the repository layout "
+        "(deploy/ and scripts/ at its root), so deploy/Dockerfile cannot build from it"
     )
-    assert "id-token: write" not in top_block, (
-        f"{RELEASE}: top-level `permissions:` block grants `id-token: write` — "
-        "it must be scoped to the publish job only"
-    )
+    assert "$BUNDLE" in text, f"{RELEASE}: the assembled bundle is never uploaded"
 
 
 def test_has_its_own_non_cancelling_concurrency_group() -> None:
@@ -246,15 +264,26 @@ def test_docs_name_the_module_the_build_backend_actually_reads() -> None:
 
 
 def test_docs_describe_the_tag_push_release_mechanism() -> None:
-    """The release checklist must document pushing the tag, the one-time
-    Trusted Publisher registration, and the fix-forward rule (a tag is never
-    deleted/re-pushed) — otherwise the new mechanism is undocumented."""
+    """The release checklist must document pushing the tag, where the artifact
+    goes, and the fix-forward rule (a tag is never deleted/re-pushed) —
+    otherwise the mechanism is undocumented.
+
+    Re-pinned with the workflow: this used to require the one-time Trusted
+    Publisher registration, which FR-007 removed along with the public index.
+    The doc must now state the private Release channel instead, at the same
+    strictness."""
     text = VERSIONING_DOC.read_text(encoding="utf-8")
     assert re.search(r"git push.*tag|push the tag", text, re.IGNORECASE), (
         f"{VERSIONING_DOC}: does not mention pushing the release tag"
     )
-    assert "Trusted Publisher" in text, (
-        f"{VERSIONING_DOC}: does not mention the one-time Trusted Publisher registration"
+    assert re.search(r"Release asset|GitHub Release", text), (
+        f"{VERSIONING_DOC}: does not say the artifact is attached to a GitHub Release"
+    )
+    assert re.search(r"not published to PyPI|nowhere public|[Nn]owhere public", text), (
+        f"{VERSIONING_DOC}: does not state that the release never reaches a public index"
+    )
+    assert "deployment bundle" in text, (
+        f"{VERSIONING_DOC}: does not document the deployment bundle attached beside the wheel"
     )
     assert re.search(r"fix[- ]forward", text, re.IGNORECASE), (
         f"{VERSIONING_DOC}: does not document the fix-forward rule"

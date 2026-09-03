@@ -47,23 +47,38 @@ automated. It reruns the full CI gate (`ci.yml`, called by reference), then
 asserts that the pushed tag
 matches the `__version__` literal in `graphknows/_version.py`. If they
 disagree, the run fails before any upload, reporting both values. Only then
-does it publish the wheel and sdist that CI itself built — no separate build
-step, no hand-run `uv build` from a laptop.
+does it attach the wheel that CI itself built — no separate build step, no
+hand-run `uv build` from a laptop.
 
-### One-time: Trusted Publisher registration
+### Where a release goes
 
-Before the first tagged release can publish, a maintainer must register this
-repository as a Trusted Publisher in PyPI's web interface (project name, this
-repository, workflow filename `release.yml`, environment field left empty).
-This is maintainer configuration outside the repository — nothing here can
-verify it has been done. Until it has, the publish step fails with an OIDC
-identity error; that error means the registration is missing, not that the
-workflow is broken.
+**Nowhere public.** The wheel is attached as an asset on this private
+repository's GitHub Release for the pushed tag; it is not published to PyPI or
+any other public index. The Release is the private channel, and access to the
+repository is what gates access to the artifact.
+
+Two assets are attached:
+
+| Asset | What it is |
+| --- | --- |
+| `graphknows-<version>-py3-none-any.whl` | the library, the same bytes CI tested |
+| `graphknows-deploy-<version>.tar.gz` | the deployment bundle: `deploy/` and `scripts/` beside the wheel, in the repository's own layout, so `deploy/Dockerfile` builds identically from the unpacked bundle or from a checkout |
+
+The bundle exists because a recipient must be able to build the deployment
+without access to this repository. `scripts/` ships in no wheel, so the bundle
+carries it rather than the client cloning for three files.
+
+There is no one-time registration step. Attaching a Release asset needs only
+`contents: write`, scoped to the publish job, and no stored token: earlier
+releases used PyPI's Trusted Publisher over OIDC, and that machinery is gone
+along with the public index it served.
 
 ### Recovering from a failed release
 
-PyPI refuses to accept a re-upload of a filename that already exists, and a
-pushed tag is not cleanly re-pushable. Recover **fix-forward**: bump to the
-next version, add a CHANGELOG entry, and tag again. Never delete and re-push
-a tag, and never attempt to re-upload a filename — neither is recoverable
-the way a normal bump-and-retag is.
+A pushed tag is not cleanly re-pushable. Recover **fix-forward**: bump to the
+next version, add a CHANGELOG entry, and tag again. Never delete and re-push a
+tag — it is not recoverable the way a normal bump-and-retag is.
+
+Re-running the upload for the *same* tag is safe (assets are attached with
+`--clobber`), which is the one thing that got easier: a public index would have
+refused a re-upload of a filename it had already seen.

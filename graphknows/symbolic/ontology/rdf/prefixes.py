@@ -159,7 +159,7 @@ class Prefixes:
         """Adopt ``vann:preferredNamespacePrefix`` declarations, returning the count.
 
         The one declaration an ontology makes about its OWN prefix, as opposed to
-        the per-document bindings a serializer invents. Needs the ``assisted``
+        the per-document bindings a serializer invents. Needs the ``ontology``
         extra; every other method here is stdlib.
         """
         try:
@@ -167,7 +167,7 @@ class Prefixes:
         except ImportError as exc:
             from graphknows.exceptions import MissingExtraError
 
-            raise MissingExtraError("Reading vann prefix declarations", "assisted") from exc
+            raise MissingExtraError("Reading vann prefix declarations", "ontology") from exc
 
         pnp = URIRef("http://purl.org/vocab/vann/preferredNamespacePrefix")
         pnu = URIRef("http://purl.org/vocab/vann/preferredNamespaceUri")

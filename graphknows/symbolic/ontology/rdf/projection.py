@@ -31,7 +31,7 @@ restriction filler is not subsumption at all. Each edge therefore carries a
 ``via`` in ``{direct, genus, disjunct, restriction, complement, enumeration,
 expression}``, and the taxonomy layer reads it.
 
-Needs the ``assisted`` extra (rdflib, networkx). The tables below are stdlib.
+Needs the ``ontology`` extra (rdflib, networkx). The tables below are stdlib.
 """
 
 from __future__ import annotations
@@ -528,7 +528,7 @@ def project(graph: Any) -> tuple[Any, dict[str, NodeMeta], Prefixes, dict[str, P
     except ImportError as exc:
         from graphknows.exceptions import MissingExtraError
 
-        raise MissingExtraError("Projecting RDF onto a property graph", "assisted") from exc
+        raise MissingExtraError("Projecting RDF onto a property graph", "ontology") from exc
 
     pfx = Prefixes()
     if adopted := pfx.learn_vann(graph):

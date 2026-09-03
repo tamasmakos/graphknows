@@ -1,0 +1,529 @@
+// Self-checks for the decisions the workflows make in plain JS rather than in a prompt.
+//
+// THIS FILE IS THE ONLY THING HOLDING THE FOUR WORKFLOW SCRIPTS TOGETHER. Workflow scripts
+// cannot import, so prepare-tickets.js, process-issues.js, run-merge-train.js and
+// express-lane.js each re-declare the constants and rules they share -- the labels, the
+// harness list, Kahn's algorithm, the probe flag and its verdict vocabulary. Nothing at
+// runtime notices when two of them drift apart: the train files behind a gate the child no
+// longer checks, or probes with values the child does not recognise, and the only symptom is
+// work that quietly does not happen. Every check below is sliced out of the workflow SOURCE
+// rather than copied, because a copy drifts too and then the test tests the copy.
+//
+// All of them are load-bearing and all silent when wrong:
+//   - process-issues' change classifier, which decides whether the wheel gate runs -- the
+//     one skip in that pipeline with no post-submit safety net.
+//   - the label vocabulary the two workflows must share, with no imports to share it.
+//   - prepare-tickets' handover check, which is the only thing standing between a malformed issue body
+//     and the process-issues half that reads nothing else.
+//   - run-merge-train's admission, ordering and dependent-parking helpers, which decide what an
+//     N-merge autonomous run is allowed to touch, and its express classifier, which decides
+//     which cars get reviewed as a batch instead of one at a time.
+//   - that .gitignore still covers where the workflows write, and still does NOT cover the
+//     rules they read.
+//   - the teardown instruction, which the three scripts that can complete a merge each
+//     declare -- a car that merges and leaves its compose stack up OOM-kills the pre-push
+//     gate for every later branch, and nothing reports it.
+//   - the `probes` flag and its verdict vocabulary, which all four scripts declare and which
+//     a train hands down to its children -- the acceptance probe decides whether a car runs
+//     at all, so a script that spells its values differently stops probing in silence.
+//
+//   node .claude/workflows/gates.test.mjs
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+
+const src = readFileSync(new URL('./process-issues.js', import.meta.url), 'utf8')
+const from = src.indexOf('const norm = ')
+const to = src.indexOf('// Whether the stage should run')
+assert.ok(from > 0 && to > from, 'classifier block not found in process-issues.js -- did the markers move?')
+const { classify, SKIPPABLE } = await import(
+  'data:text/javascript,' + encodeURIComponent(src.slice(from, to) + '\nexport { classify, SKIPPABLE }')
+)
+
+const plan = (files, extra = {}) => ({ tasks: [{ files }], ...extra })
+
+// -- kinds --
+assert.equal(classify(plan(['tests/test_x.py']), null).kind, 'test-only')
+assert.equal(classify(plan(['docs/modes.md', 'README.md']), null).kind, 'docs')
+assert.equal(classify(plan(['graphknows/symbolic/index.py']), null).kind, 'code')
+assert.equal(classify(plan([]), null).kind, 'unknown', 'no evidence is the expensive class, not the cheap one')
+// Mixed docs+tests is neither pure class; it must not read as docs-only.
+assert.equal(classify(plan(['docs/modes.md', 'tests/test_x.py']), null).kind, 'test-only')
+// Windows separators and ./ prefixes normalise.
+assert.equal(classify(plan(['tests\\test_x.py', './tests/test_y.py']), null).kind, 'test-only')
+
+// -- what forces a test-only change back up to code --
+assert.equal(classify(plan(['tests/test_x.py', 'pyproject.toml']), null).kind, 'code')
+assert.equal(classify(plan(['tests/test_x.py'], { new_dependencies: ['rdflib>=7'] }), null).kind, 'code')
+
+// -- measurement wins over an under-reporting plan --
+const measured = classify(plan(['tests/test_x.py']), { changed_files: ['graphknows/core.py'] })
+assert.equal(measured.kind, 'code', 'a file the plan never named must still count')
+assert.equal(measured.measured, true)
+assert.equal(classify(plan(['tests/test_x.py']), null).measured, false)
+
+// -- the policy: the wheel gate is the one that must stay hard to skip --
+const pkg = SKIPPABLE.package
+assert.equal(pkg(classify(plan(['tests/test_x.py']), null)), true)
+assert.equal(pkg(classify(plan(['graphknows/core.py']), null)), false)
+assert.equal(pkg(classify(plan([]), null)), false, 'unknown must never skip the wheel gate')
+assert.equal(pkg(classify(plan(['tests/test_x.py'], { api_surface: 'Memory.recall' }), null)), false)
+assert.equal(pkg(classify(plan(['tests/test_x.py'], { new_dependencies: ['x'] }), null)), false)
+// A docs-only change is NOT wheel-skippable, on purpose: README.md is the wheel
+// long_description, and `twine check` is the only thing here that renders it.
+assert.equal(pkg(classify(plan(['docs/modes.md']), null)), false)
+
+// -- dogfood and docs are the cheap-if-wrong pair --
+assert.equal(SKIPPABLE.dogfood(classify(plan(['docs/modes.md']), null)), true)
+assert.equal(SKIPPABLE.dogfood(classify(plan(['graphknows/core.py']), null)), false)
+
+// dogfood reads the DATA the code produces, so what matters is whether the diff touches the
+// import package -- not whether it is "code". scripts/, .github/ and the Dockerfile are all
+// kind:'code' and none of them produce a record anyone reads.
+assert.equal(classify(plan(['graphknows/core.py']), null).kind, 'code')
+assert.equal(SKIPPABLE.dogfood(classify(plan(['scripts/gate.sh', 'Dockerfile']), null)), true, 'a build-only change produces no data to taste')
+assert.equal(classify(plan(['scripts/gate.sh']), null).kind, 'code', 'and it is still code -- only dogfood skips')
+assert.equal(SKIPPABLE.dogfood(classify(plan([]), null)), false, 'no file list must not skip on ignorance')
+// the import package can differ from the distribution name; the third arg is that name
+assert.equal(SKIPPABLE.dogfood(classify(plan(['graph_knows/core.py']), null, 'graph_knows')), false)
+assert.equal(SKIPPABLE.dogfood(classify(plan(['graph_knows/core.py']), null)), true, 'the wrong package name reads as untouched')
+// a prefix that merely starts the same is a different directory
+assert.equal(SKIPPABLE.dogfood(classify(plan(['graphknows_extra/x.py']), null)), true)
+assert.equal(SKIPPABLE.docs(classify(plan(['tests/test_x.py']), null)), true)
+assert.equal(SKIPPABLE.docs(classify(plan(['docs/modes.md']), null)), false, 'a docs change is exactly when docs runs')
+
+// -- the body an agent-found issue is filed with --
+//
+// Nearly every open issue in this repo is agent-found, and until this check existed the path
+// that files them was the only one with no body check at all. A followup with no "## Verify"
+// cannot satisfy the Definition of Done's first rule, so it needs a human-written
+// "## Agent Brief" comment before anything can start on it.
+const from4 = src.indexOf('const FOLLOWUP_SECTIONS = ')
+const to4 = src.indexOf('// -- Per-issue pipeline')
+assert.ok(from4 > 0 && to4 > from4, 'checkFollowupBody not found in process-issues.js -- did the markers move?')
+const { checkFollowupBody } = await import(
+  'data:text/javascript,' + encodeURIComponent(src.slice(from4, to4) + '\nexport { checkFollowupBody }')
+)
+
+const bugBody = [
+  '## Symptom', 'x', '## Where', 'a.py:1', '## Concrete failure scenario', 'x -> y',
+  '## Verify', '`pytest -q` fails on a.py', '## Out of scope', 'the rest',
+].join('\n')
+const enhBody = [
+  '## What to build', 'x', '## Acceptance criteria', '- [ ] x',
+  '## Verify', '`pytest -q` passes', '## Out of scope', 'the rest',
+].join('\n')
+
+assert.deepEqual(checkFollowupBody(bugBody, 'bug'), [])
+assert.deepEqual(checkFollowupBody(enhBody, 'enhancement'), [])
+
+// the section this whole check exists for
+assert.match(checkFollowupBody(bugBody.replace('## Verify\n', ''), 'bug').join(), /"## Verify"/)
+assert.match(checkFollowupBody(enhBody.replace('## Verify\n', ''), 'enhancement').join(), /"## Verify"/)
+assert.match(checkFollowupBody(enhBody.replace('## Out of scope\n', ''), 'enhancement').join(), /"## Out of scope"/)
+
+// bold labels are what the followup filer used to emit; they must not pass as sections
+assert.ok(checkFollowupBody('**Symptom** x / **Where** a.py:1', 'bug').length >= 4, 'bold labels are not sections')
+// an unknown kind is checked as the expensive class, not waved through
+assert.ok(checkFollowupBody('', undefined).length > 0, 'an unknown kind must still be checked')
+assert.deepEqual(checkFollowupBody(bugBody, 'not-a-kind'), [], 'unknown kind falls back to the bug contract')
+// a pipeline ticket has "## Parent"; a followup is its own root and must not be asked for one
+assert.ok(!checkFollowupBody('', 'bug').join().includes('Parent'))
+
+// -- the two workflows must agree on the vocabulary of the gate --
+//
+// prepare-tickets.js files issues behind GATE_LABEL and process-issues.js refuses to pick them up while
+// they carry it. Workflow scripts cannot import, so each declares the constants itself. If
+// they ever drift, prepare-tickets files behind a gate process-issues no longer checks and nothing
+// errors -- the issues just sit there, or worse, get worked without a human agreeing.
+const rnd = readFileSync(new URL('./prepare-tickets.js', import.meta.url), 'utf8')
+const train = readFileSync(new URL('./run-merge-train.js', import.meta.url), 'utf8')
+const express = readFileSync(new URL('./express-lane.js', import.meta.url), 'utf8')
+// Tolerates the `opt.x || 'default'` form these constants take where a caller may override
+// the machine they run on -- the DEFAULT is what has to agree across the four files.
+const konst = (text, name) => text.match(new RegExp(`^const ${name} = (?:[\\w.]+ \\|\\| )?'([^']*)'`, 'm'))?.[1]
+
+// RUNS_DIR joins the drift check for a reason of its own: it is the one path in these
+// scripts that .gitignore has an opinion about. If a workflow drifts to a directory the
+// ignore rule does not cover, that run's report gets committed; if .gitignore drifts away
+// from the directory, every report gets committed. Neither errors, and both are noticed
+// months later by someone reading a diff full of machine output.
+for (const name of ['GATE_LABEL', 'READY_LABEL', 'MAIN_REPO', 'RUNS_DIR']) {
+  const a = konst(src, name)
+  for (const [fname, text] of [['prepare-tickets.js', rnd], ['run-merge-train.js', train], ['express-lane.js', express]]) {
+    const b = konst(text, name)
+    assert.ok(a, `${name} not found in process-issues.js`)
+    assert.ok(b, `${name} not found in ${fname}`)
+    assert.equal(b, a, `${name} has drifted between process-issues.js and ${fname}`)
+  }
+}
+
+// ...and the ignore rule must actually cover it. This is the half the constant-drift check
+// above cannot see: the three scripts can agree perfectly on a directory git commits.
+const ignoreRules = readFileSync(new URL('../../.gitignore', import.meta.url), 'utf8')
+  .split('\n')
+  .map((l) => l.trim())
+  .filter((l) => l && !l.startsWith('#'))
+const runsDir = konst(src, 'RUNS_DIR')
+assert.ok(
+  ignoreRules.includes(`${runsDir}/`) || ignoreRules.includes(runsDir),
+  `.gitignore does not cover ${runsDir} -- every run report would be committed`,
+)
+// The rules an agent READS sit beside what it writes and must NOT be swept up by that rule.
+for (const kept of ['docs/agents/definition-of-done.md', 'docs/agents/triage-labels.md']) {
+  assert.ok(
+    !ignoreRules.some((r) => r === kept || r === 'docs/agents/' || r === 'docs/agents'),
+    `${kept} is ignored -- an agent in a worktree cannot read it, so the rules end up restated in every ticket`,
+  )
+}
+
+// -- the three scripts that finish a merge must all stop the stack --
+//
+// `docker compose` names its project after the worktree directory, so a car's ArcadeDB comes
+// up as gk-issue-<n>-arcadedb-1 and nothing else ever stops it. Five leaked stacks held
+// ~14.7GB of a 31.2GB allocation and the pre-push gate died with `Killed` mid-suite -- on
+// EVERY branch, not just the one that leaked. So the rule is: a merge that succeeded tears
+// down its stack and its tree; anything else keeps both, because that is what a human
+// debugs. Three scripts merge -- process-issues per car, express-lane per batch, and
+// run-merge-train on the recovery path where the child already returned "not merged" and so
+// never ran its own teardown. Each declares the instruction itself; they must not drift.
+const TEARDOWN_MARK = 'docker compose down --remove-orphans'
+for (const [fname, text] of [['process-issues.js', src], ['express-lane.js', express], ['run-merge-train.js', train]]) {
+  assert.ok(text.includes(TEARDOWN_MARK), `${fname} never stops the compose stack it started -- a leaked stack OOM-kills the gate for every branch`)
+  assert.match(text, /Only if the merge SUCCEED|Only on success/i, `${fname} must tear down ONLY on a successful merge -- a parked car's stack is what a human debugs`)
+}
+// The instruction itself, verbatim in EVERY script that carries it -- the three above plus
+// prepare-tickets, which merges nothing but cuts a probe worktree and must stop whatever a
+// ticket's "## Verify" command started in it. A copy that drifted to `-f` or dropped
+// --remove-orphans would leak the orphans that were the actual 14.7GB.
+const teardownLine = (text) => text.match(/^const teardown = \(worktree\) =>\n(.*)$/m)?.[1]
+const teardownOwners = [['process-issues.js', src], ['express-lane.js', express], ['run-merge-train.js', train], ['prepare-tickets.js', rnd]]
+const teardowns = teardownOwners.map(([, text]) => teardownLine(text))
+for (const [i, [fname]] of teardownOwners.entries()) {
+  assert.ok(teardowns[i], `${fname} has no teardown helper -- it creates a worktree nothing else will clean up`)
+}
+assert.equal(new Set(teardowns).size, 1, 'the teardown instruction has drifted between the scripts that carry it')
+
+// -- all four scripts must mean the same thing by `probes` --
+//
+// The acceptance probe runs at four points across four files -- filing, dispatch, the
+// express batch, and a car whose reproduction will not go red -- and one flag governs all of
+// them. A train hands `probes` down to its children, so a script that spelled the values
+// differently, or defaulted to acting rather than watching, would either act on a verdict
+// nobody agreed to trust or silently stop probing. Neither errors.
+const PROBE_FLAG = "const PROBES = ['shadow', 'on', 'off'].includes(opt.probes) ? opt.probes : 'on'"
+for (const [fname, text] of [
+  ['process-issues.js', src],
+  ['prepare-tickets.js', rnd],
+  ['run-merge-train.js', train],
+  ['express-lane.js', express],
+]) {
+  assert.ok(text.includes(PROBE_FLAG), `${fname} does not declare the probes flag exactly as the other three do`)
+}
+// The probe defaults to ACTING, everywhere. It was 'shadow' first, on the rule that a
+// predicate deciding whether work happens is watched before it is trusted -- and the
+// watching produced its answer on the #307 train, 2026-08-31: the probe ran #247's
+// "## Verify" against the tip, reported passes=true, and shadow mode cut it a full 15-stage
+// car regardless. Roughly 1.5M tokens to redo work already on the branch. A measurement
+// taken and then ignored is worse than one never taken, so the counter earned the promotion.
+//
+// If THIS assertion is what fails, the question is the mirror of the old one: what did
+// acting on the verdict cost that watching it did not? The risk it accepts is a "## Verify"
+// too weak to see missing work, which closes a live ticket -- visible, and invited back by
+// the close comment. Demote it only with a case that concrete.
+assert.ok(PROBE_FLAG.endsWith("'on'"), 'the probe must default to acting on its verdict, not to reporting it')
+// The verdict vocabulary the four share. `ran` is the field that separates "this ticket has
+// work left in it" from "nobody can tell", and conflating them closes live tickets.
+for (const [fname, text] of [['process-issues.js', src], ['run-merge-train.js', train]]) {
+  assert.match(text, /required: \['ran', 'passes'\]/, `${fname}'s PROBE_SCHEMA must require both ran and passes`)
+}
+
+// -- the dry-run harness must not shadow its own fixtures --
+//
+// CANNED is one object literal keyed by agent-label prefix, shared by every workflow. A
+// duplicate key is not an error in JS: the last one silently wins, the stage keyed by the
+// first gets another workflow's data, and the dry-run reports "no problems found" while
+// quietly skipping a stage. That happened -- an express-lane `ship` fixture shadowed
+// process-issues', and the only symptom was an agent count one lower than the run before.
+const dry = readFileSync(new URL('./dryrun.mjs', import.meta.url), 'utf8')
+const cannedBody = dry.slice(dry.indexOf('const CANNED = {'), dry.indexOf('// Canned CHILD WORKFLOW results'))
+const cannedKeys = [...cannedBody.matchAll(/^ {2}'?([A-Za-z][\w:-]*)'?:/gm)].map((m) => m[1])
+const dupes = cannedKeys.filter((k, i) => cannedKeys.indexOf(k) !== i)
+assert.deepEqual([...new Set(dupes)], [], 'duplicate keys in dryrun.mjs CANNED -- the later one silently wins and a stage gets the wrong fixture')
+
+// -- prepare-tickets' handover check: the bodies are the whole contract ------
+//
+// The issue body is the only thing process-issues reads, so a missing section is a broken
+// handover. Sliced out of prepare-tickets.js rather than copied, for the same reason as above.
+const from2 = rnd.indexOf('const checkHandover = ')
+const to2 = rnd.indexOf('let drafted = draft.tickets')
+assert.ok(from2 > 0 && to2 > from2, 'checkHandover not found in prepare-tickets.js -- did the markers move?')
+// labelCheck names the two labels, which are declared far above the slice. Inject them --
+// and assert first that what we inject still matches what the file declares, or the test
+// would happily prove a rule about strings the workflow no longer uses.
+const LABELS = "const GATE_LABEL = 'needs-triage'\nconst READY_LABEL = 'ready-for-agent'\n"
+assert.equal(konst(rnd, 'GATE_LABEL'), 'needs-triage')
+assert.equal(konst(rnd, 'READY_LABEL'), 'ready-for-agent')
+const { checkHandover, gateFor, HARNESS, labelCheck } = await import(
+  'data:text/javascript,' + encodeURIComponent(LABELS + rnd.slice(from2, to2) + '\nexport { checkHandover, gateFor, HARNESS, labelCheck }')
+)
+
+// spec-kit's spec template, which prepare-tickets adopted at the spec level: its three
+// mandatory sections plus the two this repo adds (Implementation Decisions cites the ADR,
+// Testing Decisions carries the seams -- spec-kit has no equivalent for either).
+const SPEC =
+  '## User Scenarios & Testing\n### User Story 1 - Recall by instant (Priority: P1)\nx\n' +
+  '## Requirements\n- **FR-001**: the chunk writer MUST derive an episodic index.\n' +
+  '## Success Criteria\n- **SC-001**: recall returns the right chunk for a known instant in 100% of cases.\n' +
+  '## Implementation Decisions\nRecorded in docs/adr/0004-episodic-index.md.\n' +
+  '## Testing Decisions\nTested at the chunk writer.\n'
+const body =
+  '## Parent\nthe parent spec issue\n## What to build\nx\n' +
+  '## Acceptance criteria\n- [ ] WHEN a chunk is stored THE SYSTEM SHALL return it by instant\n' +
+  '## Verify\n`pytest -q` passes\n## Out of scope\nBack-filling.\n'
+// verify carries the one command the probe stage actually executes -- at filing, to prove
+// the ticket is not already satisfied, and again at dispatch to prove it still is not.
+const tk = (blocked_by_index, over = {}) => ({ title: 't', body, verify: 'pytest -q tests/test_chunks.py::test_by_instant', blocked_by_index, ...over })
+
+// clean set passes and comes back in dependency order
+const ok = checkHandover(SPEC, ['the chunk writer'], [tk([1]), tk([])])
+assert.deepEqual(ok.problems, [])
+assert.deepEqual(ok.order, [1, 0], 'blockers must be filed before what they block')
+
+// a seam the body never names is the failure this check exists for
+assert.match(
+  checkHandover(SPEC, ['the retrieval fuser'], [tk([])]).problems.join(),
+  /never names the seam/,
+)
+// every mandatory section is refused by name, not just the one that used to be checked
+for (const heading of ['User Scenarios & Testing', 'Requirements', 'Success Criteria', 'Implementation Decisions', 'Testing Decisions']) {
+  const stripped = SPEC.replace('## ' + heading + '\n', '')
+  assert.match(
+    checkHandover(stripped, [], [tk([])]).problems.join(),
+    new RegExp(`no "## ${heading.replace('&', '&')}" section`),
+    `a spec missing ## ${heading} must be refused`,
+  )
+}
+// a template annotation the writer forgot to strip is punctuation, not a missing section
+assert.deepEqual(
+  checkHandover(SPEC.replace('## Requirements', '## Requirements *(mandatory)*'), ['the chunk writer'], [tk([])]).problems,
+  [],
+  'a heading still carrying the template annotation *(mandatory)* is still that heading',
+)
+// The "## Verify" heading being present was never the same thing as a command existing, and
+// something has to RUN this one: at filing to prove the ticket is not already satisfied on
+// today's tip, and again at dispatch to prove it still is not. Prose cannot be run, and
+// neither can two commands.
+assert.match(checkHandover(SPEC, [], [tk([], { verify: '' })]).problems.join(), /no runnable command under verify/)
+assert.match(checkHandover(SPEC, [], [tk([], { verify: '   ' })]).problems.join(), /no runnable command under verify/, 'whitespace is not a command')
+assert.match(
+  checkHandover(SPEC, [], [tk([], { verify: 'pytest -q\nthen read the output' })]).problems.join(),
+  /gives 2 lines under verify where one command is required/,
+)
+// an unnumbered requirement or criterion cannot be cited by a ticket or counted by analyze
+assert.match(checkHandover(SPEC.replace('FR-001', 'FR'), [], [tk([])]).problems.join(), /no FR-### functional requirement/)
+assert.match(checkHandover(SPEC.replace('SC-001', 'SC'), [], [tk([])]).problems.join(), /no SC-### success criterion/)
+
+// a ticket missing any required section
+for (const missing of ['## Parent', '## What to build', '## Acceptance criteria', '## Verify', '## Out of scope']) {
+  const stripped = body.replace(missing + '\n', '')
+  assert.ok(
+    checkHandover(SPEC, [], [tk([], { body: stripped })]).problems.length > 0,
+    `a body missing ${missing} must be refused`,
+  )
+}
+
+// -- the acceptance-criterion form --
+//
+// A criterion that describes the TREE instead of the behaviour is a test specification
+// wearing a checkbox, and the implementer writes that test: 25 of them once came back as a
+// 528-line test file in a change whose entire point was deletion. Caught by shape, because
+// by the time a reviewer could catch it by taste the file already exists.
+const withCriterion = (text) =>
+  body.replace('- [ ] WHEN a chunk is stored THE SYSTEM SHALL return it by instant', `- [ ] ${text}`)
+const criterionProblems = (text) => checkHandover(SPEC, [], [tk([], { body: withCriterion(text) })]).problems.join()
+
+assert.match(criterionProblems('scripts/ contains exactly four files'), /state of the tree/)
+assert.match(criterionProblems('docs/versioning.md is deleted'), /state of the tree/)
+assert.match(criterionProblems('the HEALTHCHECK block has been removed'), /state of the tree/)
+assert.match(criterionProblems('the lock-hash write no longer exists'), /state of the tree/)
+assert.equal(criterionProblems('WHEN the image is built THE SYSTEM SHALL start with a working interpreter'), '')
+// The word "removed" describing BEHAVIOUR is not a tree assertion -- the check keys on the
+// grammar of "<thing> is removed", not on the vocabulary.
+assert.equal(criterionProblems('WHEN a stale entry expires THE SYSTEM SHALL drop it from the index'), '')
+
+// A marker is a question for the requester, not a ticket. It must never be filed as work
+// an agent may start on.
+assert.match(
+  checkHandover(SPEC, [], [tk([], { body: body + '\n[NEEDS CLARIFICATION: which backend?]\n' })]).problems.join(),
+  /NEEDS CLARIFICATION/,
+)
+
+// The spec was the one body nothing bounded, and one reached 56 KB of GitHub's cap.
+const bigSpec = SPEC + 'filler\n'.repeat(401)
+assert.match(checkHandover(bigSpec, [], [tk([])]).problems.join(), /spec body is \d+ lines, over 400/)
+
+// size. Structure was checkable here from the start; size was not bounded anywhere, and
+// that is the asymmetry that produced a twenty-six-criterion "tracer bullet".
+const TAIL = '## Verify\n`pytest -q` passes\n## Out of scope\nBack-filling.\n'
+const acs = (n) => `## Parent\nx\n## What to build\nx\n## Acceptance criteria\n${'- [ ] x\n'.repeat(n)}${TAIL}`
+assert.deepEqual(checkHandover(SPEC, [], [tk([], { body: acs(8) })]).problems, [], '8 criteria is the ceiling, not over it')
+assert.match(checkHandover(SPEC, [], [tk([], { body: acs(9) })]).problems.join(), /acceptance criteria, over the 8/)
+const long = `## Parent\nx\n## What to build\n${'prose\n'.repeat(70)}## Acceptance criteria\n- [ ] x\n${TAIL}`
+assert.match(checkHandover(SPEC, [], [tk([], { body: long })]).problems.join(), /line body, over 70/)
+
+// the graph. A cycle makes Kahn stall rather than throw, so it gets its own case.
+assert.match(checkHandover(SPEC, [], [tk([1]), tk([0])]).problems.join(), /cycle/)
+assert.match(checkHandover(SPEC, [], [tk([0])]).problems.join(), /blocks itself/)
+assert.match(checkHandover(SPEC, [], [tk([7])]).problems.join(), /not a ticket in this set/)
+// every ticket blocked by another is a graph with no root -- nothing can ever start
+assert.match(checkHandover(SPEC, [], [tk([1]), tk([0])]).problems.join(), /nothing can start|cycle/)
+
+// -- prepare-tickets' gate: which tickets a person still owes a decision on --
+//
+// This used to be all of them, which made triage a chore rather than a signal. The rule is
+// narrow on purpose, and narrow rules are the ones that widen quietly.
+const tick = (over = {}) => ({ title: 't', needs_human: false, files_named: [], ...over })
+const CLEAN = { specUnsound: false, refutedCount: 0 }
+
+assert.equal(gateFor(tick(), CLEAN), '', 'the default is ready -- that is the whole point')
+assert.match(gateFor(tick({ needs_human: true, needs_human_why: 'pick a floor' }), CLEAN), /pick a floor/)
+assert.match(gateFor(tick({ needs_human: true }), CLEAN), /did not say why/, 'a flag with no reason is still a gate, and says so')
+assert.match(gateFor(tick(), { ...CLEAN, specUnsound: true }), /not-ready/, 'an unsound design gates every slice of it')
+assert.match(gateFor(tick(), { ...CLEAN, refutedCount: 2 }), /refuted 2/)
+assert.match(gateFor(tick({ files_named: ['.github/workflows/ci.yml'] }), CLEAN), /rewrites the harness/)
+assert.match(gateFor(tick({ files_named: ['scripts\\gate.sh'] }), CLEAN), /rewrites the harness/)
+assert.equal(gateFor(tick({ files_named: ['docs/ci.md', 'graphknows/core.py'] }), CLEAN), '', 'a lookalike path must not gate')
+assert.ok(HARNESS.includes('scripts/gate.sh'))
+
+// -- the labels the filer actually applied --
+//
+// This is the check that exists because a prompt saying "carry exactly ONE of the two" is
+// advisory. Four tickets of one spec were filed carrying BOTH; admit() checks the gate label
+// first, so the pair read as "gated" and the whole remaining train silently refused to board.
+// Nothing errored, and nobody found out until someone asked why the train had not moved.
+const issue = (over) => ({ number: 1, labels: [], expected_gate: false, ...over })
+
+assert.deepEqual(labelCheck([issue({ labels: ['ready-for-agent'] })]), [])
+assert.deepEqual(labelCheck([issue({ labels: ['needs-triage'], expected_gate: true })]), [])
+assert.match(labelCheck([issue({ labels: ['ready-for-agent', 'needs-triage'] })]).join(), /BOTH/)
+assert.match(labelCheck([issue({ labels: ['enhancement'] })]).join(), /NEITHER/)
+// filed gated when the script said ready, and the other way round -- both are drift between
+// what was decided and what exists, and only re-reading GitHub can see it.
+assert.match(labelCheck([issue({ labels: ['needs-triage'], expected_gate: false })]).join(), /filed gated but the script decided ready/)
+assert.match(labelCheck([issue({ labels: ['ready-for-agent'], expected_gate: true })]).join(), /filed ready but the script decided gated/)
+
+// -- run-merge-train's helpers: what an N-merge run may touch ---------
+//
+// admit() is the per-car human gate in code; topoOrder() is the landing order; and
+// dependentsOf() is what keeps a parked car's descendants from dispatching against
+// code that never landed. All sliced from run-merge-train.js, same as above.
+const from3 = train.indexOf('const admit = ')
+const to3 = train.indexOf('// -- Roster --')
+assert.ok(from3 > 0 && to3 > from3, 'helpers not found in run-merge-train.js -- did the markers move?')
+const consts = "const GATE_LABEL = 'needs-triage'\nconst READY_LABEL = 'ready-for-agent'\n"
+const { admit, topoOrder, dependentsOf, isExpress } = await import(
+  'data:text/javascript,' +
+    encodeURIComponent(consts + train.slice(from3, to3) + '\nexport { admit, topoOrder, dependentsOf, isExpress }')
+)
+
+const car = (number, over = {}) => ({ number, title: 't', state: 'OPEN', labels: ['enhancement', 'ready-for-agent'], blocked_by: [], ...over })
+
+// admission: presence of ready-for-agent, not mere absence of needs-triage
+assert.equal(admit(car(1), [1]), '')
+assert.match(admit(car(1, { labels: ['enhancement'] }), [1]), /ready-for-agent/, 'silence is not consent')
+assert.match(admit(car(1, { labels: ['enhancement', 'ready-for-agent', 'needs-triage'] }), [1]), /needs-triage/, 'the gate label wins even alongside approval')
+assert.match(admit(car(1, { state: 'CLOSED' }), [1]), /not open/)
+assert.match(admit(car(1, { open_pr: 'https://x/pr/9' }), [1]), /parked from an earlier run/)
+// a blocker outside the train parks the car only while it is open
+assert.match(admit(car(2, { blocked_by: [99], blocker_open: { 99: true } }), [2]), /#99/)
+assert.equal(admit(car(2, { blocked_by: [99], blocker_open: { 99: false } }), [2]), '', 'a closed outside blocker is satisfied')
+assert.equal(admit(car(2, { blocked_by: [3] }), [2, 3]), '', 'an in-roster blocker is an ordering edge, not an exclusion')
+
+// the harness guard: a car cannot verify a change to the thing that verifies it
+assert.match(admit(car(1, { files_named: ['.github/workflows/ci.yml'] }), [1]), /rewrites the harness/)
+assert.match(admit(car(1, { files_named: ['scripts\\gate.sh'] }), [1]), /rewrites the harness/, 'windows separators must not slip past')
+assert.equal(admit(car(1, { files_named: ['graphknows/core.py', 'docs/ci.md'] }), [1]), '', 'a normal file that merely resembles one must still board')
+
+// ordering: blockers first, cycles surfaced instead of hiding as an empty order
+assert.deepEqual(topoOrder([car(3, { blocked_by: [2] }), car(2)]).order, [2, 3])
+const cyc = topoOrder([car(1, { blocked_by: [2] }), car(2, { blocked_by: [1] })])
+assert.deepEqual(cyc.cyclic.sort(), [1, 2], 'a cycle must be named, not silently dropped')
+
+// -- the express lane: which cars may share one CI run --
+//
+// The reduced scrutiny this lane buys is only defensible while the changes really are tiny,
+// so the rule has to be strict AND it has to fail closed. Every branch below is a way the
+// batch could quietly acquire a change that deserved its own review.
+const tiny = (over = {}) => car(9, { sizing: 'stated', expected_lines: 8, files_named: ['pyproject.toml'], ...over })
+
+assert.equal(isExpress(tiny(), [9]), '', 'a stated two-file, eight-line ticket is exactly what this lane is for')
+// Absence of a size is not smallness. An unsized ticket fails closed and takes the long
+// road -- the failure that matters is a big change riding a lane that reviews once.
+assert.match(isExpress(tiny({ sizing: undefined }), [9]), /could not be sized/)
+assert.match(isExpress(car(9, {}), [9]), /could not be sized/, 'a car with no field at all is not express')
+assert.match(isExpress(tiny({ expected_lines: 0 }), [9]), /no usable size/)
+// A measured size has to be defended: files read and evidence cited, or it is a guess.
+assert.match(isExpress(tiny({ sizing: 'measured', sizing_evidence: '' }), [9]), /cites no evidence/)
+assert.equal(
+  isExpress(tiny({ sizing: 'measured', sizing_evidence: 'read pyproject.toml: one table row moves' }), [9]),
+  '',
+  'a measured size backed by evidence rides',
+)
+assert.match(isExpress(tiny({ expected_lines: 31 }), [9]), /over the 30/)
+assert.equal(isExpress(tiny({ expected_lines: 30 }), [9]), '', '30 is the ceiling, not over it')
+assert.match(isExpress(tiny({ files_named: ['a.py', 'b.py', 'c.py'] }), [9]), /over 2/)
+// files_named is every path the BODY MENTIONS -- it over-reports on purpose so admit()'s
+// harness veto cannot be dodged. The lane must not read it as "files this change edits":
+// doing so charged a two-line docs fix the full ~14-stage lane for citing three files it
+// only READ (#265), and put 10 of 14 group-P cars on the long road the same way.
+assert.equal(
+  isExpress(tiny({ files_named: ['docs/x.md', 'settings.py', 'docs/a.md', 'docs/b.md'], files_to_edit: ['docs/x.md'] }), [9]),
+  '',
+  'a one-file edit that merely cites three more files still belongs on the express lane',
+)
+assert.match(
+  isExpress(tiny({ files_named: ['a.py'], files_to_edit: ['a.py', 'b.py', 'c.py'] }), [9]),
+  /edits 3 files, over 2/,
+  'files_to_edit is what the ceiling applies to, even when files_named is shorter',
+)
+// Absent or empty, it falls back to files_named -- a roster that does not report the new
+// field behaves exactly as before rather than silently promoting every car into the lane.
+assert.match(isExpress(tiny({ files_named: ['a.py', 'b.py', 'c.py'], files_to_edit: [] }), [9]), /over 2/, 'empty files_to_edit falls back, it does not mean "edits nothing"')
+// A car waiting on another car cannot be in the batch: the batch is cut before its blocker
+// has landed, so it would be implemented against code that does not exist yet.
+assert.match(isExpress(tiny({ blocked_by: [7] }), [7, 9]), /blocked by another car/)
+// ...but a blocker that is NOT on this train has already been cleared by admit(), which
+// refuses a car whose outside blocker is still open. So it does not block the express lane.
+assert.equal(isExpress(tiny({ blocked_by: [99] }), [9]), '', 'a settled outside blocker is not an express exclusion')
+
+// dependent parking is transitive
+const dag = [car(1), car(2, { blocked_by: [1] }), car(3, { blocked_by: [2] }), car(4)]
+assert.deepEqual(dependentsOf(dag, 1).sort(), [2, 3], 'parking #1 parks its whole chain and spares the independent car')
+assert.deepEqual(dependentsOf(dag, 4), [])
+
+// prepare-tickets and run-merge-train both refuse to let an agent verify a change to the thing that
+// verifies it. Two copies, no imports: if they drift, prepare-tickets files a ticket ready that the
+// train would have refused, and nothing errors.
+const harnessList = (text) => text.match(/^const HARNESS = \[([^\]]*)\]/m)?.[1]
+for (const [fname, text] of [['prepare-tickets.js', rnd], ['run-merge-train.js', train], ['process-issues.js', src]]) {
+  assert.ok(harnessList(text), `HARNESS not found at top level in ${fname}`)
+  assert.equal(harnessList(text), harnessList(train), `the HARNESS list has drifted between ${fname} and run-merge-train.js`)
+}
+
+// -- the review boundary of the whole system, in numbers rather than in two comments --
+//
+// run-merge-train admits a car at <= EXPRESS_MAX_LINES expected; express-lane ejects one at
+// > MAX_LINES actual. The gap between them is the band where a ticket lands having had only
+// batch-level review -- no adversarial review, no dogfood, no wheel gate, no docs. Invert
+// them and every express car ejects; equalise them and an honest under-estimate ejects
+// instead of landing. Neither errors.
+const num = (text, name) => Number(text.match(new RegExp(`^const ${name} = (?:opt\\.\\w+ \\|\\| )?(\\d+)`, 'm'))?.[1])
+const admitAt = num(train, 'EXPRESS_MAX_LINES')
+const ejectAt = num(express, 'MAX_LINES')
+assert.ok(admitAt > 0 && ejectAt > 0, 'EXPRESS_MAX_LINES / MAX_LINES not found -- did one of them move?')
+assert.ok(
+  ejectAt > admitAt,
+  `express-lane ejects at ${ejectAt} lines but run-merge-train admits at ${admitAt}: the lane would eject cars it was rostered to take`,
+)
+
+console.log('ok')

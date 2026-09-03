@@ -34,6 +34,7 @@ and benchmarks. This folder is the reference behind it.
 
 | Page | Answers |
 | --- | --- |
+| [deployment.md](deployment.md) | Running the release stack with no network — what the build still needs, what falls outside the guarantee, and how to upgrade. |
 | [multi-tenancy.md](multi-tenancy.md) | Namespaces as the isolation boundary, and how far they scale. |
 
 ## Project

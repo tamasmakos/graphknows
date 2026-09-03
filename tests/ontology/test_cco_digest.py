@@ -2,7 +2,7 @@
 
 Five things are load-bearing here and each has a test that fails loudly:
 
-1. **No rdflib.** ``rdflib`` ships in the ``assisted`` extra, but the ontology
+1. **No rdflib.** ``rdflib`` ships in the ``ontology`` extra, but the ontology
    layer runs in the default ``llm_free`` mode a bare ``pip install graphknows``
    gives. Loading the digest must therefore be pure ``json`` — asserted by
    loading it in a fresh interpreter and checking ``sys.modules``. This is also
@@ -66,7 +66,7 @@ def _term(terms: list[OntologyTerm], kind: str, label: str) -> OntologyTerm:
 
 class TestDigestLoads:
     def test_load_does_not_import_rdflib(self) -> None:
-        """The default ontology path must work without the ``assisted`` extra.
+        """The default ontology path must work without the ``ontology`` extra.
 
         Run in a fresh interpreter: an ``import rdflib`` anywhere else in the
         test session would make an in-process assertion pass by accident.

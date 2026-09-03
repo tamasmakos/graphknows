@@ -30,6 +30,7 @@ def _mock_client(query_rows: list[dict] | None = None) -> MagicMock:
     client.command = AsyncMock(return_value=[])
     client.query = AsyncMock(return_value=query_rows or [])
     client.create_database = AsyncMock()
+    client.database_exists = AsyncMock(return_value=False)
     client.drop_database = AsyncMock()
     return client
 

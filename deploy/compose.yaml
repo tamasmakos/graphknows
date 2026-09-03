@@ -1,0 +1,61 @@
+# GraphKnows release stack: the memory service and its graph database, nothing else.
+#
+#   docker compose -f deploy/compose.yaml build   # the one step that needs network
+#   docker compose -f deploy/compose.yaml up -d
+#
+# Paths here are relative to this file, so the build context is the bundle root —
+# `deploy/`, `scripts/` and the wheel — laid out exactly as in a source checkout
+# (research.md R1). The client builds the image, so the app service carries a
+# `build:` and no `image:`: there is no registry to pull it from (research.md R8).
+#
+# The offline switches belong to the image (deploy/Dockerfile,
+# contracts/deployment-environment.md). This file must not restate or override any
+# of them — an override here would silently undo the guarantee the image just made,
+# and would read as harmless in review. tests/test_offline.py pins that.
+#
+# Deliberately absent: the dev workspace, the eval service and the GPU reservation,
+# which do not ship; and any published application port, since there is no HTTP
+# surface. The root docker-compose.yaml remains the dev stack and is untouched.
+
+services:
+  arcadedb:
+    image: arcadedata/arcadedb:26.5.1
+    environment:
+      # Heap must go through ARCADEDB_OPTS_MEMORY: server.sh puts it last on the
+      # java line, so an -Xmx set in JAVA_OPTS is silently overridden back to 2G.
+      ARCADEDB_OPTS_MEMORY: "-Xms2G -Xmx${GRAPHKNOWS_ARCADEDB_XMX:-8G}"
+      # Setting JAVA_OPTS replaces the image default, so the tuned collector is
+      # restated here alongside the root password.
+      JAVA_OPTS: "-XX:+UseZGC -XX:+ZGenerational -Darcadedb.server.rootPassword=${GRAPHKNOWS_ARCADEDB_PASSWORD:-changeme}"
+    volumes:
+      - arcadedb_data:/home/arcadedb/databases
+    restart: unless-stopped
+    healthcheck:
+      # The arcadedb image ships wget, not curl. This window is what turns a
+      # stopped database into a startup failure that names it (SC-003).
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:2480/api/v1/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      GRAPHKNOWS_ARCADEDB_URL: "http://arcadedb:2480"
+      GRAPHKNOWS_ARCADEDB_USER: "${GRAPHKNOWS_ARCADEDB_USER:-root}"
+      GRAPHKNOWS_ARCADEDB_PASSWORD: "${GRAPHKNOWS_ARCADEDB_PASSWORD:-changeme}"
+      # llm_free is the only preset inside the offline guarantee; the LLM and
+      # remote-embedding paths sit outside it by design (FR-021).
+      GRAPHKNOWS_MODE: "llm_free"
+    depends_on:
+      arcadedb:
+        condition: service_healthy
+    # A boot check that failed must stay failed and visible (SC-002), not
+    # restart-loop into looking like a slow start.
+    restart: "no"
+
+volumes:
+  arcadedb_data:

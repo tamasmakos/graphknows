@@ -1,6 +1,0 @@
-Prepare one worktree for a batch of 1 small tickets in the GraphKnows repository at C:/Users/User/Documents/dev/graphknows. Use `gh`. If it is not on PATH, fall back to "/c/Program Files/GitHub CLI/gh.exe" (quote it).
-From the repo root: `git fetch origin`, then `git worktree add C:/Users/User/Documents/dev/gk-express-205 -b express/205 origin/main`.
-If C:/Users/User/Documents/dev/gk-express-205 already exists from an earlier run, reuse it: cd there, `git fetch origin`, and confirm it is on express/205. Report reused=true and DO NOT reset it -- an earlier run may have commits in it that this one is about to add to.
-Then read each ticket: `gh issue view 205 --json number,title,state,labels,body`.
-For each, report its number, title, state, labels, and the body VERBATIM -- the whole thing, not a summary. The next stage sees only what you report, and the body is the contract.
-Report facts. Do not implement anything, do not commit, do not judge whether a ticket belongs here.
