@@ -213,19 +213,12 @@ async def _merge_standardized(store: Any) -> int:
     return merged
 
 
-_NLP: Any = None
-
-
 def _parser() -> Any:
-    """The shared spaCy pipeline, loaded once. ``None`` when unavailable."""
-    global _NLP
-    if _NLP is None:
-        import spacy
+    """The shared spaCy pipeline, memoized by :func:`graphknows.nlp.load_spacy_model`."""
+    from graphknows.nlp import load_spacy_model
+    from graphknows.settings import GraphKnowsSettings
 
-        from graphknows.settings import GraphKnowsSettings
-
-        _NLP = spacy.load(GraphKnowsSettings().spacy_model)
-    return _NLP
+    return load_spacy_model(GraphKnowsSettings().spacy_model)
 
 
 def _head_key(name: str, nlp: Any) -> str:

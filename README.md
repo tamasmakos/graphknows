@@ -21,7 +21,12 @@ server** (Claude Desktop / Claude Code).
 ```bash
 pip install graphknows              # full llm_free stack + MCP server
 pip install "graphknows[assisted]"  # + LLM extraction & injectable ontology
+python -m spacy download en_core_web_lg   # required: not on PyPI, so pip cannot pull it
 ```
+
+spaCy models aren't PyPI packages, so this one can't be declared as a dependency or
+an extra — skip it and the first spaCy-dependent call fails with an error naming this
+same command.
 
 | Extra | Adds |
 | --- | --- |
@@ -51,13 +56,17 @@ docker compose up -d arcadedb
 ```
 
 > A `pip` install downloads its models on first use (the relex extractor, the
-> embedder, the reranker, the spaCy pipeline and two NLTK corpora — a few GB).
-> To warm them ahead of time from a repo clone/checkout: `python scripts/bake_models.py`
+> embedder and the reranker — a few GB). The two NLTK corpora (FrameNet,
+> WordNet) are the exception: they are never fetched at runtime, so provision
+> them ahead of time — a missing FrameNet corpus raises, a missing WordNet
+> corpus only disables sense-anchored expansion.
+> To warm everything ahead of time from a repo clone/checkout: `python scripts/bake_models.py`
 > (the wheel ships only the `graphknows` package, so this script isn't
 > available to a plain `pip install`).
-> The dev image downloads them on first use into a compose named volume, so a
-> rebuild never re-downloads gigabytes of weights. `python scripts/bake_models.py`
-> warms the volume ahead of time. CPU by default; for a GPU host:
+> The dev image downloads the relex extractor, embedder and reranker on first
+> use into a compose named volume, so a rebuild never re-downloads gigabytes of
+> weights; the NLTK corpora still need baking ahead of time as above.
+> `python scripts/bake_models.py` warms the volume. CPU by default; for a GPU host:
 > `docker compose build --build-arg TORCH_BACKEND=cu128`.
 > See [.env.example](https://github.com/tamasmakos/graphknows/blob/main/.env.example) and [docs/configuration.md](https://github.com/tamasmakos/graphknows/blob/main/docs/configuration.md).
 

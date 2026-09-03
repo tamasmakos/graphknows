@@ -381,25 +381,19 @@ def build_scheme(digest: Path) -> dict[str, Concept]:
     return scheme
 
 
-_NLP = None
-
-
 def _lemmatise(labels: set[str]) -> set[str]:
     """Both the surface and its lemma, so either spelling matches.
 
     Keeps the original too: a multi-word altLabel ("used to work") is matched
     against noun compounds where lemmatising the whole phrase would not help.
     """
-    global _NLP
-    if _NLP is None:
-        import spacy
+    from graphknows.nlp import load_spacy_model
+    from graphknows.settings import GraphKnowsSettings
 
-        from graphknows.settings import GraphKnowsSettings
-
-        _NLP = spacy.load(GraphKnowsSettings().spacy_model)
+    nlp = load_spacy_model(GraphKnowsSettings().spacy_model)
     out = set(labels)
     for label in labels:
-        out.add(" ".join(t.lemma_.lower() for t in _NLP(label)))
+        out.add(" ".join(t.lemma_.lower() for t in nlp(label)))
     return out
 
 

@@ -72,8 +72,20 @@ RUN uv pip \
 # The `srl` extra: transformer frame identification, which the eval measures.
 # `--no-deps` is required: it pins protobuf<6 where this project resolves
 # 7.x, and drags in pytorch-lightning for training code inference never runs.
+# `--no-deps` also drops the rest of both packages' closure not already
+# satisfied by the `uv sync` above: gdown, reached through nlpaug's
+# unconditional `import gdown` (nlpaug/util/file/download.py), plus gdown's
+# own beautifulsoup4/soupsieve/PySocks. Pins match uv.lock.
 RUN uv pip \
-    install --no-cache --no-deps frame-semantic-transformer nlpaug
+    install --no-cache --no-deps frame-semantic-transformer nlpaug \
+        gdown==6.1.0 beautifulsoup4==4.15.0 soupsieve==2.9.2 PySocks==1.7.1
+
+# Records which optional extras THIS image was built to carry. `assisted` comes
+# from the `uv sync --extra assisted` above; `srl` from the out-of-band install
+# just above. scripts/preflight.py refuses to start the container if a claimed
+# extra's distributions aren't actually installed, so a build that drops the
+# step above announces itself instead of silently shipping less.
+ENV GRAPHKNOWS_IMAGE_EXTRAS="assisted,srl"
 
 RUN useradd -m -u 1000 graphknows
 
@@ -101,8 +113,11 @@ WORKDIR /app
 RUN mkdir -p /opt/models && chown graphknows:graphknows /opt/models
 
 # The compose bind mount normally supplies these, but nothing else does when
-# the image runs standalone (`docker run graphknows:dev`).
+# the image runs standalone (`docker run graphknows:dev`). pyproject.toml is
+# what preflight.py reads its declared dependencies/extras from; harmlessly
+# shadowed by the bind mount's own copy under compose.
 COPY --chown=graphknows:graphknows scripts/docker-entrypoint.sh scripts/preflight.py ./scripts/
+COPY --chown=graphknows:graphknows pyproject.toml ./
 
 USER graphknows
 

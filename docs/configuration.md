@@ -65,6 +65,12 @@ downloaded once:
 python -m spacy download en_core_web_lg
 ```
 
+Unlike the models above, this one isn't distributed on PyPI, so neither `pip install
+graphknows` nor any extra can pull it — it has to be downloaded manually, once. Use
+the model named by `GRAPHKNOWS_SPACY_MODEL` if you've changed it from the default. A
+missing model raises `graphknows.exceptions.MissingModelError`, naming the model and
+this command.
+
 ## Choosing a provider (llm_assisted)
 
 `GRAPHKNOWS_LLM_MODEL` is a [litellm](https://docs.litellm.ai/docs/providers) model

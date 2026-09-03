@@ -274,13 +274,10 @@ class TestGateScript:
 # Sites in graphknows/ that fetch a corpus at runtime, on the failure path of a lookup.
 # This is a LEDGER THAT MUST SHRINK, not a list of blessed exceptions: every entry is a
 # package installed from PyPI reaching the network mid-ingest, which fails offline and
-# degrades silently. Tracked by #247; the provisioning step already exists in
-# scripts/bake_models.py and just is not wired up (#208).
+# degrades silently. The provisioning step already exists in scripts/bake_models.py.
 #
-# Removing the last entry is the goal. Adding one is the thing this test exists to stop.
-_KNOWN_RUNTIME_DOWNLOADS = {
-    "graphknows/symbolic/framenet/framenet.py",  # nltk.download("framenet_v17") — pre-existing
-}
+# The ledger is empty. Adding an entry is the thing this test exists to stop.
+_KNOWN_RUNTIME_DOWNLOADS: set[str] = set()
 
 
 def _downloads_at_runtime(source: str) -> bool:
@@ -380,6 +377,45 @@ class TestPreflight:
         assert result == "", (
             f"{PREFLIGHT}: check_declared_dependencies_installed() should "
             f"return '' when the declared dependency is installed, got: {result!r}"
+        )
+
+    def test_declared_extras_are_asserted(self, tmp_path, monkeypatch) -> None:
+        module = self._load_module()
+        pyproject = tmp_path / "pyproject.toml"
+        monkeypatch.setattr(module, "APP", tmp_path)
+
+        # RED: image claims the `srl` extra but its distribution isn't installed.
+        pyproject.write_text(
+            "[project]\ndependencies = []\n"
+            "[project.optional-dependencies]\n"
+            'srl = ["definitely-not-installed-pkg-xyz"]\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("GRAPHKNOWS_IMAGE_EXTRAS", "srl")
+        result = module.check_declared_extras_installed()
+        assert "srl" in result and "definitely-not-installed-pkg-xyz" in result, (
+            f"{PREFLIGHT}: check_declared_extras_installed() did not name the "
+            f"missing extra and package, got: {result!r}"
+        )
+
+        # An image that legitimately never claimed the extra is fine.
+        monkeypatch.delenv("GRAPHKNOWS_IMAGE_EXTRAS", raising=False)
+        result = module.check_declared_extras_installed()
+        assert result == "", (
+            f"{PREFLIGHT}: check_declared_extras_installed() should return "
+            f"'' when the image does not claim the extra, got: {result!r}"
+        )
+
+        # An image that claims the extra and actually has it is fine.
+        pyproject.write_text(
+            '[project]\ndependencies = []\n[project.optional-dependencies]\nsrl = ["pytest"]\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("GRAPHKNOWS_IMAGE_EXTRAS", "srl")
+        result = module.check_declared_extras_installed()
+        assert result == "", (
+            f"{PREFLIGHT}: check_declared_extras_installed() should return "
+            f"'' when the claimed extra's distributions are installed, got: {result!r}"
         )
 
     def test_main_has_no_silent_degradation_guard(self) -> None:

@@ -105,3 +105,24 @@ class SchemaVersionMismatchError(StoreError):
         self.database = database
         self.recorded = recorded
         self.running = running
+
+
+class MissingModelError(GraphKnowsError, OSError):
+    """A spaCy model is not installed.
+
+    Distinct from :class:`MissingExtraError` and :class:`BrokenInstallError`:
+    a spaCy model is not a PyPI distribution and not behind an extra — PyPI
+    rejects direct-URL requirements, so it can only ever be a documented
+    post-install download (``python -m spacy download <model>``). Neither
+    ``pip install 'graphknows[x]'`` nor a reinstall is the remedy.
+
+    Subclasses :class:`OSError` so existing handlers around ``spacy.load``,
+    which raises :class:`OSError`, keep working.
+    """
+
+    def __init__(self, model: str) -> None:
+        super().__init__(
+            f"spaCy model '{model}' is not installed. "
+            f"Install it with:  python -m spacy download {model}"
+        )
+        self.model = model

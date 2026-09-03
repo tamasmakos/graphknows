@@ -16,6 +16,7 @@ question into the same representation so retrieval can match structurally.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections import defaultdict
 from functools import lru_cache
@@ -55,29 +56,43 @@ JUNK_FILLERS = frozenset(
 )
 _POS = {"VERB": "v", "NOUN": "n", "ADJ": "a"}
 
-_nlp: Any = None
 _lu_index: dict[tuple[str, str], set[str]] | None = None
 _onto_up: dict[str, set[str]] | None = None
 
 
 def _spacy() -> Any:
-    global _nlp
-    if _nlp is None:
-        import spacy
+    from graphknows.nlp import load_spacy_model
 
-        _nlp = spacy.load("en_core_web_lg", disable=["ner"])
-    return _nlp
+    return load_spacy_model("en_core_web_lg", disable=["ner"])
 
 
 def _framenet() -> Any:
+    """The FrameNet reader.
+
+    ``nltk.corpus.framenet`` is a ``LazyCorpusLoader``: importing it never touches
+    disk, so the corpus is only resolved on first *use* (e.g. ``fn.frames()``). The
+    guard has to sit around that use, not the import above it.
+
+    A missing corpus is an ENVIRONMENT defect, so this neither downloads it nor
+    passes over it quietly. It does not download because this is library code: a
+    package installed from PyPI must not reach the network mid-ingest, and
+    ``nltk.download()`` without an explicit ``download_dir`` ignores ``NLTK_DATA``
+    anyway (see ``scripts/bake_models.py``), so the fetch would land somewhere
+    nothing reads. It raises rather than warning because — unlike sense-anchored
+    expansion — FrameNet extraction cannot degrade: every caller of this accessor
+    is dead without the corpus.
+    """
     from nltk.corpus import framenet as fn
 
     try:
         fn.frames()  # probe: raises LookupError if the corpus isn't downloaded
-    except LookupError:
-        import nltk
-
-        nltk.download("framenet_v17", quiet=True)
+    except LookupError as exc:
+        raise RuntimeError(
+            "FrameNet corpus 'framenet_v17' not found. Provision it rather than "
+            "working around it: `make bake` (python scripts/bake_models.py) writes "
+            "it to NLTK_DATA "
+            f"({os.environ.get('NLTK_DATA') or 'unset — nltk default search path'})."
+        ) from exc
     return fn
 
 
