@@ -1,0 +1,148 @@
+{
+  "commit": "3fc9a47ac64283b5adbdb92a00a42cf3a3600529",
+  "commit_short": "3fc9a47",
+  "corpus_slice": "locomo conv-30, questions 152-171 (--offset 152 --limit 20), 19 sessions ingested",
+  "seed": 0,
+  "mode": "llm_free",
+  "configuration": "all-on",
+  "evidence_recall": {
+    "at_probe": 1.0,
+    "in_context": 1.0
+  },
+  "headline_accuracy": 0.85,
+  "audit_precision": {
+    "span": 0.6336,
+    "predicate": 0.7786,
+    "direction": 0.9313,
+    "polarity_modality": 0.9771,
+    "all_four": 0.5344
+  },
+  "audit_precision_detail": {
+    "span": {
+      "judged": 131,
+      "correct": 83,
+      "precision": 0.6336
+    },
+    "predicate": {
+      "judged": 131,
+      "correct": 102,
+      "precision": 0.7786
+    },
+    "direction": {
+      "judged": 131,
+      "correct": 122,
+      "precision": 0.9313
+    },
+    "polarity_modality": {
+      "judged": 131,
+      "correct": 128,
+      "precision": 0.9771
+    },
+    "all_four": {
+      "judged": 131,
+      "correct": 70,
+      "precision": 0.5344
+    }
+  },
+  "ingest_wall_clock_s": 3368.6,
+  "ingest_wall_clock_breakdown_s": {
+    "buffer": 3296.2,
+    "flush": 72.4
+  },
+  "abstentions": 1,
+  "cases": 20,
+  "avg_judge_score": 0.83,
+  "accuracy_by_category": {
+    "knowledge_synthesis": 0.8,
+    "single_hop": 1.0,
+    "temporal": 0.8462
+  },
+  "cost_usd": {
+    "ingest_total": 0.0,
+    "query_total": 0.0444,
+    "query_per_question": 0.00222,
+    "total": 0.0444
+  },
+  "graph": {
+    "database": "mem_decoder_swap_llm_free_conv_30",
+    "audit_sheet": "decoder-swap-3fc9a47-free-sheet.csv",
+    "audit_report": "judged-free.csv",
+    "rows_sampled": 131,
+    "tiers": {
+      "frame": {
+        "population": 62,
+        "sampled": 62,
+        "precision": {
+          "span": 0.371,
+          "predicate": 0.6935,
+          "direction": 0.871,
+          "polarity_modality": 0.9677,
+          "all_four": 0.3065
+        }
+      },
+      "wordnet": {
+        "population": 0,
+        "sampled": 0,
+        "precision": {
+          "span": null,
+          "predicate": null,
+          "direction": null,
+          "polarity_modality": null,
+          "all_four": null
+        }
+      },
+      "ontology": {
+        "population": 69,
+        "sampled": 69,
+        "precision": {
+          "span": 0.8696,
+          "predicate": 0.8551,
+          "direction": 0.9855,
+          "polarity_modality": 0.9855,
+          "all_four": 0.7391
+        }
+      },
+      "lemma": {
+        "population": 0,
+        "sampled": 0,
+        "precision": {
+          "span": null,
+          "predicate": null,
+          "direction": null,
+          "polarity_modality": null,
+          "all_four": null
+        }
+      },
+      "unclassified": {
+        "population": 0,
+        "sampled": 0,
+        "precision": {
+          "span": null,
+          "predicate": null,
+          "direction": null,
+          "polarity_modality": null,
+          "all_four": null
+        }
+      }
+    }
+  },
+  "run_id": "eval-llm_free-20260904055423",
+  "generated_at": "2026-09-04T06:55:04.868587+00:00",
+  "commands": {
+    "benchmark": "python -m evaluation --compare --limit 20 --offset 152 --namespace decoder_swap",
+    "audit_sample": "python -m evaluation audit sample --namespace decoder_swap_llm_free_conv-30 -n 150 --seed 0",
+    "audit_report": "python -m evaluation audit report --sheet <judged sheet>"
+  },
+  "audit_judge": "Claude Opus 5 acting as the audit's human-in-the-loop judge, not a human. Verdicts are checked in beside this report so they can be re-judged.",
+  "notes": [
+    "The harness is unmodified (FR-029); only the reports below are checked in.",
+    "--offset 152 is what pins the slice to conv-30: offset 0 is conv-26.",
+    "A private namespace (decoder_swap) keeps this run from over-writing the graph the older evaluation/audit/baseline/conv-30-seed0* reports were drawn from.",
+    "evidence_recall is 1.000 on both arms because the document harness makes every chunk a multi-turn transcript; --turns is what restores headroom. As a gate at this scale it can only detect a regression, never an improvement.",
+    "Judging standard, so a re-judge lands in the same place: `span` is 1 only when BOTH endpoints name something the evidence actually says (a projected frame endpoint must be the right surface; a minted event node must denote an event that is really there); `predicate` asks whether the relation label describes what the evidence asserts between those two; `direction` asks whether head and tail are the right way round for that label; `polarity_modality` asks whether the recorded assertion status (blank = plainly asserted) is right.",
+    "The two arms share the frame and ontology tiers verbatim, so their judgements were carried across rather than re-judged, and only the assisted arm's new `lemma:` tier was judged fresh.",
+    "`audit_precision` pools every judged row, and the stratified draw is not population-weighted, so the two arms' pooled numbers are NOT directly comparable: the assisted arm's sample is one third `lemma:`, a tier the llm_free graph does not have at all. Compare the per-tier table, tier by tier.",
+    "ingest_cost_usd is 0.0 on both arms because the harness only counts the topic-summarisation spend; the assisted arm's per-chunk relation calls are not metered there. Read the wall-clock, not the cost, for the assisted arm.",
+    "Every tier was judged in full (population == sampled), so the Wilson intervals are judging uncertainty, not sampling error."
+  ]
+}
