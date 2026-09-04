@@ -162,6 +162,9 @@ class ExtractionResult:
 
     entities: list[dict[str, Any]] = field(default_factory=list)
     relations: list[dict[str, Any]] = field(default_factory=list)
+    # {frame, trigger, trigger_offset, roles: {role: [filler]}} — filled only by
+    # the LLM decoder; empty for the local one, so llm_free behaviour is unchanged.
+    frames: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
