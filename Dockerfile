@@ -62,6 +62,19 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Both installs below MUST come after the last `uv sync`: sync prunes
 # anything not in the lock, so installing here first would be wiped.
 
+# torch through the interface TORCH_BACKEND actually governs. UV_TORCH_BACKEND
+# steers `uv pip`, not `uv sync`: the syncs above install torch from PyPI
+# whatever the arg says, and PyPI's linux wheel bundles CUDA 13 kernels — so a
+# cpu build carried ~2.5GB it never runs, and a cu128 build ran on CPU because
+# torch.cuda cannot initialise a CUDA-13 wheel under a 12.x driver. Measured
+# on the eval box: relex/verifier/frames on 6 CPU threads, ~27 s per chunk.
+# `--reinstall` because the version is already satisfied; the unsuffixed
+# `nvidia-*` 13.x packages the PyPI wheel pulled in are not pruned by `uv pip`,
+# so they are removed by name. Pin matches uv.lock.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    UV_LINK_MODE=copy uv pip install --reinstall --torch-backend ${TORCH_BACKEND} "torch==2.12.0" \
+    && uv pip freeze | grep -E '^nvidia-[a-z0-9-]+==13\.' | cut -d= -f1 | xargs -r uv pip uninstall
+
 # spaCy model, installed INTO the venv the app runs (a plain `spacy download`
 # targets the system python, which the app never uses). Not part of uv.lock,
 # so it goes through uv's pip-compatible interface rather than `uv sync`.

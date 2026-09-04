@@ -90,8 +90,11 @@ services:
         # wheel, torch.cuda.is_available() is False and the 467M-parameter
         # relex extractor runs on CPU — conv-30 (49 chunks, the shortest
         # LoCoMo dialogue) took 18.6 minutes to ingest.
-        # cu128 matches the host driver (CUDA 12.8); lower it if the driver is older.
-        TORCH_BACKEND: cu128
+        # cu126: the newest CUDA the locked torch (2.12.0) ships that a 12.8
+        # driver can run — 2.12 has no cu128 wheel, and the cu130 wheel PyPI
+        # serves fails to initialise under a 12.x driver. Raise it when the
+        # host driver moves to 13.x; lower it if the driver is older.
+        TORCH_BACKEND: cu126
     working_dir: /app
     volumes:
       - .:/app
