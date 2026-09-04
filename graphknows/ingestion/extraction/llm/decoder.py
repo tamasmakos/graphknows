@@ -173,8 +173,17 @@ def _inputs_for(request: DecodeRequest, signature: Any) -> dict[str, Any]:
 
 
 def _completion_text(completion: Any) -> str:
-    """The text of one completion, however this dspy version boxes it."""
-    return completion["text"] if isinstance(completion, dict) else completion
+    """The text of one completion, however this dspy version boxes it.
+
+    An empty completion is what a truncated reply looks like once the budget
+    went on reasoning: dspy hands back ``None`` for the content. Named here,
+    because indexing into it raised a ``TypeError`` that read as a bug in the
+    decoder rather than as the provider returning nothing.
+    """
+    text = completion["text"] if isinstance(completion, dict) else completion
+    if not text:
+        raise ValueError("empty completion: the provider returned no content (truncated?)")
+    return text
 
 
 def _entity_labels(extra: Sequence[str] | None) -> tuple[str, ...]:
@@ -184,6 +193,28 @@ def _entity_labels(extra: Sequence[str] | None) -> tuple[str, ...]:
     that costs a parse and buys a model that reads the chunk itself nothing.
     """
     return tuple(dict.fromkeys((*_BASE_ENTITY_LABELS, *(extra or ()))))
+
+
+def _openrouter_request_options(model: str) -> dict[str, Any]:
+    """Per-request routing for OpenRouter models; empty for any other endpoint.
+
+    Two fields, both measured on the shipped model with a real chunk request
+    (cache off, `json_schema` on):
+
+    * ``reasoning.enabled = false`` — labelling a chunk against a closed
+      vocabulary is not a reasoning task, and the reasoning is what blew the
+      budget: 2.4k-4.1k reasoning tokens per call, one reply truncated to no
+      content at 4096. Off, the reply is ~300 tokens.
+    * ``provider.sort = "throughput"`` — the endpoints that honour a strict
+      schema differ 10x in speed (7 vs 93 tok/s on consecutive calls). Sorted,
+      the same request took 3.8 s twice; unsorted, 3 s then 54 s.
+
+    Together: ~60 s -> ~4 s per chunk. Both are OpenRouter's own request
+    fields, so they are sent only when the model is routed through it.
+    """
+    if not model.startswith("openrouter/"):
+        return {}
+    return {"extra_body": {"reasoning": {"enabled": False}, "provider": {"sort": "throughput"}}}
 
 
 def _register_response_schema(model: str) -> None:
@@ -224,15 +255,24 @@ class LLMDecoder:
         return f"LLMDecoder(model={self._lm.model!r})"
 
     def _build_lm(self) -> Any:
-        """The decoder's own LM. ``num_retries=0``: the retry budget is ours."""
+        """The decoder's own LM. ``num_retries=0``: the retry budget is ours.
+
+        ``max_tokens`` gets headroom: a reasoning model spends the budget on
+        its reasoning before the structured answer, and at the 2048 default the
+        shipped model returned NO content for a real chunk's request — measured
+        on conv-30, every chunk decoded to nothing. The sidecar this decoder
+        replaced carried the same floor for the same reason.
+        """
         settings = self._settings
+        model = settings.extraction_model or settings.llm_model
         return build_lm(
-            settings.extraction_model or settings.llm_model,
+            model,
             api_key=settings.llm_api_key,
             api_base=settings.llm_api_base,
             temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
+            max_tokens=max(settings.llm_max_tokens, 4096),
             num_retries=0,
+            **_openrouter_request_options(model),
         )
 
     @property
