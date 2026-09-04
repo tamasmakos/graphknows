@@ -1,12 +1,16 @@
-"""Entity extraction — GLiNER2 NER behind one process-wide extractor.
+"""Decoder selection — the one place the memory mode forks.
 
-Shared by both memory modes: entity extraction is always model-driven.
+``build_decoder(settings)`` returns the ``LLMDecoder`` under ``Decoder.llm`` and
+the process-wide ``GLiNER2EntityExtractor`` otherwise. Both arms are imported
+lazily, so the local stack's models never load in the assisted mode (FR-008).
 """
 
 from __future__ import annotations
 
 import threading
 from typing import TYPE_CHECKING, Any
+
+from graphknows.settings import Decoder
 
 if TYPE_CHECKING:
     from graphknows.settings import GraphKnowsSettings
@@ -31,15 +35,20 @@ _extractor: Any | None = None
 _extractor_lock = threading.Lock()
 
 
-def build_entity_extractor(settings: GraphKnowsSettings) -> Any:
-    """Return the process-wide entity extractor (same for both modes).
+def build_decoder(settings: GraphKnowsSettings) -> Any:
+    """Return the decoder the mode asks for.
 
-    The instance is shared: the model is stateless and its inference is
-    lock-serialised, so concurrent callers are safe. ``settings`` is accepted for
-    signature compatibility and does not vary the instance — the extractor reads
-    what it needs (spaCy model, thresholds) at construction from the same
-    settings/env every caller sees.
+    Under ``Decoder.llm`` that is a fresh ``LLMDecoder`` — it is cheap (one
+    provider handle, no local model) and carries per-run abstention counters, so
+    it is not memoised. Otherwise it is the process-wide GLiNER2 extractor: the
+    model is stateless and its inference is lock-serialised, so concurrent
+    callers share one instance safely.
     """
+    if settings.decoder is Decoder.llm:
+        from graphknows.ingestion.extraction.llm.decoder import LLMDecoder
+
+        return LLMDecoder(settings)
+
     global _extractor
     if _extractor is None:
         with _extractor_lock:
@@ -59,4 +68,4 @@ def reset_entity_extractor() -> None:
         _extractor = None
 
 
-__all__ = ["build_entity_extractor", "reset_entity_extractor"]
+__all__ = ["build_decoder", "reset_entity_extractor"]

@@ -21,7 +21,7 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
     Returned without an open connection so the ArcadeDB client binds to the
     caller's event loop when ``connect()`` is awaited, not to a background loop.
     """
-    from graphknows.ingestion.extraction.entities import build_entity_extractor
+    from graphknows.ingestion.extraction.entities import build_decoder
     from graphknows.ingestion.extraction.relations import build_relation_extractor
     from graphknows.ingestion.stm.service import STMService
     from graphknows.storage import build_graph_store
@@ -30,7 +30,7 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
 
     return STMService(
         build_graph_store(settings, namespace),
-        build_entity_extractor(settings),
+        build_decoder(settings),
         embed_fn=embed_one,
         rel_extractor=build_relation_extractor(settings),
         embed_dims=settings.embed_dimensions,
