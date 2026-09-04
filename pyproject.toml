@@ -90,7 +90,10 @@ dependencies = [
 # taxonomy needs cycle detection and a topological order. It is imported inside
 # functions behind the same MissingExtraError guard, so a base install never
 # pulls it either.
-assisted = ["dspy>=2.5.0", "rdflib>=7.0.0", "networkx>=3.0"]
+# `litellm` is imported directly by the LLM decoder (typed exceptions, the
+# model-map registration that makes structured output reach the provider), not
+# only reached through dspy — so it is declared, per tests/test_packaging.py.
+assisted = ["dspy>=2.5.0", "litellm>=1.85.0", "rdflib>=7.0.0", "networkx>=3.0"]
 # Injectable RDF/OWL ontology without the LLM-extraction stack: what the release
 # image installs (`deploy/Dockerfile`) and what the five ontology
 # MissingExtraError call sites name. Deliberately a subset of `assisted` rather
