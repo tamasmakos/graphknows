@@ -14,11 +14,35 @@ import re
 import uuid
 from typing import Any
 
+from graphknows.exceptions import ConfigurationError
 from graphknows.ingestion.parsers.text import strip_content_heading
 from graphknows.models.hit import Hit
-from graphknows.settings import GraphKnowsSettings
+from graphknows.settings import Decoder, GraphKnowsSettings, MemoryMode
 
 logger = logging.getLogger(__name__)
+
+
+def _with_mode(settings: GraphKnowsSettings, mode: MemoryMode | str | None) -> GraphKnowsSettings:
+    """Return ``settings`` with an explicit ``mode`` argument folded in.
+
+    The argument wins over the settings value, exactly as ``namespace``'s does.
+    ``model_copy`` leaves the caller's object untouched — and skips validators,
+    so the production-secret check is re-run by hand.
+    """
+    if mode is None:
+        return settings
+    resolved = settings.model_copy(update={"mode": MemoryMode(mode)})
+    resolved.check_production_secrets()
+    return resolved
+
+
+def _require_decoder_key(settings: GraphKnowsSettings) -> None:
+    """Fail here, not at the first chunk of a long ingest, on a keyless decoder."""
+    if settings.decoder is Decoder.llm and not settings.llm_api_key:
+        raise ConfigurationError(
+            f"mode={settings.mode} decodes with the LLM and no API key resolves; "
+            "set GRAPHKNOWS_LLM_API_KEY in the environment or .env."
+        )
 
 
 def _format_fused_hits(fused_results: list[dict[str, Any]], session_id: str) -> list[Hit]:
@@ -89,9 +113,14 @@ class Memory:
         self,
         settings: GraphKnowsSettings | None = None,
         namespace: str | None = None,
+        mode: MemoryMode | str | None = None,
         channels: list[Any] | None = None,
     ) -> None:
-        self.settings = settings or GraphKnowsSettings()
+        # The mode picks the decoder. Explicit arg wins over the settings value;
+        # nothing implicit sets it, so a caller who named it meant it — hence the
+        # keyless LLM decoder failing here rather than mid-ingest.
+        self.settings = _with_mode(settings or GraphKnowsSettings(), mode)
+        _require_decoder_key(self.settings)
         # The namespace selects one physical ArcadeDB database (mem_<ns>, "" -> mem,
         # the golden layer). Explicit arg wins over the settings default.
         self.namespace = self.settings.namespace if namespace is None else namespace
