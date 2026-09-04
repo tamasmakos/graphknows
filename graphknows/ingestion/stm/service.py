@@ -30,7 +30,6 @@ class STMService:
         _store: GraphStore for the single per-namespace database.
         _extractor: Entity extractor exposing extract(text) -> ExtractionResult.
         _embed_fn: Embedding callable (text -> list[float]).
-        _rel_extractor: Optional relation extractor.
         _embed_dims: Embedding dimension for ensure_schema on connect.
         _ontology_index: Optional OntologyIndex steering extraction labels.
     """
@@ -40,14 +39,12 @@ class STMService:
         store: Any,
         extractor: Any,
         embed_fn: Any | None = None,
-        rel_extractor: Any | None = None,
         embed_dims: int = 0,
         enable_frames: bool = False,
         ontology_index: Any | None = None,
     ) -> None:
         self._store = store
         self._extractor = extractor
-        self._rel_extractor = rel_extractor
         self._embed_dims = embed_dims
         self._enable_frames = enable_frames
         self._ontology_index = ontology_index
@@ -140,7 +137,6 @@ class STMService:
                 store=self._store,
                 extractor=self._extractor,
                 embed_fn=self._embed_fn,
-                rel_extractor=self._rel_extractor,
                 enable_frames=self._enable_frames,
                 ontology_index=self._ontology_index,
             )

@@ -379,7 +379,6 @@ class _STMIngestHandler:
         _store: GraphStore for the single per-namespace database.
         _extractor: Entity extractor exposing extract(text) -> ExtractionResult.
         _embed_fn: Callable that takes text and returns list[float] embedding.
-        _rel_extractor: Optional relation extractor (llm_assisted).
         _ontology: Optional OntologyIndex (ctor arg ``ontology_index``); its
             CLASSES are the per-chunk entity label hints, the chunk
             MATCHES_CLASS tags and the entity INSTANCE_OF edges. The bundled
@@ -397,14 +396,12 @@ class _STMIngestHandler:
         store: Any,
         extractor: Any,
         embed_fn: Any | None = None,
-        rel_extractor: Any | None = None,
         enable_frames: bool = False,
         ontology_index: Any | None = None,
         relation_index: Any | None = None,
     ) -> None:
         self._store = store
         self._extractor = extractor
-        self._rel_extractor = rel_extractor
         self._enable_frames = enable_frames
         self._ontology = ontology_index
         self._relations = relation_index
@@ -1321,48 +1318,6 @@ class _STMIngestHandler:
                 ontology_blocked=blocked,
                 speaker=speaker,
             )
-
-        # DSPy ontology-guided relations (llm_assisted mode only).
-        if self._rel_extractor is not None and len(extraction.entities) >= 2:
-            dspy_rels = [
-                {
-                    "head": subj,
-                    "relation": rel_name,
-                    "tail": obj,
-                    "evidence": props.get("evidence", ""),
-                }
-                for subj, rel_name, obj, props in await self._rel_extractor.extract_relations(
-                    text=text
-                )
-                if is_graph_entity_name(str(subj)) and is_graph_entity_name(str(obj))
-            ]
-            # Score this tier with the extractor's already-loaded gate. No gate
-            # (verifier disabled, model unavailable, or no extractor at all)
-            # PASSES the relations through unscored: unverifiable is not
-            # disproven, the same rule RelationVerifierGate.filter follows for
-            # surfaces it cannot offset.
-            # Off the loop like every other model call here: the first call
-            # also loads DeBERTa, and the relex path pays that cost inside
-            # asyncio.to_thread for exactly this reason.
-            gate = getattr(self._extractor, "relation_verifier", None)
-            if gate is not None:
-                dspy_rels = await asyncio.to_thread(gate.filter, text, dspy_rels)
-            for rel in dspy_rels:
-                await self._store.write_relation(
-                    rel["head"],
-                    rel["relation"],
-                    rel["tail"],
-                    fact=rel.get("evidence", "") or text,
-                    chunk_id=chunk_id,
-                    # The DSPy path carries no per-triplet confidence: the LLM's
-                    # self-reported score was never copied into props, so this
-                    # read was the literal constant 0.5 for the layer's whole
-                    # life. Written as a constant now rather than a lookup that
-                    # looks like it varies.
-                    confidence=0.5,
-                    source="dspy",
-                    verifier_score=rel.get("verifier_score"),
-                )
 
         return self._report(chunk_id, len(extraction.relations), counts)
 
