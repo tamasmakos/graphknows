@@ -93,14 +93,14 @@ _BUNDLED_OVERLAY = str(
 class MemoryMode(StrEnum):
     """Named preset over the orthogonal capability knobs.
 
-    The mode is *only* a preset: every capability it implies (topics, DSPy
-    relations) is independently overridable, and ontology injection plus the
-    FrameNet layer are mode-independent. See
-    :data:`_PRESETS` for the expansion and ``docs/modes.md`` for the rationale.
+    The mode picks the decoder and, as a preset, the topic layer — which stays
+    independently overridable. Ontology injection plus the FrameNet layer are
+    mode-independent. See :data:`_PRESETS` for the expansion and
+    ``docs/modes.md`` for the rationale.
 
     - ``llm_free``: no network LLM call on the ingestion or retrieval hot path.
-    - ``llm_assisted``: adds DSPy relation extraction, LLM topic summaries, and
-      LLM-backed capabilities.
+    - ``llm_assisted``: the LLM decoder replaces the local extraction stack, and
+      topics are LLM summaries.
     """
 
     llm_free = "llm_free"
@@ -121,17 +121,29 @@ class TopicMode(StrEnum):
     llm = "llm"
 
 
+class Decoder(StrEnum):
+    """Which component turns a chunk into entities, relations and frame roles.
+
+    - ``local``: the bundled GLiNER2/DeBERTa stack — no network call.
+    - ``llm``: one structured LLM call per chunk, *replacing* that stack rather
+      than layering on top of it.
+    """
+
+    local = "local"
+    llm = "llm"
+
+
 @dataclass(frozen=True)
 class _Preset:
-    """The capability knobs a :class:`MemoryMode` expands into."""
+    """What a :class:`MemoryMode` expands into."""
 
     topics: TopicMode
-    dspy_relations: bool
+    decoder: Decoder
 
 
 _PRESETS: dict[MemoryMode, _Preset] = {
-    MemoryMode.llm_free: _Preset(topics=TopicMode.none, dspy_relations=False),
-    MemoryMode.llm_assisted: _Preset(topics=TopicMode.llm, dspy_relations=True),
+    MemoryMode.llm_free: _Preset(topics=TopicMode.none, decoder=Decoder.local),
+    MemoryMode.llm_assisted: _Preset(topics=TopicMode.llm, decoder=Decoder.llm),
 }
 
 
@@ -158,9 +170,9 @@ class GraphKnowsSettings(BaseSettings):
 
     graphknows_env: str = Field(default="development", alias="GRAPHKNOWS_ENV")
 
-    # Named preset over the capability knobs below. Every knob it implies can be
-    # overridden independently; read the resolved values through the
-    # ``topic_mode`` / ``dspy_relations`` properties, never off these raw fields
+    # Named preset. The decoder follows the mode alone; the topic layer can be
+    # overridden independently. Read the resolved values through the
+    # ``decoder`` / ``topic_mode`` properties, never off these raw fields
     # (``None`` means "take the preset's value").
     mode: MemoryMode = Field(default=MemoryMode.llm_free, alias="GRAPHKNOWS_MODE")
     topics: TopicMode | None = Field(default=None, alias="GRAPHKNOWS_TOPICS")
@@ -382,11 +394,13 @@ class GraphKnowsSettings(BaseSettings):
         return self.topics if self.topics is not None else _PRESETS[self.mode].topics
 
     @property
-    def dspy_relations(self) -> bool:
-        """Whether DSPy relation extraction runs — explicit setting, else preset."""
-        if self.enable_dspy_relations is not None:
-            return self.enable_dspy_relations
-        return _PRESETS[self.mode].dspy_relations
+    def decoder(self) -> Decoder:
+        """The resolved decoder — read-only, and a function of the mode alone.
+
+        There is no per-capability override: under a replacement decoder an
+        "LLM relations" knob names nothing, so the mode is the whole choice.
+        """
+        return _PRESETS[self.mode].decoder
 
     @property
     def ontology_source(self) -> str:
@@ -427,7 +441,7 @@ class GraphKnowsSettings(BaseSettings):
     @property
     def uses_llm(self) -> bool:
         """Whether any resolved capability makes network LLM calls."""
-        return self.dspy_relations or self.topic_mode is TopicMode.llm
+        return self.decoder is Decoder.llm or self.topic_mode is TopicMode.llm
 
     def check_production_secrets(self) -> None:
         """Raise if running in production with unsafe defaults.
@@ -445,11 +459,10 @@ class GraphKnowsSettings(BaseSettings):
             raise ConfigurationError(
                 "GRAPHKNOWS_ARCADEDB_PASSWORD is still the development default."
             )
-        # Keyed off the resolved capabilities, not the mode: llm_assisted with
-        # every LLM capability disabled needs no key.
+        # Keyed off the resolved capabilities, not the mode label.
         if self.uses_llm and not self.llm_api_key:
             raise ConfigurationError(
-                "LLM-backed capabilities (DSPy relations, LLM topics) "
+                "LLM-backed capabilities (the LLM decoder, LLM topics) "
                 "in production require GRAPHKNOWS_LLM_API_KEY."
             )
 

@@ -1,9 +1,9 @@
 """Relation extraction — capability-forked behind one factory.
 
 ``build_relation_extractor(settings)`` is the single place the LLM relation
-strategy is selected: with ``settings.dspy_relations`` it returns the
-DSPy/ontology extractor (lazily imported so ``dspy``/``rdflib`` load only then),
-otherwise ``None``.
+strategy is selected: under ``Decoder.llm`` it returns the DSPy/ontology
+extractor (lazily imported so ``dspy``/``rdflib`` load only then), otherwise
+``None``.
 
 This is *additive* — the deterministic relex/SVO relation pass runs in both
 modes regardless, so what this factory gates is the LLM layer on top.
@@ -14,6 +14,8 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
+from graphknows.settings import Decoder
+
 if TYPE_CHECKING:
     from graphknows.ingestion.extraction.relations.llm_assisted.dspy import DSPyExtractor
     from graphknows.settings import GraphKnowsSettings
@@ -21,7 +23,7 @@ if TYPE_CHECKING:
 
 def build_relation_extractor(settings: GraphKnowsSettings) -> DSPyExtractor | None:
     """Return the LLM relation extractor when enabled, else ``None``."""
-    if not settings.dspy_relations:
+    if settings.decoder is not Decoder.llm:
         return None
 
     from graphknows.ingestion.extraction.relations.llm_assisted.dspy import DSPyExtractor
