@@ -72,7 +72,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # `nvidia-*` 13.x packages the PyPI wheel pulled in are not pruned by `uv pip`,
 # so they are removed by name. Pin matches uv.lock.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    UV_LINK_MODE=copy uv pip install --reinstall --torch-backend ${TORCH_BACKEND} "torch==2.12.0" \
+    UV_LINK_MODE=copy uv pip \
+    install --reinstall --torch-backend ${TORCH_BACKEND} "torch==2.12.0" \
     && uv pip freeze | grep -E '^nvidia-[a-z0-9-]+==13\.' | cut -d= -f1 | xargs -r uv pip uninstall
 
 # spaCy model, installed INTO the venv the app runs (a plain `spacy download`
