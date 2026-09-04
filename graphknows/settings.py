@@ -377,6 +377,37 @@ class GraphKnowsSettings(BaseSettings):
     # type veto itself can be A/B'd independently before it gates real writes.
     enable_fe_type_gate: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_FE_TYPE_GATE")
 
+    # The LLM decoder's knobs. Only read on the ``llm`` decoder; inert under the
+    # local stack, which has its own (relex, verifier, frames) switches above.
+    #
+    # The three section switches turn off a part of the ONE structured call —
+    # a section the model is not asked for is a section it cannot get wrong, and
+    # switching each off in turn is how the sections are ablated (FR-016).
+    decode_entities: bool = Field(default=True, alias="GRAPHKNOWS_DECODE_ENTITIES")
+    decode_relations: bool = Field(default=True, alias="GRAPHKNOWS_DECODE_RELATIONS")
+    decode_frames: bool = Field(default=True, alias="GRAPHKNOWS_DECODE_FRAMES")
+    # Relation confidence gate. 0 disables it, which IS the fourth ablation arm
+    # (FR-014) — not a special case in the code.
+    decode_confidence_min: float = Field(
+        default=0.5, ge=0.0, le=1.0, alias="GRAPHKNOWS_DECODE_CONFIDENCE_MIN"
+    )
+    # Per-chunk retry budget and the exponential-with-full-jitter wait it spends
+    # (FR-020). ``Retry-After`` from the provider wins over the computed wait.
+    decode_attempts: int = Field(default=3, ge=1, alias="GRAPHKNOWS_DECODE_ATTEMPTS")
+    decode_backoff_base_s: float = Field(
+        default=1.0, ge=0.0, alias="GRAPHKNOWS_DECODE_BACKOFF_BASE_S"
+    )
+    decode_backoff_cap_s: float = Field(
+        default=30.0, ge=0.0, alias="GRAPHKNOWS_DECODE_BACKOFF_CAP_S"
+    )
+    decode_honour_retry_after: bool = Field(
+        default=True, alias="GRAPHKNOWS_DECODE_HONOUR_RETRY_AFTER"
+    )
+    # Bounded fan-out of the per-chunk calls in ``extract_batch``: chunks are
+    # independent, so they go out concurrently, but not all at once — this is the
+    # ceiling that keeps a large batch from tripping provider rate limits.
+    decode_concurrency: int = Field(default=8, ge=1, alias="GRAPHKNOWS_DECODE_CONCURRENCY")
+
     @field_validator("topics", "enable_dspy_relations", mode="before")
     @classmethod
     def _empty_means_unset(cls, value: Any) -> Any:
