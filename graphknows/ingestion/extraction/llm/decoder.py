@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import functools
 import logging
-import os
 from collections import Counter
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -40,14 +39,6 @@ from dataclasses import asdict
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, create_model
-
-# litellm fetches its model-cost map from GitHub when it is imported, unless told
-# to use the copy it ships. The only egress this mode is allowed is the configured
-# provider, and this module is imported into the same process as the air-gapped
-# ``llm_free`` checks by the test suite — so the switch is set before anything
-# here can import dspy (which imports litellm). ``setdefault``: an operator who
-# set it deliberately keeps their value.
-os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 from graphknows.ingestion.extraction.entities.extractor import (
     _BASE_ENTITY_LABELS,
