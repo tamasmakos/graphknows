@@ -47,9 +47,8 @@ read from a `.env` file). Key ones: `GRAPHKNOWS_MODE`, `GRAPHKNOWS_NAMESPACE`,
 `GRAPHKNOWS_ENABLE_FRAMES`, `GRAPHKNOWS_ENABLE_FE_TYPE_GATE`, `GRAPHKNOWS_FACT_CONTEXT`.
 
 `GRAPHKNOWS_MODE` (enum `MemoryMode`) governs extraction. There is no separate
-profile object: the mode fork lives in exactly one factory,
-`build_relation_extractor`
-(`graphknows/ingestion/extraction/relations/__init__.py`), on the write path.
+profile object: the mode fork lives in exactly one factory, `build_decoder`
+(`graphknows/ingestion/extraction/entities/__init__.py`), on the write path.
 Retrieval does not fork — `build_retriever`
 (`graphknows/retrieval/__init__.py`) always returns `DETRetriever`.
 

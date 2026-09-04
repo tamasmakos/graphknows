@@ -19,8 +19,8 @@ Bring your own ontology with ``python -m graphknows.symbolic.ontology.digest`` (
 :mod:`graphknows.symbolic.ontology.digest`), then point ``GRAPHKNOWS_ONTOLOGY`` at the
 result.
 
-These imports stay LLM-free. DSPy-backed relation extraction lives in
-``graphknows.ingestion.extraction.relations.llm_assisted.dspy``.
+These imports stay LLM-free. The LLM decoder lives in
+``graphknows.ingestion.extraction.llm``.
 
 This facade carries only what is imported from outside the package; everything
 else is reached through its own module, so adding a name here is a deliberate

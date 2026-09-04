@@ -439,8 +439,8 @@ def load_rdf_ontology_file(path: str | Path) -> RdfOntologyManifest:
     than reasons to fall back to taxonomy YAML or generated defaults.
 
     A pre-built digest (the bundled CCO default) is accepted here too and
-    handled without rdflib: this is the path ``build_relation_extractor`` hands
-    ``settings.ontology_source``, which now defaults to that digest.
+    handled without rdflib: ``settings.ontology_source`` defaults to that
+    digest.
 
     Raises:
         FileNotFoundError: When ``path`` does not exist.

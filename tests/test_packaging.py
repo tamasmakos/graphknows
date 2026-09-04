@@ -153,7 +153,7 @@ ONTOLOGY_SPLIT_CALL_SITES = {
     "graphknows/symbolic/ontology/rdf/projection.py": "ontology",
     "graphknows/symbolic/ontology/rdf/prefixes.py": "ontology",
     "graphknows/symbolic/ontology/digest.py": "ontology",
-    "graphknows/ingestion/extraction/relations/llm_assisted/dspy.py": "assisted",
+    "graphknows/ingestion/extraction/llm/decoder.py": "assisted",
 }
 
 

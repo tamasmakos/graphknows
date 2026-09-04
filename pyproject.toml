@@ -322,7 +322,6 @@ ignore = [
 "**/storage/arcadedb/*.py" = ["D102", "C901"]  # data-access layer — docstrings deferred
 "**/retrieval/agentic.py" = ["C901"]  # ReAct loop complexity is inherent
 "**/framenet/framenet.py" = ["C901"]  # FE assignment is one dependency-parse pass
-"**/llm_assisted/dspy.py" = ["C901"]  # ontology context build is one linear pass
 # Pre-existing complexity, exempted rather than refactored under a gate-hardening
 # change: both are single linear passes over a parse tree / a section, and
 # splitting core extraction to satisfy a metric is churn with defect risk.

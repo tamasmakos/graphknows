@@ -1,6 +1,5 @@
 """Extraction — turn chunk text into entities and relations.
 
-``entities/`` is shared across modes; ``relations/`` forks the mode
-(``llm_free`` deterministic cleaning vs ``llm_assisted`` DSPy/ontology) behind
-``relations.build_relation_extractor``.
+``entities/`` and ``relations/`` are the local decoder's stack; ``llm/`` is the
+replacement decoder. ``build_decoder(settings)`` picks between them.
 """
