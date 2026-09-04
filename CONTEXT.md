@@ -188,7 +188,7 @@ _Avoid_: offline, local-only, private, data-sovereign (a weaker and different cl
 
 **The contract surface**:
 What the version guarantee actually covers: the `Memory` entrypoint, the MCP server,
-`llm_free` extraction and injectable ontology. Everything else ships but is unsupported.
+extraction in both modes and injectable ontology. Everything else ships but is unsupported.
 _Avoid_: the public API, supported features
 
 **Re-ingest**:
