@@ -292,6 +292,6 @@ class STMService:
             chunk_count=handler._chunks_written - chunks_before,
             entity_count=total_entities,
             elapsed_s=round(time.perf_counter() - t0, 3),
-            errors=errors,
+            errors=errors + handler._drain_decode_errors(),
             abstentions=handler._report_abstentions(),
         )

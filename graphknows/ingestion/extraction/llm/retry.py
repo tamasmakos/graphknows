@@ -19,10 +19,12 @@ Three outcomes, per contracts/decoder.md §4:
   (400/422), ``NotFoundError`` (404), an ``APIError`` carrying 402 or 403. Also
   at once, for the ingest handler to record on ``IngestResult.errors``.
 
-Only the first is this module's business. The other two — and anything unknown —
-leave through the same ``raise``, consuming no budget, and the caller sorts them
-into their gates. Classifying is therefore one question, not three: *is this
-worth trying again?*
+Only the first is this module's business while the budget is being spent: the
+other two — and anything unknown — leave through the same ``raise``, consuming
+no budget. :func:`is_retryable` therefore asks one question, not three: *is this
+worth trying again?* Once trying is over, :func:`failure_gate` asks the second
+one — *what does this cost, the chunk or the run?* — off the same typed signals,
+so the classification table lives in one module rather than two.
 
 The wait is exponential with **full jitter** — ``uniform(0, min(cap, base *
 2**n))`` — so a batch that trips one rate limit does not re-converge on the
@@ -54,6 +56,20 @@ _jitter = random.SystemRandom()
 #: status code rather than off the type: 500/502 is a server that may yet
 #: answer, while 402/403 (credits, moderation) is run-permanent.
 _RETRYABLE_STATUS = frozenset({500, 502})
+
+#: The statuses that end the run rather than the chunk (contracts/decoder.md §4):
+#: a malformed or refused request (400/422), rejected or absent credentials
+#: (401/403), exhausted credits (402), an unknown model (404). Read off the
+#: status rather than off five class names because litellm spreads them over two
+#: exception hierarchies — ``PermissionDeniedError`` is not a ``litellm.APIError``
+#: — while every one of them carries the code.
+_RUN_PERMANENT_STATUS = frozenset({400, 401, 402, 403, 404, 422})
+
+#: The gate names of contracts/decoder.md §5 that a *failure* lands under. The
+#: third, ``decoder_empty``, is a successful call's outcome and is counted where
+#: the answer is read, not here.
+DECODER_FAILED = "decoder_failed"
+DECODE_CONTEXT_OVERFLOW = "decode_context_overflow"
 
 
 @functools.cache
@@ -103,6 +119,38 @@ def is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, _retryable_classes()):
         return True
     return isinstance(exc, _api_error()) and _status_code(exc) in _RETRYABLE_STATUS
+
+
+@functools.cache
+def _context_window_error() -> type[BaseException]:
+    """``litellm.ContextWindowExceededError`` — chunk-permanent, its own gate."""
+    import litellm
+
+    return litellm.ContextWindowExceededError
+
+
+def failure_gate(exc: BaseException) -> str | None:
+    """The abstention gate *exc* costs its chunk, or ``None`` when it costs the run.
+
+    The counting half of contracts/decoder.md §4, read once trying is over:
+
+    * ``decode_context_overflow`` — the chunk plus its closed vocabularies did
+      not fit. Tested first, and by type, because the overflow carries status 400
+      and would otherwise read as the malformed request it is not.
+    * ``None`` — run-permanent: rejected or absent credentials, a request the
+      provider refuses outright. Not an abstention at all — the chunk declined
+      nothing, the run could not decode — so it is recorded on
+      ``IngestResult.errors`` instead (FR-021).
+    * ``decoder_failed`` — everything else, a spent retry budget included. A
+      failure this table does not recognise, our own bugs among them, abstains
+      for its own chunk rather than being read as the provider's verdict on
+      every remaining one.
+    """
+    if isinstance(exc, _context_window_error()):
+        return DECODE_CONTEXT_OVERFLOW
+    if not is_retryable(exc) and _status_code(exc) in _RUN_PERMANENT_STATUS:
+        return None
+    return DECODER_FAILED
 
 
 def retry_after_s(exc: BaseException) -> float | None:

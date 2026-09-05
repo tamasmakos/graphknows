@@ -481,6 +481,11 @@ class _STMIngestHandler:
         # abstention nobody can count is indistinguishable from an extractor
         # that found nothing.
         self._abstentions: dict[str, int] = defaultdict(int)
+        # Run-permanent decoder failures — rejected credentials, a request the
+        # provider refuses outright — kept apart from the gates above: no chunk
+        # declined to emit, the run could not decode at all, so they belong on
+        # `IngestResult.errors` (FR-021). Drained per report, not accumulated.
+        self._decode_errors: list[str] = []
         # Accepted MATCHES_CLASS sims for this session, so the spread that
         # issue #158 measured (a degenerate ~0.02 band) can be reported rather
         # than only ever inferred from a bug report.
@@ -738,7 +743,7 @@ class _STMIngestHandler:
             chunk_count=len(parsed.segments),
             entity_count=entity_count,
             elapsed_s=elapsed,
-            errors=errors,
+            errors=errors + self._drain_decode_errors(),
             abstentions=self._report_abstentions(),
         )
 
@@ -807,7 +812,18 @@ class _STMIngestHandler:
                 texts, entity_hints, relation_spec, frame_candidates=candidates
             )
 
-        return await asyncio.to_thread(_decode)
+        before = self._decoder_abstentions()
+        try:
+            results = await asyncio.to_thread(_decode)
+        except Exception as exc:
+            # Only a run-permanent failure reaches here: the decoder contains and
+            # counts the chunk-level ones itself. Every chunk still gets written,
+            # undecoded, so an expired key costs a report line and a re-drive
+            # rather than a silently short graph (FR-018, FR-021).
+            self._note_decode_failure(exc)
+            results = [ExtractionResult() for _ in texts]
+        self._merge_decoder_abstentions(before)
+        return results
 
     def _decode_relation_labels(
         self, text: str, class_hints: list[str], embedding: list[float] | None
@@ -1654,6 +1670,54 @@ class _STMIngestHandler:
                 max(self._tag_sims) - min(self._tag_sims),
             )
         return {k: v for k, v in self._abstentions.items() if v}
+
+    def _drain_decode_errors(self) -> list[str]:
+        """This run's run-permanent decoder failures, then forgotten.
+
+        Drained rather than accumulated: one handler outlives many ingests, and
+        a rejected key re-reported on the next run — after it was replaced — is
+        a false alarm.
+        """
+        errors, self._decode_errors = self._decode_errors, []
+        return errors
+
+    def _decoder_abstentions(self) -> dict[str, int]:
+        """The decoder's own gate counters; empty for a decoder that keeps none.
+
+        The response gates live in the decoder, because that is the only place
+        the response exists (contracts/decoder.md §5). This handler is where
+        they are *reported* from, so it reads them rather than recounting them.
+        """
+        return dict(getattr(self._extractor, "abstentions", {}))
+
+    def _merge_decoder_abstentions(self, before: dict[str, int]) -> None:
+        """Fold what the decoder counted since *before* into this run's report.
+
+        The delta, not the total: the decoder's counter is cumulative over its
+        own lifetime, and one decoder serves every ingest of the process.
+        """
+        for gate, count in self._decoder_abstentions().items():
+            if (new := count - before.get(gate, 0)) > 0:
+                self._abstentions[gate] += new
+
+    def _note_decode_failure(self, exc: Exception) -> None:
+        """Sort one failed decode into its gate, or onto the run's errors.
+
+        Never re-raised: the chunk is written undecoded either way, which is what
+        keeps a provider outage from opening a *hole* in the graph rather than a
+        counted gap in it (FR-018, SC-004). Falling back to the local decoder is
+        forbidden here as everywhere (FR-022), so there is no third branch.
+        """
+        from graphknows.ingestion.extraction.llm.retry import failure_gate
+
+        if (gate := failure_gate(exc)) is not None:
+            self._abstentions[gate] += 1
+            log.warning("decode failed (%s: %s); abstained under %s", type(exc).__name__, exc, gate)
+            return
+        message = f"decoder: {type(exc).__name__}: {exc}"
+        if message not in self._decode_errors:
+            self._decode_errors.append(message)
+        log.error("%s -- the run cannot decode; chunks are stored undecoded", message)
 
     def _label_hints(self, embeddings: list[list[float]]) -> list[list[str]] | None:
         """Per-chunk ontology CLASS labels, offered as candidate entity types.
@@ -2522,13 +2586,30 @@ class _STMIngestHandler:
         extra_relation_labels: dict[str, str] | None = None,
         speaker: str = "",
     ) -> ExtractionResult:
-        if self._extractor is not None:
-            from typing import cast
+        """One chunk's extraction, with the single-call decoder's failures contained.
 
-            return cast(
+        The message path decodes through here rather than through
+        :meth:`_decode_batch`, and a raise on this route used to abandon the turn
+        *before* it was written — a failed decode cost the chunk itself, not just
+        its labels. The local two-pass decoder still raises: its failures are
+        this process's own, not a provider's, and nothing counts them.
+        """
+        if self._extractor is None:
+            return ExtractionResult()
+        from typing import cast
+
+        before = self._decoder_abstentions()
+        try:
+            result = cast(
                 ExtractionResult,
                 self._extractor.extract(
                     clean_text, extra_entity_labels, extra_relation_labels, speaker
                 ),
             )
-        return ExtractionResult()
+        except Exception as exc:
+            if not self._decodes_in_one_call:
+                raise
+            self._note_decode_failure(exc)
+            result = ExtractionResult()
+        self._merge_decoder_abstentions(before)
+        return result

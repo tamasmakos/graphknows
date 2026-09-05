@@ -46,7 +46,7 @@ from graphknows.ingestion.extraction.entities.extractor import (
     ExtractionResult,
 )
 from graphknows.ingestion.extraction.llm.anchor import ResponseGates
-from graphknows.ingestion.extraction.llm.retry import RetryBudget
+from graphknows.ingestion.extraction.llm.retry import RetryBudget, failure_gate
 from graphknows.ingestion.extraction.llm.schema import (
     DecodedEntity,
     DecodedFrameInstance,
@@ -59,6 +59,10 @@ from graphknows.llm import build_lm
 from graphknows.nlp import load_spacy_model
 
 log = logging.getLogger(__name__)
+
+#: A call that came back with neither entities nor relations (contracts/decoder.md
+#: §5). Deliberately not ``decoder_failed``: the provider answered.
+DECODER_EMPTY = "decoder_empty"
 
 
 def _dspy() -> Any:
@@ -340,6 +344,12 @@ class LLMDecoder:
             self._call(request).decoded()
         )
         self._abstentions.update(gated.abstentions)
+        if not gated.result.entities and not gated.result.relations:
+            # A call that answered with nothing is not a call that failed, and a
+            # report unable to tell the two apart is a report nobody can act on
+            # (FR-019). Counted here because this is the only frame that knows
+            # the call came back at all.
+            self._abstentions[DECODER_EMPTY] += 1
         return gated.result
 
     def extract_batch(
@@ -353,8 +363,13 @@ class LLMDecoder:
     ) -> list[ExtractionResult]:
         """One call per chunk, issued concurrently under the configured bound.
 
-        Per-chunk failures are contained here, exactly as on the local path: a
-        chunk that raises costs its own result, never the batch's.
+        Chunk-level failures are contained here, exactly as on the local path: a
+        chunk that gives up costs its own result, never the batch's, and it
+        abstains under the gate :func:`failure_gate` picks for it (FR-018) rather
+        than vanishing into a log line. A **run**-permanent failure is the one
+        thing not contained — no other chunk will decode either, so re-asking the
+        provider per chunk only spends someone's credits to learn the same thing
+        (FR-021); it leaves this pool for the ingest handler to record.
         """
         if not texts:
             return []
@@ -371,7 +386,10 @@ class LLMDecoder:
                     else (),
                 )
             except Exception as exc:
-                log.warning("decode failed on chunk %d (%s); skipping", index, exc)
+                if (gate := failure_gate(exc)) is None:
+                    raise
+                self._abstentions[gate] += 1
+                log.warning("decode failed on chunk %d (%s); abstained under %s", index, exc, gate)
                 return ExtractionResult()
 
         with ThreadPoolExecutor(max_workers=self._settings.decode_concurrency) as pool:
