@@ -491,7 +491,7 @@ class GraphStore(ArcadeStoreBase):
         """Upsert one CHUNK vertex (state='raw') with its PART_OF edge and embedding.
 
         ``chunk`` keys: chunk_id (required), session_id, file_id, text, seq,
-        kind, speaker, ts, memory_class, embedding.
+        kind, speaker, ts, memory_class, decode_state, embedding.
         """
         await self.write_chunks_bulk([chunk])
 
@@ -519,6 +519,7 @@ class GraphStore(ArcadeStoreBase):
                     "speaker": c.get("speaker", "") or "",
                     "ts": c.get("ts", "") or "",
                     "mc": c.get("memory_class", "") or "",
+                    "ds": c.get("decode_state", "") or "",
                 }
                 for c in batch
             ]
@@ -528,7 +529,7 @@ class GraphStore(ArcadeStoreBase):
                 "SET c.session_id = row.sid, c.text = row.text, c.seq = row.seq, "
                 "    c.search_text = row.stext, "
                 "    c.kind = row.kind, c.speaker = row.speaker, c.ts = row.ts, "
-                "    c.memory_class = row.mc, "
+                "    c.memory_class = row.mc, c.decode_state = row.ds, "
                 "    c.state = coalesce(c.state, 'raw'), "
                 "    c.created_at = coalesce(c.created_at, $now)",
                 rows=rows,
@@ -2860,6 +2861,31 @@ class GraphStore(ArcadeStoreBase):
                     "memory_class": r.get("memory_class") or "",
                 }
         return result
+
+    async def failed_decode_chunks(self, session_id: str) -> list[dict[str, Any]]:
+        """CHUNK rows in this session whose last decode failed, for the re-drive."""
+        if not session_id:
+            return []
+        rows = await self.query(
+            "MATCH (c:CHUNK) "
+            "WHERE c.session_id = $sid AND c.decode_state = 'failed' "
+            "RETURN c.chunk_id AS chunk_id, c.session_id AS session_id, "
+            "c.text AS text, c.speaker AS speaker, c.ts AS ts, c.seq AS seq "
+            "ORDER BY c.seq",
+            sid=session_id,
+        )
+        return [
+            {
+                "chunk_id": r["chunk_id"],
+                "session_id": r.get("session_id") or "",
+                "text": r.get("text", ""),
+                "speaker": r.get("speaker") or "",
+                "ts": r.get("ts") or "",
+                "seq": r.get("seq"),
+            }
+            for r in rows
+            if r.get("chunk_id")
+        ]
 
     # ------------------------------------------------------------------
     # Read API — topics / frames / entity graph
