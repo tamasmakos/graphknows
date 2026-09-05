@@ -325,7 +325,9 @@ class LLMDecoder:
         """Label one chunk. Exactly one provider call, or none for empty text.
 
         A section switched off in settings is left out of the request the same
-        way an empty one is: not asked for, and never substituted locally.
+        way an empty one is: not asked for, and never substituted locally
+        (FR-016). With the entity section off there is no request at all — see
+        below.
         """
         if not text.strip():
             return ExtractionResult()
@@ -337,8 +339,13 @@ class LLMDecoder:
             frame_candidates=tuple(frame_candidates) if settings.decode_frames else (),
             speaker=speaker,
         )
-        if not any((request.entity_labels, request.relation_spec, request.frame_candidates)):
-            log.debug("every decode section is switched off; no request made for this chunk")
+        if not request.entity_labels:
+            # The base inventory is never empty, so this is `decode_entities`
+            # off — and it takes the other two sections with it: a relation is
+            # built from entity surfaces and a role filler is anchored as one,
+            # so both would be gated away whole. Asking anyway would spend a
+            # call on a reply that cannot survive it (FR-016).
+            log.debug("decode_entities is off; nothing to anchor on, so no request is made")
             return ExtractionResult()
         gated = ResponseGates(request, settings.decode_confidence_min).apply(
             self._call(request).decoded()
