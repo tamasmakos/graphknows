@@ -26,10 +26,12 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-    # Batteries-included: `pip install graphknows` gives a fully working llm_free
-    # memory service (GLiNER2 extraction, local embeddings, analytics, parsers) that
-    # also serves MCP out of the box. Only the llm_assisted stack (dspy/rdflib) is
-    # gated behind the single [assisted] extra.
+    # Batteries-included: `pip install graphknows` gives a fully working memory
+    # service (local extraction, embeddings, analytics, parsers) that also serves
+    # MCP out of the box — and, with a key and `Memory(mode="llm_assisted")`, the
+    # LLM decoder too. Both modes are the contract surface, so neither sits behind
+    # an extra; only the injectable RDF/OWL stack (`ontology`) and the optional
+    # adapters do.
     "pydantic>=2.7.0",
     # env_file loading in settings.py needs python-dotenv, but pydantic-settings
     # already requires it unconditionally (not behind an extra) — no separate
@@ -78,27 +80,31 @@ dependencies = [
     # resolves from THESE constraints and never reads uv.lock, so a lock pin is
     # silently ignored on every rebuild.
     "mcp>=1.0.0,<2",
+    # The LLM decoder (`Memory(mode="llm_assisted")`). Core, not an extra: the
+    # mode is part of the contract surface, and an extra that gates half of that
+    # surface is a documentation bug waiting to happen (ADR 0003). `llm_free`
+    # installs carry them unused — the cost of the swap, accepted deliberately.
+    # `litellm` is declared beside dspy because the decoder imports it directly
+    # (typed retry signals, the model-map registration that makes structured
+    # output reach the provider), not only through dspy.
+    "dspy>=3.2.1",
+    "litellm>=1.85.0",
 ]
 
 [project.optional-dependencies]
-# llm_assisted mode: LLM-driven relation extraction + injectable RDF/OWL ontology.
-# The one extra: `pip install 'graphknows[assisted]'`. Lazily imported and guarded
-# by MissingExtraError, so the base install never pulls dspy/rdflib.
+# Injectable RDF/OWL ontology: what the release image installs
+# (`deploy/Dockerfile`), what the dev image and CI sync, and what the five
+# ontology MissingExtraError call sites name.
 #
-# `networkx` joins them for graphknows.symbolic.ontology.rdf: projecting a folder of RDF
-# needs a multigraph with parallel predicate-keyed edges, and the label-keyed
-# taxonomy needs cycle detection and a topological order. It is imported inside
-# functions behind the same MissingExtraError guard, so a base install never
-# pulls it either.
-# `litellm` is imported directly by the LLM decoder (typed exceptions, the
-# model-map registration that makes structured output reach the provider), not
-# only reached through dspy — so it is declared, per tests/test_packaging.py.
-assisted = ["dspy>=2.5.0", "litellm>=1.85.0", "rdflib>=7.0.0", "networkx>=3.0"]
-# Injectable RDF/OWL ontology without the LLM-extraction stack: what the release
-# image installs (`deploy/Dockerfile`) and what the five ontology
-# MissingExtraError call sites name. Deliberately a subset of `assisted` rather
-# than a slice cut out of it — `assisted` keeps rdflib/networkx so no existing
-# install, image or CI leg loses them.
+# `networkx` sits beside rdflib for graphknows.symbolic.ontology.rdf: projecting a
+# folder of RDF needs a multigraph with parallel predicate-keyed edges, and the
+# label-keyed taxonomy needs cycle detection and a topological order. Both are
+# imported inside functions behind a MissingExtraError guard, so a base install
+# pulls neither.
+#
+# The `assisted` extra is GONE (ADR 0003): dspy and litellm are core, because
+# `llm_assisted` is part of the contract surface. `pip install
+# 'graphknows[assisted]'` now fails; RDF users want `graphknows[ontology]`.
 ontology = ["rdflib>=7.0.0", "networkx>=3.0"]
 # Framework adapter. Genuinely optional — nothing in the core paths imports it,
 # and it is lazily imported behind a MissingExtraError guard. The `langchain`
@@ -257,6 +263,7 @@ pythonpath = ["."]
 markers = [
     "integration: marks tests that require live infrastructure (ArcadeDB) — excluded from CI unit test run",
     "unit: marks pure unit tests with no infrastructure dependencies",
+    "slow: marks tests that build or install a real artifact (minutes, not seconds)",
 ]
 
 [tool.ruff]

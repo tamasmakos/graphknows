@@ -68,15 +68,18 @@ DECODER_EMPTY = "decoder_empty"
 def _dspy() -> Any:
     """dspy, imported on first use rather than at module import.
 
-    Importing dspy imports litellm; neither belongs in a process that only ever
-    runs the local decoder, and the base install does not carry them at all.
+    Importing dspy imports litellm, and a process that only ever runs the local
+    decoder should pay for neither — so the import is deferred even though both
+    are core dependencies (ADR 0003). Core is also why a missing dspy is a
+    ``BrokenInstallError``: there is no extra left to suggest, so the remedy is
+    to repair the install rather than to add to it.
     """
     try:
         import dspy
-    except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without the extra
-        from graphknows.exceptions import MissingExtraError
+    except ModuleNotFoundError as exc:  # pragma: no cover - a broken install, not a code path
+        from graphknows.exceptions import BrokenInstallError
 
-        raise MissingExtraError("llm decoding", "assisted") from exc
+        raise BrokenInstallError("llm decoding", "dspy") from exc
     return dspy
 
 

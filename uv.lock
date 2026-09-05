@@ -1273,10 +1273,12 @@ name = "graphknows"
 source = { editable = "." }
 dependencies = [
     { name = "dateparser" },
+    { name = "dspy" },
     { name = "gliner" },
     { name = "gliner2" },
     { name = "httpx" },
     { name = "huggingface-hub" },
+    { name = "litellm" },
     { name = "mcp" },
     { name = "nltk" },
     { name = "numpy" },
@@ -1290,12 +1292,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-assisted = [
-    { name = "dspy" },
-    { name = "litellm" },
-    { name = "networkx" },
-    { name = "rdflib" },
-]
 langgraph = [
     { name = "langgraph" },
 ]
@@ -1333,7 +1329,7 @@ eval = [
 [package.metadata]
 requires-dist = [
     { name = "dateparser", specifier = ">=1.2.0" },
-    { name = "dspy", marker = "extra == 'assisted'", specifier = ">=2.5.0" },
+    { name = "dspy", specifier = ">=3.2.1" },
     { name = "frame-semantic-transformer", marker = "extra == 'srl'", specifier = ">=1.1.0" },
     { name = "gliner", specifier = ">=0.2.26" },
     { name = "gliner2", specifier = ">=0.1.0,<2" },
@@ -1342,23 +1338,21 @@ requires-dist = [
     { name = "langchain", marker = "extra == 'observability'", specifier = ">=1.0" },
     { name = "langfuse", marker = "extra == 'observability'", specifier = ">=3.0" },
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.2.0" },
-    { name = "litellm", marker = "extra == 'assisted'", specifier = ">=1.85.0" },
+    { name = "litellm", specifier = ">=1.85.0" },
     { name = "mcp", specifier = ">=1.0.0,<2" },
-    { name = "networkx", marker = "extra == 'assisted'", specifier = ">=3.0" },
     { name = "networkx", marker = "extra == 'ontology'", specifier = ">=3.0" },
     { name = "nltk", specifier = ">=3.10.2" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "pydantic", specifier = ">=2.7.0" },
     { name = "pydantic-settings", specifier = ">=2.2.0" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
-    { name = "rdflib", marker = "extra == 'assisted'", specifier = ">=7.0.0" },
     { name = "rdflib", marker = "extra == 'ontology'", specifier = ">=7.0.0" },
     { name = "sentence-transformers", specifier = ">=3.0.0" },
     { name = "spacy", specifier = ">=3.7.0" },
     { name = "torch", specifier = ">=2.4.0" },
     { name = "transformers", specifier = ">=4.44.0" },
 ]
-provides-extras = ["assisted", "langgraph", "observability", "ontology", "srl"]
+provides-extras = ["langgraph", "observability", "ontology", "srl"]
 
 [package.metadata.requires-dev]
 dev = [
