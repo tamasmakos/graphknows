@@ -79,14 +79,14 @@ def _retryable_classes() -> tuple[type[BaseException], ...]:
     litellm and dspy are the assisted path's imports, not the base install's;
     a process that never decodes must not pay for them at import time.
     """
-    import litellm
     from dspy.utils.exceptions import AdapterParseError
+    from litellm import exceptions as litellm_exceptions
 
     return (
-        litellm.RateLimitError,
-        litellm.Timeout,
-        litellm.APIConnectionError,
-        litellm.ServiceUnavailableError,
+        litellm_exceptions.RateLimitError,
+        litellm_exceptions.Timeout,
+        litellm_exceptions.APIConnectionError,
+        litellm_exceptions.ServiceUnavailableError,
         AdapterParseError,
     )
 
@@ -94,9 +94,9 @@ def _retryable_classes() -> tuple[type[BaseException], ...]:
 @functools.cache
 def _api_error() -> type[BaseException]:
     """``litellm.APIError`` — the one signal read by status rather than by type."""
-    import litellm
+    from litellm import exceptions as litellm_exceptions
 
-    return litellm.APIError
+    return litellm_exceptions.APIError
 
 
 def _status_code(exc: BaseException) -> int | None:
@@ -124,9 +124,9 @@ def is_retryable(exc: BaseException) -> bool:
 @functools.cache
 def _context_window_error() -> type[BaseException]:
     """``litellm.ContextWindowExceededError`` — chunk-permanent, its own gate."""
-    import litellm
+    from litellm import exceptions as litellm_exceptions
 
-    return litellm.ContextWindowExceededError
+    return litellm_exceptions.ContextWindowExceededError
 
 
 def failure_gate(exc: BaseException) -> str | None:
