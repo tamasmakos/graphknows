@@ -301,6 +301,29 @@ class Memory:
         finally:
             await service.close()
 
+    async def redecode(self, session_id: str) -> dict[str, Any]:
+        """Re-run the decoder over this session's decode-failed chunks (FR-024).
+
+        Returns ``{"session_id", "attempted", "recovered", "still_failed",
+        "abstentions", "errors"}``. Only chunks marked ``decode_state='failed'``
+        are touched, and the text already in the graph is the input — the source
+        is never re-ingested. A chunk that decodes loses the marker, one that
+        fails again keeps it, so a second run finds nothing and reports
+        ``attempted: 0``.
+
+        Deliberately not folded into :meth:`flush_memory`: flush is the
+        raw -> consolidated lifecycle, and a re-drive is not a lifecycle
+        transition.
+        """
+        from graphknows.ingestion import build_stm_service
+
+        service = build_stm_service(self.settings, self.namespace)
+        try:
+            await service.connect()
+            return await service.redecode(session_id)  # type: ignore[no-any-return]
+        finally:
+            await service.close()
+
     async def ingest_memory(
         self,
         messages: str | list[dict[str, Any]] | dict[str, Any] = "",

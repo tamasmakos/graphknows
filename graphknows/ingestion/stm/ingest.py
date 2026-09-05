@@ -486,6 +486,11 @@ class _STMIngestHandler:
         # declined to emit, the run could not decode at all, so they belong on
         # `IngestResult.errors` (FR-021). Drained per report, not accumulated.
         self._decode_errors: list[str] = []
+        # Decodes given up on, gated and run-permanent alike. Counted rather
+        # than derived from the two above because `_decode_errors` de-duplicates
+        # its messages: a rejected key that costs ten chunks appends once, so
+        # its length cannot tell a re-drive which chunk just failed (FR-024).
+        self._decode_failures: int = 0
         # Accepted MATCHES_CLASS sims for this session, so the spread that
         # issue #158 measured (a degenerate ~0.02 band) can be reported rather
         # than only ever inferred from a bug report.
@@ -746,6 +751,71 @@ class _STMIngestHandler:
             errors=errors + self._drain_decode_errors(),
             abstentions=self._report_abstentions(),
         )
+
+    async def redecode(self, session_id: str) -> dict[str, Any]:
+        """Re-drive this session's decode-failed chunks through the decoder (FR-024).
+
+        The text already in the graph is the input — no source is re-read and no
+        chunk is re-cut — and every write goes back through
+        :meth:`_write_extracted`, so a re-drive and an ordinary ingest produce
+        the same graph. A chunk whose decode answers is rewritten ``'ok'``; one
+        that fails again keeps ``'failed'``, which is what makes a second run
+        find nothing and report ``attempted: 0``.
+        """
+        rows = await self._store.failed_decode_chunks(session_id)
+        # ``kind`` and ``memory_class`` are outside the re-drive query's
+        # projection, and _write_extracted rewrites the whole CHUNK row: read
+        # back rather than default, or a re-decoded turn becomes kind='text'
+        # and drops out of every turn-scoped read.
+        stored = await self._store.get_chunks_by_ids([r["chunk_id"] for r in rows])
+        recovered = 0
+        for row in rows:
+            failed = await self._redecode_chunk(session_id, row, stored.get(row["chunk_id"], {}))
+            recovered += 0 if failed else 1
+        return {
+            "session_id": session_id,
+            "attempted": len(rows),
+            "recovered": recovered,
+            "still_failed": len(rows) - recovered,
+            "abstentions": self._report_abstentions(),
+            "errors": self._drain_decode_errors(),
+        }
+
+    async def _redecode_chunk(
+        self, session_id: str, row: dict[str, Any], stored: dict[str, Any]
+    ) -> bool:
+        """Decode one stored chunk and rewrite it. Returns whether it failed again.
+
+        ``_extract`` contains a decoder failure rather than raising it, so the
+        outcome is read off :attr:`_decode_failures` — the one counter every
+        given-up decode passes through.
+        """
+        text = str(row.get("text") or "")
+        speaker = str(row.get("speaker") or "")
+        ts = str(row.get("ts") or "")
+        before = self._decode_failures
+        extraction = await asyncio.to_thread(self._extract, text, None, None, speaker)
+        failed = self._decode_failures > before
+        embedding = self._embed_fn(text)
+        await self._write_extracted(
+            session_id=session_id,
+            # The CHUNK already carries its PART_OF edge; an empty file_id is
+            # what stops this write from re-asserting one it was not told.
+            file_id="",
+            chunk_id=row["chunk_id"],
+            text=text,
+            seq=int(row.get("seq") or 0),
+            kind=str(stored.get("kind") or "text"),
+            speaker=speaker,
+            ts=ts,
+            embedding=embedding,
+            extraction=extraction,
+            temporal=self._resolve_temporal_entities(extraction.entities, ts or None),
+            memory_class=str(stored.get("memory_class") or "raw_evidence"),
+            ontology_classes=self._match_classes(embedding, text),
+            decode_state="failed" if failed else "ok",
+        )
+        return failed
 
     @property
     def _decodes_in_one_call(self) -> bool:
@@ -1271,12 +1341,17 @@ class _STMIngestHandler:
         memory_class: str,
         ontology_classes: list[tuple[str, float]] | None = None,
         srl_hits: list[Any] | None = None,
+        decode_state: str = "",
     ) -> int:
         """Write one chunk's CHUNK + ENTITY/MENTIONS + RELATION + TEMPORAL. Returns entity count.
 
         ``srl_hits`` are this chunk's parsed frame triggers when the batch stage
         already has them (``[]`` is a real answer there — no triggers found);
         ``None`` means the caller has no batch stage and this chunk is parsed here.
+
+        ``decode_state`` is the chunk's decode marker (``''`` | ``'ok'`` |
+        ``'failed'``); the default leaves it absent, which is every chunk no LLM
+        decoder ever saw.
         """
         filtered = graph_entities(extraction.entities)
         # Definition-described typing (default off). Runs BEFORE the entity write
@@ -1313,6 +1388,7 @@ class _STMIngestHandler:
                 "speaker": speaker,
                 "ts": ts,
                 "memory_class": memory_class,
+                "decode_state": decode_state,
                 "embedding": embedding,
             }
         )
@@ -1710,6 +1786,7 @@ class _STMIngestHandler:
         """
         from graphknows.ingestion.extraction.llm.retry import failure_gate
 
+        self._decode_failures += 1
         if (gate := failure_gate(exc)) is not None:
             self._abstentions[gate] += 1
             log.warning("decode failed (%s: %s); abstained under %s", type(exc).__name__, exc, gate)

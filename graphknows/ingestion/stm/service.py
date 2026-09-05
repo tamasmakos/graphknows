@@ -208,6 +208,10 @@ class STMService:
             infer=infer,
         )
 
+    async def redecode(self, session_id: str) -> dict[str, Any]:
+        """Re-drive this session's decode-failed chunks. See the handler's method."""
+        return await self._handler().redecode(session_id)  # type: ignore[no-any-return]
+
     # ------------------------------------------------------------------
     # Conversation ingestion (Phase-1 bridge: 1 turn = 1 CHUNK(kind='turn'))
     # ------------------------------------------------------------------
