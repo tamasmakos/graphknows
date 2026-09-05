@@ -194,6 +194,21 @@ eval = [
     # let the Docker image satisfy a production import from a dev-only group.
 ]
 
+[tool.uv]
+# Floors on TRANSITIVE packages, to clear advisories the dependency audit
+# (`scripts/gate.sh`, `.pip-audit-ignore`) reports against the resolved runtime
+# set. They are constraints, not dependencies: graphknows imports neither, so
+# declaring them in [project.dependencies] would be a lie deptry rightly flags —
+# a constraint only says "if something pulls this in, not below this version".
+#
+# Both entered the audited set when dspy and litellm became core (ADR 0003): the
+# audit exports the runtime closure, which used to exclude them with the extra.
+# Drop a line once the puller's own floor overtakes it.
+constraint-dependencies = [
+    "aiohttp>=3.14.3",   # litellm; PYSEC-2026-3545/3546/3547
+    "json-repair>=0.60.1",  # dspy; GHSA-xf7x-x43h-rpqh
+]
+
 [tool.deptry]
 # `known_first_party`: deptry guesses local modules by iterating the *contents*
 # of the scanned root, so when the root passed on the command line is the
