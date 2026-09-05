@@ -94,6 +94,14 @@ def _decode_signature() -> Any:
         Copy every surface VERBATIM from the text — a surface that is not a literal
         substring of it is discarded. Use only the labels, predicates and role names
         on offer; a near miss is discarded too, never mapped onto a neighbour.
+
+        An entity is ONE thing that could be looked up on its own: a person, an
+        organisation, a place, an object, an activity with a name. Give the
+        SHORTEST span that names it — "dance floor", not "good dance floor with
+        enough bounce"; "inclusivity", not "equality and inclusivity". Never emit
+        a requirement, a description, a preference or a whole proposition as an
+        entity; if the interesting content is what someone said ABOUT a thing,
+        that belongs in a relation, with the thing itself as the entity.
         """
 
         text: str = dspy.InputField(desc="The chunk to label.")

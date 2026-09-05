@@ -213,9 +213,45 @@ def _is_vocative_address(name: str) -> bool:
     """
     head, comma, rest = name.strip().partition(",")
     if comma and rest.strip():
-        return _is_backchannel(head)
+        # The head is a form of address whole ("Thanks, Gina") or one that opens
+        # with a greeting and trails off ("Thanks so much, Mel" — measured on
+        # conv-26, minted as an ENTITY). Keying on the OPENER, not the whole
+        # head, is what reaches the second shape; "Washington, D.C." is untouched
+        # because "Washington" is neither a backchannel nor a greeting.
+        head_tokens = head.split()
+        return _is_backchannel(head) or (
+            bool(head_tokens) and head_tokens[0].casefold().strip("!?.'\"") in _VOCATIVE_OPENERS
+        )
     tokens = head.split()
     return len(tokens) >= 2 and tokens[0].casefold().strip("!?.'\"") in _VOCATIVE_OPENERS
+
+
+#: Coordinators that join two things. A name built around one names a
+#: CONJUNCTION of things, and a node standing for two things answers questions
+#: about neither.
+_COORDINATORS = frozenset({"and", "or"})
+
+
+def _is_coordinated_phrase(name: str) -> bool:
+    """An all-lowercase phrase joining two things with "and"/"or" — not one thing.
+
+    Two of the three spans #160 recorded as admitted defects are this shape
+    ("one-on-one mentoring and training", "new offers and promotions"), and the
+    LLM decoder mints more of them: measured on conv-26/conv-30, "equality and
+    inclusivity", "love and diversity", "inclusivity and support", "counseling
+    or working in mental health". A head-gate cannot reach any of them — the
+    ROOT parses as a NOUN — so the coordination itself is the signal.
+
+    Gated on the name carrying NO capital letter, which is what keeps real names
+    off it: "Barnes and Noble", "Crosby, Stills and Nash", "Beauty and the
+    Beast" all capitalise. The cost is an all-lowercase genre like "rock and
+    roll", which this rejects; against the junk it removes that trade is worth
+    making, and a capitalised writing of the same name survives.
+    """
+    tokens = name.split()
+    if len(tokens) < 3 or any(char.isupper() for char in name):
+        return False
+    return any(token.casefold() in _COORDINATORS for token in tokens[1:-1])
 
 
 def _is_clause_fragment(name: str) -> bool:
@@ -348,6 +384,23 @@ def _is_degenerate_name(name: str) -> bool:
     return len(stripped) <= 2 and stripped == stripped.lower()
 
 
+#: The shape rejections, in the order they were added. A tuple rather than a
+#: chain of ``if``s so that adding one is a line here instead of a branch in
+#: :func:`is_graph_entity_name` — which the complexity gate caps, and which is
+#: the reason the list reads as a list of reasons.
+_REJECTS = (
+    _is_stopword_name,
+    _is_backchannel,
+    _is_vocative_address,
+    _is_clause_fragment,
+    _spans_an_utterance_boundary,
+    _is_coordinated_phrase,
+    _is_degenerate_name,
+    _is_code_or_clause,
+    _is_temporal_or_numeric_name,
+)
+
+
 def is_graph_entity_name(name: str, ent_type: str = "") -> bool:
     """Whether ``name`` belongs in the ENTITY graph — the ONE junk predicate.
 
@@ -363,17 +416,7 @@ def is_graph_entity_name(name: str, ent_type: str = "") -> bool:
         return False
     if (ent_type or "").upper() in _NON_GRAPH_ENTITY_TYPES:
         return False
-    if _is_stopword_name(stripped):
-        return False
-    if _is_backchannel(stripped) or _is_vocative_address(stripped):
-        return False
-    if _is_clause_fragment(stripped) or _spans_an_utterance_boundary(stripped):
-        return False
-    if _is_degenerate_name(stripped):
-        return False
-    if _is_code_or_clause(stripped):
-        return False
-    if _is_temporal_or_numeric_name(stripped):
+    if any(reject(stripped) for reject in _REJECTS):
         return False
     if (ent_type or "").upper() in _VERB_HEAD_EXEMPT_TYPES:
         return True
