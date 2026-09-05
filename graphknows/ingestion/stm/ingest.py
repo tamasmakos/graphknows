@@ -2181,12 +2181,10 @@ class _STMIngestHandler:
         cache this warmed, and the decode request needs them before it is made.
         """
         empty: list[list[Any]] = [[] for _ in texts]
-        if not (infer and self._enable_frames and texts):
+        if not (infer and texts and self._srl_active()):
             return empty
-        from graphknows.symbolic.framenet.srl import prewarm, srl_enabled
+        from graphknows.symbolic.framenet.srl import prewarm
 
-        if not srl_enabled():
-            return empty
         start = time.monotonic()
         parsed = await asyncio.to_thread(prewarm, texts)
         log.info(
@@ -2230,13 +2228,26 @@ class _STMIngestHandler:
             ],
         )
 
-    async def _srl_hits(self, text: str) -> list[Any]:
-        """Parse the chunk's frame triggers once, off the event loop. ``[]`` when off."""
-        if not (self._enable_frames and text.strip()):
-            return []
+    def _srl_active(self) -> bool:
+        """Whether the transformer frame parser runs for this handler.
+
+        It is a local extraction model like relex and the verifier, so it runs
+        only beside the local decoder: under the LLM decoder the frame roles
+        come from the decoder's own frame section over LU-trigger candidates,
+        and no local model loads (FR-008). Measured on conv-30 it cost 12 s of a
+        32 s assisted-mode chunk. The signal is the one every consumer of the
+        decoder seam already reads — the local decoder exposes ``gliner``, the
+        LLM decoder does not (contracts/decoder.md §1).
+        """
+        if not (self._enable_frames and hasattr(self._extractor, "gliner")):
+            return False
         from graphknows.symbolic.framenet.srl import srl_enabled
 
-        if not srl_enabled():
+        return srl_enabled()
+
+    async def _srl_hits(self, text: str) -> list[Any]:
+        """Parse the chunk's frame triggers once, off the event loop. ``[]`` when off."""
+        if not (text.strip() and self._srl_active()):
             return []
         from graphknows.symbolic.framenet.srl import parse
 

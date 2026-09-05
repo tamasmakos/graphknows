@@ -29,6 +29,7 @@ LOCAL_MODELS = (
     "gliner",
     "gliner2",
     "graphknows.ingestion.extraction.relations._gliner2_verifier",
+    "frame_semantic_transformer",
 )
 
 #: Passed the watched module names as argv, so it needs no escaping here.

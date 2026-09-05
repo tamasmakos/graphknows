@@ -128,16 +128,40 @@ def _stub_frame_ontology(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+class _LocalDecoder(_Decoder):
+    """The local decoder's shape: it carries the ``gliner`` the seam keys on."""
+
+    gliner = object()
+
+
 @pytest.mark.asyncio
 async def test_the_prewarm_hands_back_what_it_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
     """The batch parse is single-use: its hits are returned, not re-derived later."""
     parsed = _stub_srl(monkeypatch, [_Hit()])
-    handler = _handler(_Decoder())
+    handler = _handler(_LocalDecoder())
 
     hits = await handler._prewarm_frame_srl(["Mel ate cake.", "Gina ate soup."])
 
     assert [[h.frame for h in chunk] for chunk in hits] == [["Ingestion"], ["Ingestion"]]
     assert parsed == ["Mel ate cake.", "Gina ate soup."]
+
+
+@pytest.mark.asyncio
+async def test_the_llm_decoder_never_runs_the_srl_parser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The transformer parser is a local extraction model: it runs only beside the local decoder.
+
+    Even with SRL switched on, a ``gliner``-less decoder gets one empty hit
+    list per chunk and the parser is never called — the decoder's own frame
+    section fills roles over LU-trigger candidates instead (FR-008).
+    """
+    parsed = _stub_srl(monkeypatch, [_Hit()])
+    handler = _handler(_Decoder())
+
+    hits = await handler._prewarm_frame_srl(["Mel ate cake.", "Gina ate soup."])
+
+    assert hits == [[], []]
+    assert parsed == []
+    assert await handler._srl_hits("Mel ate cake.") == []
 
 
 @pytest.mark.asyncio
