@@ -20,7 +20,8 @@ Two wiring decisions carry the strict-schema guarantee (research.md R4):
 The adapter's ``format`` and ``parse`` are driven directly rather than through
 its ``__call__``, which re-asks the provider in plain JSON mode whenever an
 answer does not parse. One chunk is one request (FR-010) — on the failure path
-too, where a silent re-ask would be invisible in the report.
+too, where a silent re-ask would be invisible in the report. A transient failure
+is instead re-attempted whole, against the decoder-local budget in ``retry.py``.
 
 ``extract_batch`` fans the per-chunk calls out over a bounded pool
 (``GRAPHKNOWS_DECODE_CONCURRENCY``). There is no local model to serialise on
@@ -45,6 +46,7 @@ from graphknows.ingestion.extraction.entities.extractor import (
     ExtractionResult,
 )
 from graphknows.ingestion.extraction.llm.anchor import ResponseGates
+from graphknows.ingestion.extraction.llm.retry import RetryBudget
 from graphknows.ingestion.extraction.llm.schema import (
     DecodedEntity,
     DecodedFrameInstance,
@@ -163,17 +165,28 @@ def _inputs_for(request: DecodeRequest, signature: Any) -> dict[str, Any]:
     return {name: value for name, value in offered.items() if name in signature.input_fields}
 
 
-def _completion_text(completion: Any) -> str:
+def _completion_text(signature: Any, completion: Any) -> str:
     """The text of one completion, however this dspy version boxes it.
 
     An empty completion is what a truncated reply looks like once the budget
     went on reasoning: dspy hands back ``None`` for the content. Named here,
     because indexing into it raised a ``TypeError`` that read as a bug in the
     decoder rather than as the provider returning nothing.
+
+    It leaves as an ``AdapterParseError`` — the same typed signal an unparseable
+    reply raises — because the retry budget classifies by type, and an empty
+    reply is retryable for exactly the same reason (contracts/decoder.md §4).
     """
     text = completion["text"] if isinstance(completion, dict) else completion
     if not text:
-        raise ValueError("empty completion: the provider returned no content (truncated?)")
+        from dspy.utils.exceptions import AdapterParseError
+
+        raise AdapterParseError(
+            adapter_name="JSONAdapter",
+            signature=signature,
+            lm_response="",
+            message="empty completion: the provider returned no content (truncated?)",
+        )
     return text
 
 
@@ -238,6 +251,8 @@ class LLMDecoder:
         # Pinned, never the ambient adapter: this decoder's call is the only one
         # whose schema wiring is guaranteed.
         self._adapter = _dspy().JSONAdapter()
+        # The whole per-chunk retry allowance; `build_lm` adds none of its own.
+        self._retry = RetryBudget.from_settings(self._settings)
         # One-entry memo behind `parse()`, as on the local decoder.
         self._doc_cache: tuple[str, Any] | None = None
         self._abstentions: Counter[str] = Counter()
@@ -363,11 +378,21 @@ class LLMDecoder:
             return list(pool.map(_one, range(len(texts))))
 
     def _call(self, request: DecodeRequest) -> DecodeResponse:
-        """The one structured request this chunk gets, through the pinned adapter.
+        """This chunk's decode, spent against the decoder-local retry budget.
+
+        Retrying a transient failure is not the second call FR-010 forbids: an
+        attempt either answers or is discarded whole. What is forbidden is a
+        *fix-up* call — re-asking a live answer in plain JSON mode — and that is
+        what :meth:`_decode_once` structurally cannot do.
+        """
+        return self._retry.run(lambda: self._decode_once(request))
+
+    def _decode_once(self, request: DecodeRequest) -> DecodeResponse:
+        """One structured request, through the pinned adapter.
 
         ``format`` and ``parse`` are driven here rather than through the
         adapter's ``__call__``, which re-asks the provider in plain JSON mode
-        when an answer does not parse. FR-010 allows no second call, so the
+        when an answer does not parse. FR-010 allows no such second call, so the
         rule is a property of this method rather than of a dspy branch.
         """
         signature = _signature_for(request)
@@ -376,5 +401,5 @@ class LLMDecoder:
             response_format=_response_format(signature),
         )
         return DecodeResponse.model_validate(
-            self._adapter.parse(signature, _completion_text(completions[0]))
+            self._adapter.parse(signature, _completion_text(signature, completions[0]))
         )

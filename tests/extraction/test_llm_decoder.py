@@ -114,10 +114,15 @@ def test_one_chunk_costs_exactly_one_request() -> None:
 
 
 def test_a_response_that_does_not_parse_still_costs_exactly_one_request() -> None:
-    # FR-010 holds on the failure path too: no second adapter, no re-ask.
+    # FR-010 holds on the failure path too: no second adapter, no re-ask. A
+    # failed parse IS a retryable signal (FR-020), so the budget is pinned to
+    # one attempt here — what must not fire is dspy's own JSON-mode re-ask,
+    # which would make even a single attempt cost two requests. The budget's
+    # own counting is tests/extraction/test_retry_budget.py's business.
     provider = _StubProvider(reply='{"not_the_signature": true}')
+    decoder = LLMDecoder(GraphKnowsSettings(GRAPHKNOWS_DECODE_ATTEMPTS=1), lm=provider)
 
-    results = _decoder(provider).extract_batch([TEXT], [ENTITY_LABELS], [RELATION_SPEC])
+    results = decoder.extract_batch([TEXT], [ENTITY_LABELS], [RELATION_SPEC])
 
     assert provider.calls == 1
     assert results[0].entities == []
