@@ -15,6 +15,14 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+# litellm fetches its model-cost map from GitHub when it is imported, unless
+# told to use the copy it ships. The only egress an LLM-backed capability is
+# allowed is the configured provider, and this module is the one every dspy
+# user in the package imports before dspy (the decoder, the topic summariser),
+# so the switch is set here. setdefault: an operator who set it keeps their
+# value.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 _MASKED_SECRET = "**********"
 _DEFAULT_MODEL = ""
 

@@ -30,7 +30,6 @@ class STMService:
         _store: GraphStore for the single per-namespace database.
         _extractor: Entity extractor exposing extract(text) -> ExtractionResult.
         _embed_fn: Embedding callable (text -> list[float]).
-        _rel_extractor: Optional relation extractor.
         _embed_dims: Embedding dimension for ensure_schema on connect.
         _ontology_index: Optional OntologyIndex steering extraction labels.
     """
@@ -40,14 +39,12 @@ class STMService:
         store: Any,
         extractor: Any,
         embed_fn: Any | None = None,
-        rel_extractor: Any | None = None,
         embed_dims: int = 0,
         enable_frames: bool = False,
         ontology_index: Any | None = None,
     ) -> None:
         self._store = store
         self._extractor = extractor
-        self._rel_extractor = rel_extractor
         self._embed_dims = embed_dims
         self._enable_frames = enable_frames
         self._ontology_index = ontology_index
@@ -140,7 +137,6 @@ class STMService:
                 store=self._store,
                 extractor=self._extractor,
                 embed_fn=self._embed_fn,
-                rel_extractor=self._rel_extractor,
                 enable_frames=self._enable_frames,
                 ontology_index=self._ontology_index,
             )
@@ -211,6 +207,10 @@ class STMService:
             metadata=metadata or {},
             infer=infer,
         )
+
+    async def redecode(self, session_id: str) -> dict[str, Any]:
+        """Re-drive this session's decode-failed chunks. See the handler's method."""
+        return await self._handler().redecode(session_id)  # type: ignore[no-any-return]
 
     # ------------------------------------------------------------------
     # Conversation ingestion (Phase-1 bridge: 1 turn = 1 CHUNK(kind='turn'))
@@ -296,6 +296,6 @@ class STMService:
             chunk_count=handler._chunks_written - chunks_before,
             entity_count=total_entities,
             elapsed_s=round(time.perf_counter() - t0, 3),
-            errors=errors,
+            errors=errors + handler._drain_decode_errors(),
             abstentions=handler._report_abstentions(),
         )

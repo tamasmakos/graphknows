@@ -1,8 +1,8 @@
 """Ingestion — the write path: parse -> preprocess -> extract -> STM.
 
 Exposes the parser's output types and the settings-driven factory that assembles
-the STM service. The mode fork lives inside the injected collaborators (relation
-extractor), never in this package's callers.
+the STM service. The mode fork lives inside the injected decoder, never in this
+package's callers.
 """
 
 from __future__ import annotations
@@ -21,8 +21,7 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
     Returned without an open connection so the ArcadeDB client binds to the
     caller's event loop when ``connect()`` is awaited, not to a background loop.
     """
-    from graphknows.ingestion.extraction.entities import build_entity_extractor
-    from graphknows.ingestion.extraction.relations import build_relation_extractor
+    from graphknows.ingestion.extraction.entities import build_decoder
     from graphknows.ingestion.stm.service import STMService
     from graphknows.storage import build_graph_store
     from graphknows.storage.embedder import embed_one
@@ -30,9 +29,8 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
 
     return STMService(
         build_graph_store(settings, namespace),
-        build_entity_extractor(settings),
+        build_decoder(settings),
         embed_fn=embed_one,
-        rel_extractor=build_relation_extractor(settings),
         embed_dims=settings.embed_dimensions,
         enable_frames=settings.enable_frames,
         # Mode-independent and always on: ontology injection steers extraction

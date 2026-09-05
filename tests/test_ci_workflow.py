@@ -284,3 +284,74 @@ def test_smoke_job_declares_the_interpreters_the_classifiers_name() -> None:
         "the interpreters CI tests and the interpreters the package claims to "
         "support must be the same set"
     )
+
+
+def _uv_sync_invocations(dockerfile: str) -> list[str]:
+    """Each real `uv sync` command in *dockerfile*, continuations joined.
+
+    Comment lines are skipped: this Dockerfile explains its own sync steps in
+    prose that says "uv sync" too, and counting those would make the check
+    assert against the comments rather than the commands.
+    """
+    lines = dockerfile.splitlines()
+    invocations: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.lstrip().startswith("#") and "uv sync" in line:
+            command = [line]
+            while command[-1].rstrip().endswith("\\") and index + 1 < len(lines):
+                index += 1
+                command.append(lines[index])
+            invocations.append("\n".join(command))
+        index += 1
+    return invocations
+
+
+def test_build_extras_use_ontology_not_assisted() -> None:
+    """The image and CI must sync an extra that exists.
+
+    `assisted` was deleted when dspy and litellm became core (ADR 0003), and
+    `uv sync --extra assisted --locked` fails outright on an undeclared extra —
+    so a leftover flag here is a build that cannot start, found at image-build
+    time rather than at review time. The LLM decoder needs no extra now; the RDF
+    loader still does, which is why the replacement is `ontology` and not
+    nothing.
+    """
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    declared = set(
+        tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"].get(
+            "optional-dependencies", {}
+        )
+    )
+    assert "assisted" not in declared, (
+        "this test guards the removal of the `assisted` extra, but pyproject "
+        "declares it again — remove the test or the extra, not both"
+    )
+
+    for name, text in (("Dockerfile", dockerfile), (CI_WORKFLOW.name, CI_TEXT)):
+        for extra in re.findall(r"--extra\s+([A-Za-z0-9._-]+)", text):
+            assert extra in declared, (
+                f"{name}: syncs `--extra {extra}`, which pyproject.toml does not "
+                f"declare (declared: {sorted(declared)}) — `uv sync --locked` fails on it"
+            )
+
+    syncs = _uv_sync_invocations(dockerfile)
+    assert len(syncs) == 2, f"Dockerfile: expected two `uv sync` invocations, found {len(syncs)}"
+    for sync in syncs:
+        assert "--extra ontology" in sync, (
+            f"Dockerfile: a `uv sync` does not carry `--extra ontology`, so the dev "
+            f"image loses the RDF loader:\n{sync}"
+        )
+
+    image_extras = re.search(r'ENV GRAPHKNOWS_IMAGE_EXTRAS="([^"]*)"', dockerfile)
+    assert image_extras is not None, "Dockerfile: no GRAPHKNOWS_IMAGE_EXTRAS declaration"
+    claimed = {e for e in image_extras.group(1).split(",") if e}
+    assert claimed <= declared, (
+        f"Dockerfile: GRAPHKNOWS_IMAGE_EXTRAS claims {sorted(claimed - declared)}, which is "
+        "not a declared extra — scripts/preflight.py would refuse to start the container"
+    )
+    assert "ontology" in claimed, (
+        f"Dockerfile: GRAPHKNOWS_IMAGE_EXTRAS is {sorted(claimed)} but the image syncs "
+        "`--extra ontology`; preflight can only verify what the image claims"
+    )

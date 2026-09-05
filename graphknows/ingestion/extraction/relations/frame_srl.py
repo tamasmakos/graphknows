@@ -123,6 +123,11 @@ class FrameTrigger:
 
     candidates: tuple[tuple[str, float], ...]
     lvc: bool = False
+    # The evoking surface itself, verbatim from the chunk; "" for the fallback
+    # sweep, which has no single token to point at. Unused by the local fill
+    # (GLiNER2 is handed the context, not the trigger); it names the trigger for
+    # a decoder that fills the roles remotely.
+    trigger: str = ""
     # The sentence the trigger sits in, when known (spaCy ``token.sent.text``);
     # empty means "use the whole chunk" (verb-group/fallback triggers, or a
     # duck-typed token without ``.sent``). Scopes role-filling so a multi-sentence
@@ -305,13 +310,23 @@ def lu_triggers(
         ranked_cand = _rank(cand)
         if ranked_cand:
             triggers.append(
-                FrameTrigger(candidates=ranked_cand, lvc=is_lvc, context=_sent_text(tok))
+                FrameTrigger(
+                    candidates=ranked_cand,
+                    lvc=is_lvc,
+                    trigger=str(getattr(tok, "text", "")),
+                    context=_sent_text(tok),
+                )
             )
     if verb_cand:
         ranked_cand = _rank(verb_cand)
         if ranked_cand:
             triggers.append(
-                FrameTrigger(candidates=ranked_cand, lvc=False, context=_sent_text(verbs[0]))
+                FrameTrigger(
+                    candidates=ranked_cand,
+                    lvc=False,
+                    trigger=str(getattr(verbs[0], "text", "")),
+                    context=_sent_text(verbs[0]),
+                )
             )
     if not triggers and fallback_cand:
         ranked_cand = _rank(fallback_cand)

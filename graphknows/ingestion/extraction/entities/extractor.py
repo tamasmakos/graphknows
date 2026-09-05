@@ -162,6 +162,9 @@ class ExtractionResult:
 
     entities: list[dict[str, Any]] = field(default_factory=list)
     relations: list[dict[str, Any]] = field(default_factory=list)
+    # {frame, trigger, trigger_offset, roles: {role: [filler]}} — filled only by
+    # the LLM decoder; empty for the local one, so llm_free behaviour is unchanged.
+    frames: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -340,6 +343,25 @@ def _speaker_token(token: str, speakers: frozenset[str]) -> str:
     return bare if bare.casefold() in speakers else ""
 
 
+def _speaker_at_both_ends(tokens: list[str], speakers: frozenset[str]) -> str:
+    """The speaker a span opens AND closes with, else "".
+
+    "Caroline, so Caroline" — what the deixis rewrite leaves when it resolves a
+    pronoun on either side of a discourse marker. The all-tokens rule in
+    :func:`_reduce_speaker_span` misses it because "so" is not a speaker.
+    Measured on conv-26 this minted a PERSON node carrying 63 mentions, the
+    graph's second-largest hub, for a person who already had one.
+
+    Both ends must name the SAME speaker, so "Caroline, and later Melanie" —
+    two people, a real distinction — is untouched.
+    """
+    if len(tokens) <= 2:
+        return ""
+    first = _speaker_token(tokens[0], speakers)
+    last = _speaker_token(tokens[-1], speakers)
+    return first if first and first.casefold() == last.casefold() else ""
+
+
 def _reduce_speaker_span(name: str, speakers: frozenset[str], ent_type: str = "") -> str:
     """``"Caroline: Thanks, Melanie"`` -> ``"Caroline"`` when Caroline spoke.
 
@@ -393,6 +415,8 @@ def _reduce_speaker_span(name: str, speakers: frozenset[str], ent_type: str = ""
     # Nothing but repeated deixis output — collapse onto the first speaker named.
     if tokens and all(_speaker_token(t, speakers) for t in tokens):
         return _speaker_token(tokens[0], speakers)
+    if bracketed := _speaker_at_both_ends(tokens, speakers):
+        return bracketed
     # "<clause>, <Speaker>" — a trailing resolved pronoun, referent is the speaker.
     if (
         len(tokens) > 1

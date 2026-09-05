@@ -45,22 +45,38 @@ COPY pyproject.toml uv.lock README.md ./
 # something else. Groups installed here and why: `dev` because
 # scripts/gate.sh and the container-exec make targets run
 # ruff/mypy/import-linter/bandit/pytest/pip-audit inside this container;
-# `eval` because `python -m evaluation` runs here too; `--extra assisted`
-# because GRAPHKNOWS_MODE=llm_assisted must work in the dev container.
+# `eval` because `python -m evaluation` runs here too; `--extra ontology`
+# because the RDF/OWL loader must work in the dev container. The LLM decoder
+# needs no extra any more — dspy and litellm are core (ADR 0003), so
+# GRAPHKNOWS_MODE=llm_assisted works from the base sync alone.
 # --no-install-project on this pass: only dependencies, not the package
 # itself, so this layer is unaffected by source edits.
 RUN --mount=type=cache,target=/root/.cache/uv \
     UV_LINK_MODE=copy uv sync --locked --no-install-project \
-        --extra assisted --group dev --group eval
+        --extra ontology --group dev --group eval
 
 COPY graphknows ./graphknows
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     UV_LINK_MODE=copy uv sync --locked \
-        --extra assisted --group dev --group eval
+        --extra ontology --group dev --group eval
 
 # Both installs below MUST come after the last `uv sync`: sync prunes
 # anything not in the lock, so installing here first would be wiped.
+
+# torch through the interface TORCH_BACKEND actually governs. UV_TORCH_BACKEND
+# steers `uv pip`, not `uv sync`: the syncs above install torch from PyPI
+# whatever the arg says, and PyPI's linux wheel bundles CUDA 13 kernels — so a
+# cpu build carried ~2.5GB it never runs, and a cu128 build ran on CPU because
+# torch.cuda cannot initialise a CUDA-13 wheel under a 12.x driver. Measured
+# on the eval box: relex/verifier/frames on 6 CPU threads, ~27 s per chunk.
+# `--reinstall` because the version is already satisfied; the unsuffixed
+# `nvidia-*` 13.x packages the PyPI wheel pulled in are not pruned by `uv pip`,
+# so they are removed by name. Pin matches uv.lock.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    UV_LINK_MODE=copy uv pip \
+    install --reinstall --torch-backend ${TORCH_BACKEND} "torch==2.12.0" \
+    && uv pip freeze | grep -E '^nvidia-[a-z0-9-]+==13\.' | cut -d= -f1 | xargs -r uv pip uninstall
 
 # spaCy model, installed INTO the venv the app runs (a plain `spacy download`
 # targets the system python, which the app never uses). Not part of uv.lock,
@@ -80,12 +96,13 @@ RUN uv pip \
     install --no-cache --no-deps frame-semantic-transformer nlpaug \
         gdown==6.1.0 beautifulsoup4==4.15.0 soupsieve==2.9.2 PySocks==1.7.1
 
-# Records which optional extras THIS image was built to carry. `assisted` comes
-# from the `uv sync --extra assisted` above; `srl` from the out-of-band install
+# Records which optional extras THIS image was built to carry. `ontology` comes
+# from the `uv sync --extra ontology` above; `srl` from the out-of-band install
 # just above. scripts/preflight.py refuses to start the container if a claimed
 # extra's distributions aren't actually installed, so a build that drops the
-# step above announces itself instead of silently shipping less.
-ENV GRAPHKNOWS_IMAGE_EXTRAS="assisted,srl"
+# step above announces itself instead of silently shipping less. The LLM stack
+# is not listed because it is no longer an extra — it is core.
+ENV GRAPHKNOWS_IMAGE_EXTRAS="ontology,srl"
 
 RUN useradd -m -u 1000 graphknows
 

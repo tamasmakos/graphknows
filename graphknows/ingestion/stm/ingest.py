@@ -372,6 +372,29 @@ def _resolve_candidate(
     return matched_uri, label, score, "lexical+cosine"
 
 
+def _decoded_instances(frames: list[dict[str, Any]]) -> list[Any]:
+    """``ExtractionResult.frames`` as frame instances, filled, with no model run.
+
+    The fills arrived with the chunk's entities and relations, in the one call it
+    gets. The frame and its trigger offset are the LOCAL candidate's own — the
+    decoder was offered them and could not propose others — so nesting still
+    computes over trigger offsets exactly as on the parsed path, and every gate
+    in :meth:`_STMIngestHandler._frame_instances` applies unchanged.
+    """
+    from graphknows.ingestion.extraction.relations.frame_srl import FrameInstance
+
+    return [
+        FrameInstance(
+            frame=str(filled["frame"]),
+            roles={str(role): list(fills) for role, fills in (filled.get("roles") or {}).items()},
+            match_sim=1.0,
+            role_confidence=1.0,
+            trigger_offset=int(filled.get("trigger_offset", -1)),
+        )
+        for filled in frames
+    ]
+
+
 class _STMIngestHandler:
     """Ingest parsed text into the golden GraphStore (state='raw').
 
@@ -379,7 +402,6 @@ class _STMIngestHandler:
         _store: GraphStore for the single per-namespace database.
         _extractor: Entity extractor exposing extract(text) -> ExtractionResult.
         _embed_fn: Callable that takes text and returns list[float] embedding.
-        _rel_extractor: Optional relation extractor (llm_assisted).
         _ontology: Optional OntologyIndex (ctor arg ``ontology_index``); its
             CLASSES are the per-chunk entity label hints, the chunk
             MATCHES_CLASS tags and the entity INSTANCE_OF edges. The bundled
@@ -397,14 +419,12 @@ class _STMIngestHandler:
         store: Any,
         extractor: Any,
         embed_fn: Any | None = None,
-        rel_extractor: Any | None = None,
         enable_frames: bool = False,
         ontology_index: Any | None = None,
         relation_index: Any | None = None,
     ) -> None:
         self._store = store
         self._extractor = extractor
-        self._rel_extractor = rel_extractor
         self._enable_frames = enable_frames
         self._ontology = ontology_index
         self._relations = relation_index
@@ -461,6 +481,16 @@ class _STMIngestHandler:
         # abstention nobody can count is indistinguishable from an extractor
         # that found nothing.
         self._abstentions: dict[str, int] = defaultdict(int)
+        # Run-permanent decoder failures — rejected credentials, a request the
+        # provider refuses outright — kept apart from the gates above: no chunk
+        # declined to emit, the run could not decode at all, so they belong on
+        # `IngestResult.errors` (FR-021). Drained per report, not accumulated.
+        self._decode_errors: list[str] = []
+        # Decodes given up on, gated and run-permanent alike. Counted rather
+        # than derived from the two above because `_decode_errors` de-duplicates
+        # its messages: a rejected key that costs ten chunks appends once, so
+        # its length cannot tell a re-drive which chunk just failed (FR-024).
+        self._decode_failures: int = 0
         # Accepted MATCHES_CLASS sims for this session, so the spread that
         # issue #158 measured (a degenerate ~0.02 band) can be reported rather
         # than only ever inferred from a bug report.
@@ -614,6 +644,15 @@ class _STMIngestHandler:
         # ``infer=False`` skips extraction entirely (chunks + embeddings only) —
         # the entity/relation extraction and its per-relation graph writes are the
         # ingest cost that never touches the vector index.
+        # Frame parsing for ALL chunks in one batched pass, for the same reason
+        # the entity pass below batches: the parser is the ingest cost, and
+        # per-chunk calls hand it ~14 sentences at a time. Overlapping windows
+        # (5 turns, stride 3) also share most of their text, so this collapses
+        # the ~1.7x duplicate parses into one. The hits are kept rather than
+        # discarded: the per-chunk stage used to look them up again, and a
+        # decoder that gets one call per chunk needs them BEFORE it decodes.
+        batch_srl_hits = await self._prewarm_frame_srl(cleaned_texts, infer)
+
         batch_extractions: list[ExtractionResult] | None = None
         if (
             infer
@@ -621,22 +660,12 @@ class _STMIngestHandler:
             and hasattr(type(self._extractor), "extract_batch")
             and cleaned_texts
         ):
-            # Pass 1 is entities only: the relation vocabulary is derived FROM
-            # the types this pass finds (see _relation_labels), so it cannot be
-            # known before it runs.
-            first_pass: list[ExtractionResult] = await asyncio.to_thread(
-                self._extractor.extract_batch, cleaned_texts, entity_hints, None
+            batch_extractions = await self._batch_extract(
+                cleaned_texts,
+                entity_hints,
+                batch_srl_hits,
+                batch_embeddings if use_batch else None,
             )
-            batch_extractions = await self._relation_pass(
-                cleaned_texts, entity_hints, first_pass, batch_embeddings if use_batch else None
-            )
-
-        # Frame parsing for ALL chunks in one batched pass, for the same reason
-        # the entity pass above batches: the parser is the ingest cost, and
-        # per-chunk calls hand it ~14 sentences at a time. Overlapping windows
-        # (5 turns, stride 3) also share most of their text, so this collapses
-        # the ~1.7x duplicate parses into one. Each chunk's parse then hits cache.
-        await self._prewarm_frame_srl(cleaned_texts, infer)
 
         for idx, seg in enumerate(parsed.segments):
             seg.metadata["chunk_index"] = idx
@@ -669,6 +698,7 @@ class _STMIngestHandler:
                 or metadata.get("memory_class")
                 or "raw_evidence",
                 ontology_classes=ont_classes[idx] if idx < len(ont_classes) else [],
+                srl_hits=batch_srl_hits[idx],
             )
 
         async def _run_all() -> tuple[list[int], list[str]]:
@@ -718,9 +748,209 @@ class _STMIngestHandler:
             chunk_count=len(parsed.segments),
             entity_count=entity_count,
             elapsed_s=elapsed,
-            errors=errors,
+            errors=errors + self._drain_decode_errors(),
             abstentions=self._report_abstentions(),
         )
+
+    async def redecode(self, session_id: str) -> dict[str, Any]:
+        """Re-drive this session's decode-failed chunks through the decoder (FR-024).
+
+        The text already in the graph is the input — no source is re-read and no
+        chunk is re-cut — and every write goes back through
+        :meth:`_write_extracted`, so a re-drive and an ordinary ingest produce
+        the same graph. A chunk whose decode answers is rewritten ``'ok'``; one
+        that fails again keeps ``'failed'``, which is what makes a second run
+        find nothing and report ``attempted: 0``.
+        """
+        rows = await self._store.failed_decode_chunks(session_id)
+        # ``kind`` and ``memory_class`` are outside the re-drive query's
+        # projection, and _write_extracted rewrites the whole CHUNK row: read
+        # back rather than default, or a re-decoded turn becomes kind='text'
+        # and drops out of every turn-scoped read.
+        stored = await self._store.get_chunks_by_ids([r["chunk_id"] for r in rows])
+        recovered = 0
+        for row in rows:
+            failed = await self._redecode_chunk(session_id, row, stored.get(row["chunk_id"], {}))
+            recovered += 0 if failed else 1
+        return {
+            "session_id": session_id,
+            "attempted": len(rows),
+            "recovered": recovered,
+            "still_failed": len(rows) - recovered,
+            "abstentions": self._report_abstentions(),
+            "errors": self._drain_decode_errors(),
+        }
+
+    async def _redecode_chunk(
+        self, session_id: str, row: dict[str, Any], stored: dict[str, Any]
+    ) -> bool:
+        """Decode one stored chunk and rewrite it. Returns whether it failed again.
+
+        ``_extract`` contains a decoder failure rather than raising it, so the
+        outcome is read off :attr:`_decode_failures` — the one counter every
+        given-up decode passes through.
+        """
+        text = str(row.get("text") or "")
+        speaker = str(row.get("speaker") or "")
+        ts = str(row.get("ts") or "")
+        before = self._decode_failures
+        extraction = await asyncio.to_thread(self._extract, text, None, None, speaker)
+        failed = self._decode_failures > before
+        embedding = self._embed_fn(text)
+        await self._write_extracted(
+            session_id=session_id,
+            # The CHUNK already carries its PART_OF edge; an empty file_id is
+            # what stops this write from re-asserting one it was not told.
+            file_id="",
+            chunk_id=row["chunk_id"],
+            text=text,
+            seq=int(row.get("seq") or 0),
+            kind=str(stored.get("kind") or "text"),
+            speaker=speaker,
+            ts=ts,
+            embedding=embedding,
+            extraction=extraction,
+            temporal=self._resolve_temporal_entities(extraction.entities, ts or None),
+            memory_class=str(stored.get("memory_class") or "raw_evidence"),
+            ontology_classes=self._match_classes(embedding, text),
+            decode_state="failed" if failed else "ok",
+        )
+        return failed
+
+    @property
+    def _decodes_in_one_call(self) -> bool:
+        """Whether the decoder labels a chunk in a single call.
+
+        Presence of ``gliner`` is the capability signal the frame layer already
+        reads (contracts/decoder.md §1): a decoder that carries the local span
+        model can be asked twice — entities, then relations selected from what
+        the first pass typed — while one that does not must be handed every
+        closed vocabulary up front.
+
+        Asked of the CLASS, as the ``extract_batch`` probe beside it is: the
+        local extractor's ``gliner`` is a lazy-loading property, and answering
+        this question must not be what loads a model.
+        """
+        return not hasattr(type(self._extractor), "gliner")
+
+    async def _batch_extract(
+        self,
+        texts: list[str],
+        entity_hints: list[list[str]] | None,
+        srl_hits: list[list[Any]],
+        embeddings: list[list[float]] | None,
+    ) -> list[ExtractionResult]:
+        """Label every chunk up front: one decode call each, or the two local passes."""
+        if self._decodes_in_one_call:
+            return await self._decode_batch(texts, entity_hints, srl_hits, embeddings)
+        # Pass 1 is entities only: the relation vocabulary is derived FROM
+        # the types this pass finds (see _relation_labels), so it cannot be
+        # known before it runs.
+        first_pass: list[ExtractionResult] = await asyncio.to_thread(
+            self._extractor.extract_batch, texts, entity_hints, None
+        )
+        return await self._relation_pass(texts, entity_hints, first_pass, embeddings)
+
+    async def _decode_batch(
+        self,
+        texts: list[str],
+        entity_hints: list[list[str]] | None,
+        srl_hits: list[list[Any]],
+        embeddings: list[list[float]] | None,
+    ) -> list[ExtractionResult]:
+        """Decode every chunk once, against vocabularies built without a first pass.
+
+        :meth:`_relation_pass` selects the property spec FROM pass 1's entity
+        types; a single-call decoder cannot wait for that, so the types come from
+        spaCy's observation of the chunk instead (research.md R2) and the frame
+        candidates from the parse already done in the batch stage (R3). Every
+        vocabulary is closed before the call, and no local extraction model runs
+        to build one.
+        """
+        hints = entity_hints or [[] for _ in texts]
+        relation_spec = [
+            self._decode_relation_labels(text, hints[i], embeddings[i] if embeddings else None)
+            for i, text in enumerate(texts)
+        ]
+        candidates = [
+            self._frame_candidates(text, srl_hits[i], embeddings[i] if embeddings else None)
+            for i, text in enumerate(texts)
+        ]
+
+        def _decode() -> list[ExtractionResult]:
+            return self._extractor.extract_batch(
+                texts, entity_hints, relation_spec, frame_candidates=candidates
+            )
+
+        before = self._decoder_abstentions()
+        try:
+            results = await asyncio.to_thread(_decode)
+        except Exception as exc:
+            # Only a run-permanent failure reaches here: the decoder contains and
+            # counts the chunk-level ones itself. Every chunk still gets written,
+            # undecoded, so an expired key costs a report line and a re-drive
+            # rather than a silently short graph (FR-018, FR-021).
+            self._note_decode_failure(exc)
+            results = [ExtractionResult() for _ in texts]
+        self._merge_decoder_abstentions(before)
+        return results
+
+    def _decode_relation_labels(
+        self, text: str, class_hints: list[str], embedding: list[float] | None
+    ) -> dict[str, str]:
+        """This chunk's property spec, derived without a first extraction pass.
+
+        spaCy's observed NER labels for the chunk, unioned with its ontology
+        class hints, stand in for the entity types the two-pass path takes from
+        pass 1. They then go through the unchanged :meth:`_relation_labels`
+        machinery, so the offered spec is built by one code path in both modes —
+        only the type source differs (research.md R2). That source is coarser
+        than relex's, which is a measurable difference the relation-section
+        ablation exists to attribute.
+        """
+        types = {str(ent.label_) for ent in self._extractor.parse(text).ents} | set(class_hints)
+        return self._relation_labels([{"type": t} for t in sorted(types)], embedding)
+
+    def _frame_candidates(
+        self, text: str, srl_hits: list[Any], embedding: list[float] | None
+    ) -> list[Any]:
+        """The frames this chunk evokes, with their core FEs, for the decode request.
+
+        Selection stays LOCAL and stays shared with the two-pass path: the parsed
+        SRL triggers when the parser ran, the LU triggers otherwise — the same two
+        sources :meth:`_frame_instances` picks between, capped the same way. Only
+        the role FILLS move to the decoder, so a frame regression is attributable
+        to the fill rather than to a changed candidate set (research.md R3).
+        """
+        if not self._enable_frames:
+            return []
+        from graphknows.ingestion.extraction.llm.schema import FrameCandidate
+        from graphknows.ingestion.extraction.relations.frame_srl import (
+            _MAX_CORE_FES,
+            MIN_CORE_ROLES,
+            frame_ontology,
+            lu_triggers,
+        )
+
+        if srl_hits:
+            evoked = [(h.frame, h.trigger, int(h.offset)) for h in srl_hits]
+        else:
+            evoked = [
+                (frame, trig.trigger, -1)
+                for trig in lu_triggers(
+                    text, self._extractor.nlp, embedding=embedding, doc=self._extractor.parse(text)
+                )
+                # Same top_k the local fill attempts per trigger.
+                for frame, _sim in trig.candidates[:3]
+            ]
+        candidates: list[Any] = []
+        for frame, trigger, offset in evoked:
+            core = tuple(frame_ontology(frame).get("core_fes", ())[:_MAX_CORE_FES])
+            # A frame with fewer core FEs than the fillability gate needs cannot
+            # produce a kept instance — the local path skips it for the same reason.
+            if len(core) >= MIN_CORE_ROLES:
+                candidates.append(FrameCandidate(frame, trigger, offset, core))
+        return candidates
 
     async def _relation_pass(
         self,
@@ -1110,8 +1340,19 @@ class _STMIngestHandler:
         temporal: list[dict[str, str]],
         memory_class: str,
         ontology_classes: list[tuple[str, float]] | None = None,
+        srl_hits: list[Any] | None = None,
+        decode_state: str = "",
     ) -> int:
-        """Write one chunk's CHUNK + ENTITY/MENTIONS + RELATION + TEMPORAL. Returns entity count."""
+        """Write one chunk's CHUNK + ENTITY/MENTIONS + RELATION + TEMPORAL. Returns entity count.
+
+        ``srl_hits`` are this chunk's parsed frame triggers when the batch stage
+        already has them (``[]`` is a real answer there — no triggers found);
+        ``None`` means the caller has no batch stage and this chunk is parsed here.
+
+        ``decode_state`` is the chunk's decode marker (``''`` | ``'ok'`` |
+        ``'failed'``); the default leaves it absent, which is every chunk no LLM
+        decoder ever saw.
+        """
         filtered = graph_entities(extraction.entities)
         # Definition-described typing (default off). Runs BEFORE the entity write
         # so a surface only this pass saw is a first-class ENTITY rather than a
@@ -1147,6 +1388,7 @@ class _STMIngestHandler:
                 "speaker": speaker,
                 "ts": ts,
                 "memory_class": memory_class,
+                "decode_state": decode_state,
                 "embedding": embedding,
             }
         )
@@ -1167,7 +1409,7 @@ class _STMIngestHandler:
         # vector-search the frames evoked in this namespace.
         # One parse serves both frame layers when SRL identification is on — it is
         # the expensive step, and running it twice per chunk would double it.
-        srl_hits = await self._srl_hits(text)
+        srl_hits = await self._srl_hits(text) if srl_hits is None else srl_hits
 
         tagged_frames: set[str] = set()
         if self._enable_frames:
@@ -1207,6 +1449,7 @@ class _STMIngestHandler:
                 embedding,
                 srl_hits,
                 entity_types,
+                extraction.frames,
             )
             if instances:
                 # An instance whose FRAME vertex does not exist gets no EVOKES
@@ -1321,48 +1564,6 @@ class _STMIngestHandler:
                 ontology_blocked=blocked,
                 speaker=speaker,
             )
-
-        # DSPy ontology-guided relations (llm_assisted mode only).
-        if self._rel_extractor is not None and len(extraction.entities) >= 2:
-            dspy_rels = [
-                {
-                    "head": subj,
-                    "relation": rel_name,
-                    "tail": obj,
-                    "evidence": props.get("evidence", ""),
-                }
-                for subj, rel_name, obj, props in await self._rel_extractor.extract_relations(
-                    text=text
-                )
-                if is_graph_entity_name(str(subj)) and is_graph_entity_name(str(obj))
-            ]
-            # Score this tier with the extractor's already-loaded gate. No gate
-            # (verifier disabled, model unavailable, or no extractor at all)
-            # PASSES the relations through unscored: unverifiable is not
-            # disproven, the same rule RelationVerifierGate.filter follows for
-            # surfaces it cannot offset.
-            # Off the loop like every other model call here: the first call
-            # also loads DeBERTa, and the relex path pays that cost inside
-            # asyncio.to_thread for exactly this reason.
-            gate = getattr(self._extractor, "relation_verifier", None)
-            if gate is not None:
-                dspy_rels = await asyncio.to_thread(gate.filter, text, dspy_rels)
-            for rel in dspy_rels:
-                await self._store.write_relation(
-                    rel["head"],
-                    rel["relation"],
-                    rel["tail"],
-                    fact=rel.get("evidence", "") or text,
-                    chunk_id=chunk_id,
-                    # The DSPy path carries no per-triplet confidence: the LLM's
-                    # self-reported score was never copied into props, so this
-                    # read was the literal constant 0.5 for the layer's whole
-                    # life. Written as a constant now rather than a lookup that
-                    # looks like it varies.
-                    confidence=0.5,
-                    source="dspy",
-                    verifier_score=rel.get("verifier_score"),
-                )
 
         return self._report(chunk_id, len(extraction.relations), counts)
 
@@ -1545,6 +1746,55 @@ class _STMIngestHandler:
                 max(self._tag_sims) - min(self._tag_sims),
             )
         return {k: v for k, v in self._abstentions.items() if v}
+
+    def _drain_decode_errors(self) -> list[str]:
+        """This run's run-permanent decoder failures, then forgotten.
+
+        Drained rather than accumulated: one handler outlives many ingests, and
+        a rejected key re-reported on the next run — after it was replaced — is
+        a false alarm.
+        """
+        errors, self._decode_errors = self._decode_errors, []
+        return errors
+
+    def _decoder_abstentions(self) -> dict[str, int]:
+        """The decoder's own gate counters; empty for a decoder that keeps none.
+
+        The response gates live in the decoder, because that is the only place
+        the response exists (contracts/decoder.md §5). This handler is where
+        they are *reported* from, so it reads them rather than recounting them.
+        """
+        return dict(getattr(self._extractor, "abstentions", {}))
+
+    def _merge_decoder_abstentions(self, before: dict[str, int]) -> None:
+        """Fold what the decoder counted since *before* into this run's report.
+
+        The delta, not the total: the decoder's counter is cumulative over its
+        own lifetime, and one decoder serves every ingest of the process.
+        """
+        for gate, count in self._decoder_abstentions().items():
+            if (new := count - before.get(gate, 0)) > 0:
+                self._abstentions[gate] += new
+
+    def _note_decode_failure(self, exc: Exception) -> None:
+        """Sort one failed decode into its gate, or onto the run's errors.
+
+        Never re-raised: the chunk is written undecoded either way, which is what
+        keeps a provider outage from opening a *hole* in the graph rather than a
+        counted gap in it (FR-018, SC-004). Falling back to the local decoder is
+        forbidden here as everywhere (FR-022), so there is no third branch.
+        """
+        from graphknows.ingestion.extraction.llm.retry import failure_gate
+
+        self._decode_failures += 1
+        if (gate := failure_gate(exc)) is not None:
+            self._abstentions[gate] += 1
+            log.warning("decode failed (%s: %s); abstained under %s", type(exc).__name__, exc, gate)
+            return
+        message = f"decoder: {type(exc).__name__}: {exc}"
+        if message not in self._decode_errors:
+            self._decode_errors.append(message)
+        log.error("%s -- the run cannot decode; chunks are stored undecoded", message)
 
     def _label_hints(self, embeddings: list[list[float]]) -> list[list[str]] | None:
         """Per-chunk ontology CLASS labels, offered as candidate entity types.
@@ -2063,14 +2313,19 @@ class _STMIngestHandler:
                 out.append((p, role, c))
         return out
 
-    async def _prewarm_frame_srl(self, texts: list[str], infer: bool = True) -> None:
-        """Parse every chunk's sentences once, up front. No-op unless SRL is on."""
-        if not (infer and self._enable_frames and texts):
-            return
-        from graphknows.symbolic.framenet.srl import prewarm, srl_enabled
+    async def _prewarm_frame_srl(self, texts: list[str], infer: bool = True) -> list[list[Any]]:
+        """Parse every chunk's sentences once, up front, and hand back what was parsed.
 
-        if not srl_enabled():
-            return
+        Returns one hit list per text — all empty unless SRL is on, so callers
+        index it positionally either way. Handing the hits back is what keeps the
+        parse single-use: the per-chunk stage used to re-derive them from the
+        cache this warmed, and the decode request needs them before it is made.
+        """
+        empty: list[list[Any]] = [[] for _ in texts]
+        if not (infer and texts and self._srl_active()):
+            return empty
+        from graphknows.symbolic.framenet.srl import prewarm
+
         start = time.monotonic()
         parsed = await asyncio.to_thread(prewarm, texts)
         log.info(
@@ -2079,6 +2334,7 @@ class _STMIngestHandler:
             len(texts),
             time.monotonic() - start,
         )
+        return [await self._srl_hits(text) for text in texts]
 
     async def _write_frame_tags(self, chunk_id: str, matches: list[tuple[str, float]]) -> None:
         """Write FRAME chunk tags for ``matches`` (name, confidence) pairs."""
@@ -2113,13 +2369,26 @@ class _STMIngestHandler:
             ],
         )
 
-    async def _srl_hits(self, text: str) -> list[Any]:
-        """Parse the chunk's frame triggers once, off the event loop. ``[]`` when off."""
-        if not (self._enable_frames and text.strip()):
-            return []
+    def _srl_active(self) -> bool:
+        """Whether the transformer frame parser runs for this handler.
+
+        It is a local extraction model like relex and the verifier, so it runs
+        only beside the local decoder: under the LLM decoder the frame roles
+        come from the decoder's own frame section over LU-trigger candidates,
+        and no local model loads (FR-008). Measured on conv-30 it cost 12 s of a
+        32 s assisted-mode chunk. The signal is the one every consumer of the
+        decoder seam already reads — the local decoder exposes ``gliner``, the
+        LLM decoder does not (contracts/decoder.md §1).
+        """
+        if not (self._enable_frames and hasattr(self._extractor, "gliner")):
+            return False
         from graphknows.symbolic.framenet.srl import srl_enabled
 
-        if not srl_enabled():
+        return srl_enabled()
+
+    async def _srl_hits(self, text: str) -> list[Any]:
+        """Parse the chunk's frame triggers once, off the event loop. ``[]`` when off."""
+        if not (text.strip() and self._srl_active()):
             return []
         from graphknows.symbolic.framenet.srl import parse
 
@@ -2161,6 +2430,41 @@ class _STMIngestHandler:
                 del out[role]
         return out
 
+    def _locally_filled(
+        self,
+        text: str,
+        doc: Any,
+        speaker: str,
+        speakers: list[str],
+        embedding: list[float] | None,
+        srl_hits: list[Any] | None,
+    ) -> list[Any]:
+        """Fill this chunk's frame roles on the local span model: parsed triggers, else LU.
+
+        Split out of :meth:`_frame_instances` only so consuming already-filled
+        roles is one branch there rather than three; both identifiers, their
+        arity and the model they share are unchanged.
+        """
+        from graphknows.ingestion.extraction.relations.frame_srl import (
+            extract_frame_instances,
+            extract_frame_instances_srl,
+            lu_triggers,
+        )
+
+        gliner = self._extractor.gliner
+        if srl_hits:
+            # Parsed triggers instead of one embedding-ranked guess per chunk, so
+            # a chunk can yield one instance per fact rather than at most one.
+            return extract_frame_instances_srl(text, speaker, speakers, gliner, srl_hits)
+        nlp = self._extractor.nlp
+        return extract_frame_instances(
+            text,
+            speaker,
+            speakers,
+            gliner,
+            lambda t: lu_triggers(t, nlp, embedding=embedding, doc=doc if t == text else None),
+        )
+
     def _frame_instances(
         self,
         text: str,
@@ -2169,6 +2473,7 @@ class _STMIngestHandler:
         embedding: list[float] | None = None,
         srl_hits: list[Any] | None = None,
         entity_types: dict[str, str] | None = None,
+        decoded_frames: list[dict[str, Any]] | None = None,
     ) -> tuple[list[dict[str, Any]], list[tuple[int, str, int]]]:
         """Frame-guided role extraction for one chunk → write dicts (thread-run).
 
@@ -2182,20 +2487,25 @@ class _STMIngestHandler:
         role-fillability gate; the FRAME_INSTANCE id is content-hashed at write
         time. ``nesting`` is ``(parent, role, child)`` indexed into the returned
         list, empty unless the SRL path ran. Empty if the extractor doesn't expose
-        reusable models. ``entity_types`` (``{name.casefold(): type}``, built from
+        reusable models. ``decoded_frames`` are role fills the decoder already
+        returned for locally-offered candidates (``ExtractionResult.frames``);
+        given them, no model runs here at all and every gate below is unchanged.
+        ``entity_types`` (``{name.casefold(): type}``, built from
         this chunk's already-typed ``filtered`` entities) feeds the default-off
         semantic-type veto; omit it and every filler's type is unknown, so the
         veto never fires.
         """
         extractor = self._extractor
-        if extractor is None or not hasattr(extractor, "nlp") or not hasattr(extractor, "gliner"):
+        # Roles are either handed over already filled or filled by the local span
+        # model; a decoder carrying neither produces nothing here and must not
+        # fall back to one (contracts/decoder.md §4).
+        if (
+            extractor is None
+            or not hasattr(extractor, "nlp")
+            or not (decoded_frames or hasattr(extractor, "gliner"))
+        ):
             return [], []
         from graphknows.ingestion.extraction.entities.extractor import _line_speakers
-        from graphknows.ingestion.extraction.relations.frame_srl import (
-            extract_frame_instances,
-            extract_frame_instances_srl,
-            lu_triggers,
-        )
         from graphknows.linguistics import analyse
 
         line_speakers = _line_speakers(text)
@@ -2204,24 +2514,15 @@ class _STMIngestHandler:
         if primary and primary not in speakers:
             speakers = sorted({*speakers, primary})
 
-        nlp = extractor.nlp
-        gliner = extractor.gliner
         # Shared with lexical labelling and frame-candidate ranking — see
         # extractor.parse(). Previously each of the three parsed the same window
         # again.
         doc = extractor.parse(text)
-        if srl_hits:
-            # Parsed triggers instead of one embedding-ranked guess per chunk, so
-            # a chunk can yield one instance per fact rather than at most one.
-            instances = extract_frame_instances_srl(text, primary, speakers, gliner, srl_hits)
-        else:
-            instances = extract_frame_instances(
-                text,
-                primary,
-                speakers,
-                gliner,
-                lambda t: lu_triggers(t, nlp, embedding=embedding, doc=doc if t == text else None),
-            )
+        instances = (
+            _decoded_instances(decoded_frames)
+            if decoded_frames
+            else self._locally_filled(text, doc, primary, speakers, embedding, srl_hits)
+        )
         # Role fillers become ENTITY nodes, so they must clear the SAME junk gate
         # every other minting path uses. This was the one path that did not call
         # it: measured on LoCoMo conv-30, it minted 624 ENTITY nodes with no type,
@@ -2362,13 +2663,30 @@ class _STMIngestHandler:
         extra_relation_labels: dict[str, str] | None = None,
         speaker: str = "",
     ) -> ExtractionResult:
-        if self._extractor is not None:
-            from typing import cast
+        """One chunk's extraction, with the single-call decoder's failures contained.
 
-            return cast(
+        The message path decodes through here rather than through
+        :meth:`_decode_batch`, and a raise on this route used to abandon the turn
+        *before* it was written — a failed decode cost the chunk itself, not just
+        its labels. The local two-pass decoder still raises: its failures are
+        this process's own, not a provider's, and nothing counts them.
+        """
+        if self._extractor is None:
+            return ExtractionResult()
+        from typing import cast
+
+        before = self._decoder_abstentions()
+        try:
+            result = cast(
                 ExtractionResult,
                 self._extractor.extract(
                     clean_text, extra_entity_labels, extra_relation_labels, speaker
                 ),
             )
-        return ExtractionResult()
+        except Exception as exc:
+            if not self._decodes_in_one_call:
+                raise
+            self._note_decode_failure(exc)
+            result = ExtractionResult()
+        self._merge_decoder_abstentions(before)
+        return result

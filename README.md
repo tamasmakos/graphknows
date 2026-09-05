@@ -10,8 +10,9 @@ Two extraction modes:
 - **`llm_free`** — deterministic extraction (GLiNER2 entities + spaCy relations) and
   deterministic retrieval. No LLM in the ingest or retrieval path; local embeddings by
   default, so it runs with **zero API keys**.
-- **`llm_assisted`** — LLM-driven extraction with an **injectable RDF/OWL ontology**, so
-  the graph stays domain-specific. Adds `pip install "graphknows[assisted]"`.
+- **`llm_assisted`** — the same extraction from **one structured LLM call per chunk**,
+  over the same injectable ontology, so the graph stays domain-specific. Needs only an
+  API key: `Memory(mode="llm_assisted")`, no extra to install.
 
 Use it two ways from the same core: as a **Python library**, or as an **MCP stdio
 server** (Claude Desktop / Claude Code).
@@ -19,8 +20,8 @@ server** (Claude Desktop / Claude Code).
 ## Install
 
 ```bash
-pip install graphknows              # full llm_free stack + MCP server
-pip install "graphknows[assisted]"  # + LLM extraction & injectable ontology
+pip install graphknows              # both modes + MCP server
+pip install "graphknows[ontology]"  # + load your own RDF/OWL ontology file
 python -m spacy download en_core_web_lg   # required: not on PyPI, so pip cannot pull it
 ```
 
@@ -30,13 +31,14 @@ same command.
 
 | Extra | Adds |
 | --- | --- |
-| `assisted` | DSPy LLM extraction + injectable RDF/OWL ontology (`llm_assisted` mode) |
+| `ontology` | Loading your own RDF/OWL ontology file (rdflib + networkx) |
 | `langgraph` | LangGraph `BaseStore` adapter |
 
 `pip install graphknows` is batteries-included: GLiNER/GLiNER2 extraction, local
-embeddings, BM25, community detection, document parsers, and the MCP server are
-all base dependencies. The extras above are only framework adapters and the
-LLM-assisted mode.
+embeddings, BM25, community detection, document parsers, the MCP server **and the
+LLM decoder** are all base dependencies — both modes are the supported surface, so
+neither sits behind an extra. The extras above are the RDF loader and framework
+adapters.
 
 The `graphknows.integrations.client` SDK (drive the server out-of-process) needs no extras.
 

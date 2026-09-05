@@ -91,8 +91,10 @@ _Avoid_: result, match, document
 ## Extraction
 
 **Mode**:
-Which extraction stack runs. `llm_free` is deterministic and needs no API key;
-`llm_assisted` uses an LLM and an injectable ontology, and reaches the network.
+Which decoder runs. `llm_free` runs the local decoder — deterministic, no API key.
+`llm_assisted` runs the LLM decoder — one structured request per chunk over an injectable
+ontology, and reaches the network. The two are alternatives behind one seam, never a layer
+on top of each other: no mode falls back to the other decoder per chunk.
 _Avoid_: profile, tier, preset
 
 **Worth extracting**:
@@ -104,7 +106,9 @@ _Avoid_: filtering, relevance
 **Abstention**:
 A deliberate decline to emit — the extractor had nothing it could stand behind. Every
 abstention is counted and surfaced; an abstention nobody can count is indistinguishable
-from a broken extractor.
+from a broken extractor. A decoder call that fails after its retry budget is an abstention
+too — counted under its own gate, distinct from the decoder returning nothing, and never a
+new term.
 _Avoid_: skip, drop, failure
 
 **Grounding**:
@@ -188,7 +192,7 @@ _Avoid_: offline, local-only, private, data-sovereign (a weaker and different cl
 
 **The contract surface**:
 What the version guarantee actually covers: the `Memory` entrypoint, the MCP server,
-`llm_free` extraction and injectable ontology. Everything else ships but is unsupported.
+extraction in both modes and injectable ontology. Everything else ships but is unsupported.
 _Avoid_: the public API, supported features
 
 **Re-ingest**:

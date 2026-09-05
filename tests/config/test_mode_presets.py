@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import pytest
 
+from graphknows.exceptions import ConfigurationError
 from graphknows.settings import (
+    Decoder,
     GraphKnowsSettings,
     MemoryMode,
     TopicMode,
@@ -19,13 +21,13 @@ class TestPresetExpansion:
     def test_llm_free_preset(self) -> None:
         s = GraphKnowsSettings(GRAPHKNOWS_MODE=MemoryMode.llm_free)
         assert s.topic_mode is TopicMode.none
-        assert s.dspy_relations is False
+        assert s.decoder is Decoder.local
         assert s.uses_llm is False
 
     def test_llm_assisted_preset(self) -> None:
         s = GraphKnowsSettings(GRAPHKNOWS_MODE=MemoryMode.llm_assisted)
         assert s.topic_mode is TopicMode.llm
-        assert s.dspy_relations is True
+        assert s.decoder is Decoder.llm
         assert s.uses_llm is True
 
     def test_default_matches_llm_free(self) -> None:
@@ -33,7 +35,7 @@ class TestPresetExpansion:
         s = GraphKnowsSettings()
         assert s.mode is MemoryMode.llm_free
         assert s.topic_mode is TopicMode.none
-        assert s.dspy_relations is False
+        assert s.decoder is Decoder.local
 
 
 class TestKnobOverrides:
@@ -44,24 +46,26 @@ class TestKnobOverrides:
             GRAPHKNOWS_TOPICS=TopicMode.extractive,
         )
         assert s.topic_mode is TopicMode.extractive
-        assert s.dspy_relations is False  # untouched by the override
+        assert s.decoder is Decoder.local  # untouched by the override
         assert s.uses_llm is False  # extractive topics make no network call
 
-    def test_dspy_disabled_under_llm_assisted(self) -> None:
+    def test_retired_relations_knob_does_not_move_the_decoder(self) -> None:
+        """Under a replacement decoder the per-capability knob names nothing."""
         s = GraphKnowsSettings(
             GRAPHKNOWS_MODE=MemoryMode.llm_assisted,
             GRAPHKNOWS_DSPY_RELATIONS=False,
         )
-        assert s.dspy_relations is False
+        assert s.decoder is Decoder.llm
         assert s.topic_mode is TopicMode.llm  # other knobs keep the preset
 
-    def test_every_knob_overridden_ignores_the_preset(self) -> None:
+    def test_llm_topics_alone_reach_the_network(self) -> None:
+        """``uses_llm`` follows either resolved capability, not the mode label."""
         s = GraphKnowsSettings(
-            GRAPHKNOWS_MODE=MemoryMode.llm_assisted,
-            GRAPHKNOWS_TOPICS=TopicMode.none,
-            GRAPHKNOWS_DSPY_RELATIONS=False,
+            GRAPHKNOWS_MODE=MemoryMode.llm_free,
+            GRAPHKNOWS_TOPICS=TopicMode.llm,
         )
-        assert s.uses_llm is False
+        assert s.decoder is Decoder.local
+        assert s.uses_llm is True
 
 
 class TestEmptyEnvVars:
@@ -83,7 +87,7 @@ class TestEmptyEnvVars:
     def test_empty_falls_back_to_the_preset(self, kwargs: dict[str, str]) -> None:
         s = GraphKnowsSettings(GRAPHKNOWS_MODE=MemoryMode.llm_free, **kwargs)
         assert s.topic_mode is TopicMode.none
-        assert s.dspy_relations is False
+        assert s.decoder is Decoder.local
 
 
 class TestOntologySource:
@@ -162,12 +166,14 @@ class TestProductionGuard:
             GRAPHKNOWS_LLM_API_KEY="",
         )  # must not raise
 
-    def test_llm_assisted_with_capabilities_off_needs_no_key(self) -> None:
-        GraphKnowsSettings(
-            GRAPHKNOWS_ENV="production",
-            GRAPHKNOWS_ARCADEDB_PASSWORD="secret",
-            GRAPHKNOWS_LLM_API_KEY="",
-            GRAPHKNOWS_MODE=MemoryMode.llm_assisted,
-            GRAPHKNOWS_TOPICS=TopicMode.none,
-            GRAPHKNOWS_DSPY_RELATIONS=False,
-        )  # must not raise
+    def test_llm_assisted_always_needs_a_key(self) -> None:
+        """The decoder is the mode's whole choice: no knob turns its LLM off."""
+        with pytest.raises(ConfigurationError):
+            GraphKnowsSettings(
+                GRAPHKNOWS_ENV="production",
+                GRAPHKNOWS_ARCADEDB_PASSWORD="secret",
+                GRAPHKNOWS_LLM_API_KEY="",
+                GRAPHKNOWS_MODE=MemoryMode.llm_assisted,
+                GRAPHKNOWS_TOPICS=TopicMode.none,
+                GRAPHKNOWS_DSPY_RELATIONS=False,
+            )

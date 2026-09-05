@@ -78,7 +78,7 @@ jobs:
         # --locked fails if uv.lock has drifted from pyproject.toml. That is a
         # real quality check: the image resolves from these constraints, so a
         # stale lock is a stale image.
-        run: uv sync --locked --extra assisted --group dev
+        run: uv sync --locked --extra ontology --group dev
 
       - name: install spacy model
         # Same pinned wheel the Dockerfile installs. `spacy download` targets the

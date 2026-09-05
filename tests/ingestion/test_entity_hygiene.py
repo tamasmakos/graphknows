@@ -333,25 +333,36 @@ class TestStructuralJunk:
         """
         assert not is_graph_entity_name("keeping me in the loop")
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "one-on-one mentoring and training",
+            "new offers and promotions",
+        ],
+    )
+    def test_coordinated_spans_now_rejected_by_the_coordination_gate(self, name: str) -> None:
+        """Two of #160's three admitted defects, graduated out of the xfail below.
+
+        Their ROOT parses as a NOUN, so the head gate never fired and length was
+        the only signal left. ``_is_coordinated_phrase`` keys on the coordination
+        instead: an all-lowercase span joining two things with "and"/"or" names
+        a pair, not a thing.
+        """
+        assert not is_graph_entity_name(name)
+
     @pytest.mark.xfail(
         reason=(
             "#160 gated propositions on the span's syntactic head "
-            "(_is_verb_headed): a ROOT tagged VERB/AUX is rejected. These three "
-            "survive because their ROOT parses as a NOUN, not a verb, so the "
-            "head check does not fire and length is still the only signal. The "
+            "(_is_verb_headed): a ROOT tagged VERB/AUX is rejected. This one "
+            "survives because its ROOT parses as a NOUN, not a verb, so the "
+            "head check does not fire, it carries no coordination for the "
+            "coordination gate, and length is still the only signal. The "
             "8-word cap stays (see _MAX_ENTITY_WORDS): lowering it deletes "
             "legitimate 4-word titles ('Charlotte's Web: A Review')."
         ),
         strict=True,
     )
-    @pytest.mark.parametrize(
-        "name",
-        [
-            "goals written down on paper",
-            "one-on-one mentoring and training",
-            "new offers and promotions",
-        ],
-    )
+    @pytest.mark.parametrize("name", ["goals written down on paper"])
     def test_long_noun_headed_spans_are_still_admitted(self, name: str) -> None:
         assert not is_graph_entity_name(name)
 
@@ -710,7 +721,10 @@ class TestVerbHeadedPropositionsAreNotEntities:
         "name",
         [
             "Charlotte's Web: A Review",
-            "one-on-one mentoring and training",
+            # "one-on-one mentoring and training" was here AND in the strict-xfail
+            # above, which asserts the opposite — the file contradicted itself, and
+            # only the xfail marker hid it. Resolved toward #160's defect record:
+            # the span names two things, so the coordination gate now rejects it.
             "New York City",
             "New York",
             "Washington, D.C.",
@@ -757,3 +771,75 @@ class TestVerbHeadedPropositionsAreNotEntities:
             assert is_graph_entity_name("helps Jon find areas to improve") is True
         finally:
             hygiene._is_verb_headed.cache_clear()
+
+
+class TestGateHolesFoundByDogfooding:
+    """Shapes the gate admitted, each quoted from a real graph it polluted.
+
+    Drawn from the T020 gate run over conv-26/conv-30 (namespace `gate_allon`):
+    the names below were live ENTITY nodes, and the first was the second-largest
+    hub in its graph.
+    """
+
+    def test_a_speaker_at_both_ends_reduces_to_that_speaker(self) -> None:
+        """`Caroline, so Caroline` carried 63 mentions as a PERSON node.
+
+        The deixis rewrite resolves a pronoun on either side of a discourse
+        marker and leaves the speaker's name twice; the all-tokens rule misses
+        it because "so" is not a speaker.
+        """
+        assert _reduce_speaker_span("Caroline, so Caroline", SPEAKERS) == "Caroline"
+
+    def test_two_different_speakers_are_not_collapsed(self) -> None:
+        """The rule keys on the SAME speaker at both ends, so this is untouched."""
+        assert _reduce_speaker_span("Caroline, and later Melanie", SPEAKERS) == (
+            "Caroline, and later Melanie"
+        )
+
+    def test_a_greeting_that_trails_into_a_name_is_still_vocative(self) -> None:
+        """`Thanks so much, Mel` was minted as an ENTITY on conv-26."""
+        assert is_graph_entity_name("Thanks so much, Mel") is False
+
+    @pytest.mark.parametrize("name", ["Washington, D.C.", "Rome, Italy"])
+    def test_place_names_with_commas_survive(self, name: str) -> None:
+        """The vocative rule keys on the head being an address, not on the comma."""
+        assert is_graph_entity_name(name) is True
+
+
+class TestCoordinatedPhrases:
+    """The coordination gate, and the names it must not touch.
+
+    Motivated by the T020 gate run over conv-26/conv-30: the LLM decoder mints
+    coordinated abstractions as single ENTITY nodes, and #160 already recorded
+    two spans of the same shape as admitted defects.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "equality and inclusivity",
+            "love and diversity",
+            "inclusivity and support",
+            "counseling or working in mental health",
+        ],
+    )
+    def test_coordinated_abstractions_are_not_entities(self, name: str) -> None:
+        """A node standing for two things answers questions about neither."""
+        assert is_graph_entity_name(name) is False
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "Barnes and Noble",
+            "Beauty and the Beast",
+            "Bed Bath and Beyond",
+        ],
+    )
+    def test_capitalised_names_keep_their_conjunction(self, name: str) -> None:
+        """The capital is what separates a real name from a coordinated phrase."""
+        assert is_graph_entity_name(name) is True
+
+    @pytest.mark.parametrize("name", ["dance studio", "online store", "county hospital"])
+    def test_uncoordinated_names_are_untouched(self, name: str) -> None:
+        """The gate needs three tokens and a coordinator that is not an endpoint."""
+        assert is_graph_entity_name(name) is True

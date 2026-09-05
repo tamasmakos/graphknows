@@ -28,6 +28,15 @@ PYSEC-2026-249        # starlette
 # which graphknows imports (corpus readers, PorterStemmer, WordNetLemmatizer only).
 PYSEC-2026-3740       # nltk              3.10.3  -> none released
 
+# 5 Sep 2026: no fixed diskcache release exists — the advisory's affected range
+# ends at 5.6.3, which is the latest on PyPI, and it names no fix version.
+# diskcache reaches the runtime set through dspy's cache (the LLM decoder made
+# dspy core, ADR 0003). The vulnerability is unsafe pickle deserialization of
+# cache entries, which requires an attacker to already have write access to the
+# cache directory (`~/.dspy_cache`); in the shipped image that is the container's
+# own filesystem, so it is not a remote-input path. Revisit when a release lands.
+PYSEC-2026-2447       # diskcache         5.6.3   -> none released
+
 # The two below need an image rebuild and an eval re-run, so they are deferred
 # rather than bundled into a gate change.
 PYSEC-2025-194        # torch             2.12.0  -> 2.13.0

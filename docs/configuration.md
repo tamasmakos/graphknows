@@ -44,13 +44,23 @@ async with Memory(settings) as mem:
 | `GRAPHKNOWS_SUMMARIZATION_MODEL` | _(empty)_ | Override model for topic summarization (defaults to `LLM_MODEL`). |
 | **Capability knobs** (each overrides the `GRAPHKNOWS_MODE` preset) | | |
 | `GRAPHKNOWS_TOPICS` | _(preset)_ | `none` \| `extractive` \| `llm`. `extractive` is deterministic, so it is valid in `llm_free`. See [modes.md](modes.md). |
-| `GRAPHKNOWS_DSPY_RELATIONS` | _(preset)_ | Run the DSPy/LLM relation extractor on top of the deterministic pass. |
+| `GRAPHKNOWS_DSPY_RELATIONS` | _(retired)_ | **Deprecated and ignored.** Setting it warns; `llm_assisted` replaces the whole extractor, so there is no "LLM relations on top" to switch. Use `GRAPHKNOWS_MODE`. |
 | `GRAPHKNOWS_ONTOLOGY` | _(empty)_ | RDF/OWL ontology **file or folder** to inject. Mode-independent. See [ontology.md](ontology.md). |
 | `GRAPHKNOWS_ONTOLOGY_FILE` | _(empty)_ | Deprecated alias for `GRAPHKNOWS_ONTOLOGY` (single file only). |
 | `GRAPHKNOWS_RELATION_ONTOLOGY` | `personal` | Vocabulary relation properties are drawn from. Bare tokens `personal` \| `cco`, or a path to a custom vocabulary. Entity typing stays on `GRAPHKNOWS_ONTOLOGY`. See [ontology.md](ontology.md). |
 | **Extraction / chunking** | | |
 | `GRAPHKNOWS_RELEX_MODEL` | `knowledgator/gliner-relex-large-v1.0` | Joint entity+relation extraction model (HuggingFace id). |
 | `GRAPHKNOWS_SPACY_MODEL` | `en_core_web_lg` | spaCy model for relation mining. |
+| **LLM decoder** (only read in `llm_assisted`) | | |
+| `GRAPHKNOWS_DECODE_ENTITIES` | `true` | Ask the one structured call for entities. |
+| `GRAPHKNOWS_DECODE_RELATIONS` | `true` | Ask the one structured call for relations. |
+| `GRAPHKNOWS_DECODE_FRAMES` | `true` | Ask the one structured call for frames. |
+| `GRAPHKNOWS_DECODE_CONFIDENCE_MIN` | `0.5` | Drop relations below this confidence. `0` disables the gate. |
+| `GRAPHKNOWS_DECODE_ATTEMPTS` | `3` | Per-chunk retry budget. A chunk that exhausts it abstains. |
+| `GRAPHKNOWS_DECODE_BACKOFF_BASE_S` | `1.0` | Base of the exponential-with-full-jitter wait between attempts. |
+| `GRAPHKNOWS_DECODE_BACKOFF_CAP_S` | `30.0` | Ceiling on that wait. |
+| `GRAPHKNOWS_DECODE_HONOUR_RETRY_AFTER` | `true` | Let a provider `Retry-After` header win over the computed wait. |
+| `GRAPHKNOWS_DECODE_CONCURRENCY` | `8` | Ceiling on per-chunk calls in flight during a batch. |
 | **Frame layer** | | |
 | `GRAPHKNOWS_ENABLE_FRAMES` | `true` | Deterministic FrameNet frame layer (ingest + retrieval channel). On by default; set to `false` to disable. See [modes.md](modes.md). |
 | `GRAPHKNOWS_ENABLE_FE_TYPE_GATE` | `false` | Frame-element semantic-type veto: drops a role filler whose graph entity type conflicts with the frame element's FrameNet semantic type. Off by default; the FE plane's coreness / Requires / Excludes / CoreSet checks run regardless. See [architecture.md](architecture.md). |

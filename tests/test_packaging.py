@@ -143,27 +143,24 @@ def _missing_extra_call_sites() -> dict[str, set[str]]:
     return sites
 
 
-#: The extra each MissingExtraError call site must name once `ontology` is split
-#: off `assisted`. Only the dspy path stays on `assisted`: it is the only one
-#: that actually needs dspy, and pointing an ontology user at it would install
-#: the whole LLM-extraction stack they asked not to have.
+#: The extra each MissingExtraError call site must name. Every one is now an RDF
+#: path: the decoder's dspy import used to name `assisted`, and once dspy became
+#: core (ADR 0003) a missing dspy stopped being an extra to install and became a
+#: BrokenInstallError — so the decoder is deliberately absent from this table.
 ONTOLOGY_SPLIT_CALL_SITES = {
     "graphknows/symbolic/ontology/rdf_io.py": "ontology",
     "graphknows/symbolic/ontology/rdf/taxonomy.py": "ontology",
     "graphknows/symbolic/ontology/rdf/projection.py": "ontology",
     "graphknows/symbolic/ontology/rdf/prefixes.py": "ontology",
     "graphknows/symbolic/ontology/digest.py": "ontology",
-    "graphknows/ingestion/extraction/relations/llm_assisted/dspy.py": "assisted",
 }
 
 
 def test_ontology_call_sites_name_the_ontology_extra() -> None:
-    """The RDF paths must send the user to `ontology`, the dspy path to `assisted`.
+    """The RDF paths must send the user to `ontology`.
 
-    Both halves matter. An ontology call site left on `assisted` tells someone
-    who only wants to load their own RDF to install dspy; the dspy call site
-    moved to `ontology` sends the LLM-extraction user to an install that has no
-    dspy in it, and the error they get next is a bare ImportError.
+    An ontology call site naming anything else tells someone who only wants to
+    load their own OWL file to install a stack they asked not to have.
     """
     found = _missing_extra_call_sites()
     actual = {rel: sorted(found.get(rel, set())) for rel in ONTOLOGY_SPLIT_CALL_SITES}
@@ -195,9 +192,9 @@ def test_ontology_extra_excludes_dspy() -> None:
     """`[ontology]` gives RDF support without the LLM-extraction stack.
 
     This is the whole reason the extra exists: a client who brings their own OWL
-    ontology and runs air-gapped must not be made to install dspy to parse a
-    file. The split is additive on purpose — `assisted` keeps rdflib/networkx,
-    so no existing install, image or CI leg loses anything.
+    ontology must not be made to reach for the LLM stack to parse a file. It
+    stays true now that dspy is core — the extra carries the RDF stack and
+    nothing else, so what it names is still only what an RDF user needs.
     """
     extras = _pyproject()["project"].get("optional-dependencies", {})
     assert "ontology" in extras, "the `ontology` extra is not declared"
@@ -333,3 +330,150 @@ def test_every_imported_third_party_module_is_declared() -> None:
     assert not undeclared, "Imported but not declared in pyproject.toml:\n  " + "\n  ".join(
         f"{dist}  <- {', '.join(sorted(files))}" for dist, files in sorted(undeclared.items())
     )
+
+
+def test_assisted_extra_removed_and_dspy_core() -> None:
+    """`llm_assisted` is contract surface, so its stack is core and has no extra.
+
+    An extra that gates half the contract surface is a documentation bug waiting
+    to happen: the mode is documented, the install that runs it is a footnote,
+    and the error a user meets is an ImportError from inside a library call
+    (ADR 0003). Three things must hold together — remove any one and the mode
+    becomes optional again:
+    """
+    project = _pyproject()["project"]
+    extras = project.get("optional-dependencies", {})
+
+    assert "assisted" not in extras, (
+        f"the `assisted` extra is back: {sorted(extras)} — dspy is core now, so an "
+        "extra naming it can only install what is already installed"
+    )
+    assert "ontology" in extras, "removing `assisted` must not take `ontology` with it"
+
+    core = _requirement_names(project.get("dependencies", []))
+    for distribution in ("dspy", "litellm"):
+        assert distribution in core, (
+            f"'{distribution}' is imported by the LLM decoder but is not a core "
+            f"dependency — `pip install graphknows` would not run llm_assisted"
+        )
+
+    specs = {
+        re.split(r"[<>=!~\[]", spec, maxsplit=1)[0].strip().lower(): spec
+        for spec in project.get("dependencies", [])
+    }
+    assert ">=" in specs["dspy"], (
+        f"dspy is declared without a lower bound ({specs['dspy']!r}): the decoder "
+        "pins a JSONAdapter and calls litellm.register_model, neither of which "
+        "every past dspy has"
+    )
+
+    named = {extra for extras_ in _missing_extra_call_sites().values() for extra in extras_}
+    assert "assisted" not in named, (
+        "a MissingExtraError call site still names `assisted`, so it sends the user "
+        "to `pip install graphknows[assisted]` — which now fails outright"
+    )
+
+
+@pytest.mark.slow
+def test_bare_install_runs_decoder(tmp_path: Path) -> None:
+    """A no-extras install of the built wheel runs the LLM decoder end to end.
+
+    The metadata assertions above can only see what pyproject *declares*. This
+    one catches what it *omits*: an undeclared transitive import on the decoder
+    path is invisible in this repo's own environment, where every dev and eval
+    group is installed, and shows up for the first time on a user's machine.
+    So the wheel is built, installed alone, and driven against a stub provider —
+    no network, no database, no extras.
+    """
+    if shutil.which("uv") is None:
+        pytest.skip("uv not on PATH; cannot build or install a wheel here")
+
+    dist = tmp_path / "dist"
+    build = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(dist)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert build.returncode == 0, f"uv build --wheel failed:\n{build.stderr}"
+    wheels = list(dist.glob("*.whl"))
+    assert wheels, f"no wheel produced in {dist}"
+
+    venv = tmp_path / "venv"
+    assert (
+        subprocess.run(
+            ["uv", "venv", str(venv)], capture_output=True, text=True, check=False
+        ).returncode
+        == 0
+    ), "uv venv failed"
+    python = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    install = subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), str(wheels[0])],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert install.returncode == 0, f"installing the bare wheel failed:\n{install.stderr}"
+
+    # Run from tmp_path, not the repo: `.env` and the source tree are both on the
+    # doorstep here, and either would let the check pass on something the wheel
+    # does not actually carry.
+    drive = subprocess.run(
+        [str(python), "-c", _BARE_DECODER_SCRIPT],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert drive.returncode == 0, (
+        f"the bare install could not run the decoder:\n{drive.stdout}\n{drive.stderr}"
+    )
+    assert "DECODED 2" in drive.stdout, f"decoder returned nothing usable:\n{drive.stdout}"
+
+
+#: Driven in the bare venv's interpreter, so it may import nothing from this repo
+#: and defines its own stub provider rather than reusing the one in
+#: tests/extraction/test_llm_decoder.py.
+_BARE_DECODER_SCRIPT = """
+import json
+import dspy
+from graphknows.ingestion.extraction.llm.decoder import LLMDecoder
+from graphknows.settings import GraphKnowsSettings
+
+REPLY = json.dumps(
+    {
+        "entities": [
+            {"surface": "Melanie", "label": "person"},
+            {"surface": "Acme", "label": "organization"},
+        ],
+        "relations": [
+            {
+                "head": "Melanie",
+                "predicate": "worksFor",
+                "tail": "Acme",
+                "evidence": "Melanie works for Acme",
+                "confidence": 0.9,
+            }
+        ],
+        "frames": [],
+    }
+)
+
+
+class Stub(dspy.LM):
+    def __init__(self):
+        super().__init__(model="openrouter/stub/decoder-v1", api_key="stub", cache=False)
+
+    def __call__(self, prompt=None, messages=None, **kwargs):
+        return [REPLY]
+
+
+decoder = LLMDecoder(GraphKnowsSettings(), lm=Stub())
+result = decoder.extract(
+    "Melanie works for Acme.",
+    ["person", "organization"],
+    {"worksFor": "the subject is employed by the object"},
+)
+print("DECODED", len(result.entities))
+"""

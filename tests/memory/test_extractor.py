@@ -929,7 +929,7 @@ class TestExtractorLifetime:
 
     def test_builder_returns_the_same_instance(self) -> None:
         from graphknows.ingestion.extraction.entities import (
-            build_entity_extractor,
+            build_decoder,
             reset_entity_extractor,
         )
         from graphknows.settings import GraphKnowsSettings
@@ -937,7 +937,7 @@ class TestExtractorLifetime:
         reset_entity_extractor()
         try:
             s = GraphKnowsSettings()
-            assert build_entity_extractor(s) is build_entity_extractor(s)
+            assert build_decoder(s) is build_decoder(s)
         finally:
             reset_entity_extractor()
 
@@ -945,30 +945,30 @@ class TestExtractorLifetime:
         """Memory is cached PER NAMESPACE; a per-namespace model multiplies the
         footprint by the number of conversations in flight."""
         from graphknows.ingestion.extraction.entities import (
-            build_entity_extractor,
+            build_decoder,
             reset_entity_extractor,
         )
         from graphknows.settings import GraphKnowsSettings
 
         reset_entity_extractor()
         try:
-            first = build_entity_extractor(GraphKnowsSettings())
-            second = build_entity_extractor(GraphKnowsSettings())
+            first = build_decoder(GraphKnowsSettings())
+            second = build_decoder(GraphKnowsSettings())
             assert first is second
         finally:
             reset_entity_extractor()
 
     def test_reset_releases_it(self) -> None:
         from graphknows.ingestion.extraction.entities import (
-            build_entity_extractor,
+            build_decoder,
             reset_entity_extractor,
         )
         from graphknows.settings import GraphKnowsSettings
 
         reset_entity_extractor()
-        first = build_entity_extractor(GraphKnowsSettings())
+        first = build_decoder(GraphKnowsSettings())
         reset_entity_extractor()
-        assert build_entity_extractor(GraphKnowsSettings()) is not first
+        assert build_decoder(GraphKnowsSettings()) is not first
         reset_entity_extractor()
 
     def test_concurrent_first_callers_build_once(self) -> None:
@@ -976,7 +976,7 @@ class TestExtractorLifetime:
         import threading
 
         from graphknows.ingestion.extraction.entities import (
-            build_entity_extractor,
+            build_decoder,
             reset_entity_extractor,
         )
         from graphknows.settings import GraphKnowsSettings
@@ -985,9 +985,7 @@ class TestExtractorLifetime:
         try:
             got: list = []
             threads = [
-                threading.Thread(
-                    target=lambda: got.append(build_entity_extractor(GraphKnowsSettings()))
-                )
+                threading.Thread(target=lambda: got.append(build_decoder(GraphKnowsSettings())))
                 for _ in range(8)
             ]
             for t in threads:

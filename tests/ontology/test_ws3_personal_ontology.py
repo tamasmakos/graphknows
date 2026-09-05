@@ -1,7 +1,6 @@
 """WS-3 tests — personal ontology and extract-then-map.
 
-All tests are offline: no live API calls, no embedding model.  The LLM is
-mocked wherever DSPyExtractor would normally require one.
+All tests are offline: no live API calls, no embedding model.
 
 Import strategy: to avoid the heavy ``graphknows.extraction.__init__`` (which
 pulls in gliner/networkx/langchain etc.), sub-modules are loaded directly via
@@ -16,7 +15,6 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -264,112 +262,3 @@ class TestOntologyPredicateMapper:
         assert result[0]["relation"] == "friend_of"
         assert "_mapped_from" in result[0]
         assert result[0]["_mapped_from"] == "is friends with"
-
-
-# ============================================================
-# 3. DSPy extractor — extract-then-map (mocked LLM)
-# ============================================================
-
-
-pytest.importorskip("dspy")
-
-
-class TestDspyExtractorExtractThenMap:
-    """Verify the extract-then-map step in DSPyExtractor without live API."""
-
-    def _make_extractor(self):
-        """Build a DSPyExtractor with personal ontology, mocking the DSPy LM."""
-        # Pre-load dependencies that dspy.py needs so they don't go through extraction __init__
-        _loader_mod()
-        _filter_mod()
-
-        with (
-            patch("dspy.LM", return_value=MagicMock()),
-            patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}),
-        ):
-            dspy_mod = _load_module(
-                "graphknows.ingestion.extraction.relations.llm_assisted.dspy",
-                _RELATIONS_PKG / "llm_assisted" / "dspy.py",
-            )
-            config = {
-                "llm": {
-                    "extraction_model": "deepseek/deepseek-v4-flash",
-                    "temperature": 0.0,
-                    "max_tokens": 1024,
-                },
-                "ontology": {"file": str(PERSONAL_TTL)},
-            }
-            return dspy_mod.DSPyExtractor(config)
-
-    def test_extractor_loads_personal_ontology(self):
-        extractor = self._make_extractor()
-        all_types = [t.lower() for t in extractor._ontology_relation_types]
-        assert "friend_of" in all_types or "FRIEND_OF" in extractor._ontology_relation_types, (
-            f"friend_of not in relation types: {extractor._ontology_relation_types}"
-        )
-
-    def test_extractor_has_predicate_mapper(self):
-        filter_mod = _filter_mod()
-        extractor = self._make_extractor()
-        assert isinstance(extractor._predicate_mapper, filter_mod.OntologyPredicateMapper)
-        assert extractor._predicate_mapper.ontology_labels
-
-    def test_apply_extract_then_map_remaps_surface_form(self):
-        extractor = self._make_extractor()
-        raw = {
-            "source": "Alice",
-            "relation": "is friends with",
-            "target": "Bob",
-            "source_type": "Person",
-            "target_type": "Person",
-            "evidence": "Alice is friends with Bob.",
-        }
-        mapped_raw, drop_reason = extractor._apply_extract_then_map(raw)
-        assert mapped_raw is not None, f"Expected mapping, got drop_reason={drop_reason}"
-        assert mapped_raw["relation"] == "friend_of", f"Got: {mapped_raw['relation']}"
-        assert "_mapped_from" in mapped_raw
-        assert mapped_raw["_mapped_from"] == "is friends with"
-
-    def test_apply_extract_then_map_rejects_off_ontology(self):
-        extractor = self._make_extractor()
-        raw = {
-            "source": "Corp",
-            "relation": "filed_derivative_contract",
-            "target": "Fund",
-            "source_type": "Organization",
-            "target_type": "Organization",
-            "evidence": "Corp filed a derivative contract.",
-        }
-        mapped_raw, drop_reason = extractor._apply_extract_then_map(raw)
-        assert mapped_raw is None, f"Expected rejection but got mapped_raw={mapped_raw}"
-        assert drop_reason is not None
-
-    def test_apply_extract_then_map_exact_match_passthrough(self):
-        extractor = self._make_extractor()
-        raw = {
-            "source": "Alice",
-            "relation": "lives_in",
-            "target": "Berlin",
-            "source_type": "Person",
-            "target_type": "Place",
-            "evidence": "Alice lives in Berlin.",
-        }
-        mapped_raw, _drop_reason = extractor._apply_extract_then_map(raw)
-        assert mapped_raw is not None
-        assert mapped_raw["relation"] == "lives_in"
-        # No remapping for exact match — no _mapped_from key
-        assert "_mapped_from" not in mapped_raw
-
-    def test_enriched_ontology_context_contains_properties_detail(self):
-        extractor = self._make_extractor()
-        ctx = extractor._ontology_enriched_context
-        assert ctx, "Enriched context should not be empty"
-        data = json.loads(ctx)
-        assert "properties_detail" in data, (
-            f"Missing 'properties_detail' key in context: {list(data.keys())}"
-        )
-        # Each property detail should have label, domain, range
-        for entry in data["properties_detail"]:
-            assert "label" in entry
-            assert "domain" in entry, f"Property {entry.get('label')} missing domain"
-            assert "range" in entry, f"Property {entry.get('label')} missing range"

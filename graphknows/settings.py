@@ -15,6 +15,7 @@ Example:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -93,14 +94,14 @@ _BUNDLED_OVERLAY = str(
 class MemoryMode(StrEnum):
     """Named preset over the orthogonal capability knobs.
 
-    The mode is *only* a preset: every capability it implies (topics, DSPy
-    relations) is independently overridable, and ontology injection plus the
-    FrameNet layer are mode-independent. See
-    :data:`_PRESETS` for the expansion and ``docs/modes.md`` for the rationale.
+    The mode picks the decoder and, as a preset, the topic layer — which stays
+    independently overridable. Ontology injection plus the FrameNet layer are
+    mode-independent. See :data:`_PRESETS` for the expansion and
+    ``docs/modes.md`` for the rationale.
 
     - ``llm_free``: no network LLM call on the ingestion or retrieval hot path.
-    - ``llm_assisted``: adds DSPy relation extraction, LLM topic summaries, and
-      LLM-backed capabilities.
+    - ``llm_assisted``: the LLM decoder replaces the local extraction stack, and
+      topics are LLM summaries.
     """
 
     llm_free = "llm_free"
@@ -121,17 +122,29 @@ class TopicMode(StrEnum):
     llm = "llm"
 
 
+class Decoder(StrEnum):
+    """Which component turns a chunk into entities, relations and frame roles.
+
+    - ``local``: the bundled GLiNER2/DeBERTa stack — no network call.
+    - ``llm``: one structured LLM call per chunk, *replacing* that stack rather
+      than layering on top of it.
+    """
+
+    local = "local"
+    llm = "llm"
+
+
 @dataclass(frozen=True)
 class _Preset:
-    """The capability knobs a :class:`MemoryMode` expands into."""
+    """What a :class:`MemoryMode` expands into."""
 
     topics: TopicMode
-    dspy_relations: bool
+    decoder: Decoder
 
 
 _PRESETS: dict[MemoryMode, _Preset] = {
-    MemoryMode.llm_free: _Preset(topics=TopicMode.none, dspy_relations=False),
-    MemoryMode.llm_assisted: _Preset(topics=TopicMode.llm, dspy_relations=True),
+    MemoryMode.llm_free: _Preset(topics=TopicMode.none, decoder=Decoder.local),
+    MemoryMode.llm_assisted: _Preset(topics=TopicMode.llm, decoder=Decoder.llm),
 }
 
 
@@ -158,12 +171,15 @@ class GraphKnowsSettings(BaseSettings):
 
     graphknows_env: str = Field(default="development", alias="GRAPHKNOWS_ENV")
 
-    # Named preset over the capability knobs below. Every knob it implies can be
-    # overridden independently; read the resolved values through the
-    # ``topic_mode`` / ``dspy_relations`` properties, never off these raw fields
+    # Named preset. The decoder follows the mode alone; the topic layer can be
+    # overridden independently. Read the resolved values through the
+    # ``decoder`` / ``topic_mode`` properties, never off these raw fields
     # (``None`` means "take the preset's value").
     mode: MemoryMode = Field(default=MemoryMode.llm_free, alias="GRAPHKNOWS_MODE")
     topics: TopicMode | None = Field(default=None, alias="GRAPHKNOWS_TOPICS")
+    # Retired (FR-004): under a replacement decoder an "LLM relations" knob names
+    # nothing. Kept as a field only so setting it is a deprecation rather than a
+    # validation error, and normalised back to ``None`` so nothing can honour it.
     enable_dspy_relations: bool | None = Field(default=None, alias="GRAPHKNOWS_DSPY_RELATIONS")
 
     # ArcadeDB
@@ -365,6 +381,37 @@ class GraphKnowsSettings(BaseSettings):
     # type veto itself can be A/B'd independently before it gates real writes.
     enable_fe_type_gate: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_FE_TYPE_GATE")
 
+    # The LLM decoder's knobs. Only read on the ``llm`` decoder; inert under the
+    # local stack, which has its own (relex, verifier, frames) switches above.
+    #
+    # The three section switches turn off a part of the ONE structured call —
+    # a section the model is not asked for is a section it cannot get wrong, and
+    # switching each off in turn is how the sections are ablated (FR-016).
+    decode_entities: bool = Field(default=True, alias="GRAPHKNOWS_DECODE_ENTITIES")
+    decode_relations: bool = Field(default=True, alias="GRAPHKNOWS_DECODE_RELATIONS")
+    decode_frames: bool = Field(default=True, alias="GRAPHKNOWS_DECODE_FRAMES")
+    # Relation confidence gate. 0 disables it, which IS the fourth ablation arm
+    # (FR-014) — not a special case in the code.
+    decode_confidence_min: float = Field(
+        default=0.5, ge=0.0, le=1.0, alias="GRAPHKNOWS_DECODE_CONFIDENCE_MIN"
+    )
+    # Per-chunk retry budget and the exponential-with-full-jitter wait it spends
+    # (FR-020). ``Retry-After`` from the provider wins over the computed wait.
+    decode_attempts: int = Field(default=3, ge=1, alias="GRAPHKNOWS_DECODE_ATTEMPTS")
+    decode_backoff_base_s: float = Field(
+        default=1.0, ge=0.0, alias="GRAPHKNOWS_DECODE_BACKOFF_BASE_S"
+    )
+    decode_backoff_cap_s: float = Field(
+        default=30.0, ge=0.0, alias="GRAPHKNOWS_DECODE_BACKOFF_CAP_S"
+    )
+    decode_honour_retry_after: bool = Field(
+        default=True, alias="GRAPHKNOWS_DECODE_HONOUR_RETRY_AFTER"
+    )
+    # Bounded fan-out of the per-chunk calls in ``extract_batch``: chunks are
+    # independent, so they go out concurrently, but not all at once — this is the
+    # ceiling that keeps a large batch from tripping provider rate limits.
+    decode_concurrency: int = Field(default=8, ge=1, alias="GRAPHKNOWS_DECODE_CONCURRENCY")
+
     @field_validator("topics", "enable_dspy_relations", mode="before")
     @classmethod
     def _empty_means_unset(cls, value: Any) -> Any:
@@ -376,17 +423,36 @@ class GraphKnowsSettings(BaseSettings):
         """
         return None if isinstance(value, str) and not value.strip() else value
 
+    @field_validator("enable_dspy_relations", mode="after")
+    @classmethod
+    def _retired_relations_knob(cls, value: bool | None) -> None:
+        """Warn once per construction, then drop the retired knob's value.
+
+        Returning ``None`` is what makes "ignored" structural: the field can
+        never hold a value, so no consumer can start honouring it again.
+        """
+        if value is not None:
+            warnings.warn(
+                "GRAPHKNOWS_DSPY_RELATIONS / enable_dspy_relations is retired and ignored; "
+                "the decoder follows Memory(mode=...) alone.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return None
+
     @property
     def topic_mode(self) -> TopicMode:
         """Resolved topic mode — the explicit setting, else the mode's preset."""
         return self.topics if self.topics is not None else _PRESETS[self.mode].topics
 
     @property
-    def dspy_relations(self) -> bool:
-        """Whether DSPy relation extraction runs — explicit setting, else preset."""
-        if self.enable_dspy_relations is not None:
-            return self.enable_dspy_relations
-        return _PRESETS[self.mode].dspy_relations
+    def decoder(self) -> Decoder:
+        """The resolved decoder — read-only, and a function of the mode alone.
+
+        There is no per-capability override: under a replacement decoder an
+        "LLM relations" knob names nothing, so the mode is the whole choice.
+        """
+        return _PRESETS[self.mode].decoder
 
     @property
     def ontology_source(self) -> str:
@@ -427,7 +493,7 @@ class GraphKnowsSettings(BaseSettings):
     @property
     def uses_llm(self) -> bool:
         """Whether any resolved capability makes network LLM calls."""
-        return self.dspy_relations or self.topic_mode is TopicMode.llm
+        return self.decoder is Decoder.llm or self.topic_mode is TopicMode.llm
 
     def check_production_secrets(self) -> None:
         """Raise if running in production with unsafe defaults.
@@ -445,11 +511,10 @@ class GraphKnowsSettings(BaseSettings):
             raise ConfigurationError(
                 "GRAPHKNOWS_ARCADEDB_PASSWORD is still the development default."
             )
-        # Keyed off the resolved capabilities, not the mode: llm_assisted with
-        # every LLM capability disabled needs no key.
+        # Keyed off the resolved capabilities, not the mode label.
         if self.uses_llm and not self.llm_api_key:
             raise ConfigurationError(
-                "LLM-backed capabilities (DSPy relations, LLM topics) "
+                "LLM-backed capabilities (the LLM decoder, LLM topics) "
                 "in production require GRAPHKNOWS_LLM_API_KEY."
             )
 
