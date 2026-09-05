@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **`llm_assisted` is now a replacement decoder, not a sidecar.** In that mode the
+  LLM is the sole producer of a chunk's entities, relations and frame roles; no
+  local extraction model is loaded. DSPy moved to a core dependency and the
+  `assisted` extra is **removed** — installing `graphknows[assisted]` now warns
+  about an unknown extra. It also pulled in `rdflib` and `networkx` as a side
+  effect, so anyone who relied on that for RDF should install
+  `graphknows[ontology]`, which is unchanged.
+
 ### Added
 - **Tag-triggered release workflow** (`.github/workflows/release.yml`). Pushing
   a `vX.Y.Z` tag reuses `ci.yml` by reference (Sonar skipped, since a tag has
