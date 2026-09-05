@@ -15,6 +15,7 @@ Example:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -176,6 +177,9 @@ class GraphKnowsSettings(BaseSettings):
     # (``None`` means "take the preset's value").
     mode: MemoryMode = Field(default=MemoryMode.llm_free, alias="GRAPHKNOWS_MODE")
     topics: TopicMode | None = Field(default=None, alias="GRAPHKNOWS_TOPICS")
+    # Retired (FR-004): under a replacement decoder an "LLM relations" knob names
+    # nothing. Kept as a field only so setting it is a deprecation rather than a
+    # validation error, and normalised back to ``None`` so nothing can honour it.
     enable_dspy_relations: bool | None = Field(default=None, alias="GRAPHKNOWS_DSPY_RELATIONS")
 
     # ArcadeDB
@@ -418,6 +422,23 @@ class GraphKnowsSettings(BaseSettings):
         validation, taking the whole process down at construction.
         """
         return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("enable_dspy_relations", mode="after")
+    @classmethod
+    def _retired_relations_knob(cls, value: bool | None) -> None:
+        """Warn once per construction, then drop the retired knob's value.
+
+        Returning ``None`` is what makes "ignored" structural: the field can
+        never hold a value, so no consumer can start honouring it again.
+        """
+        if value is not None:
+            warnings.warn(
+                "GRAPHKNOWS_DSPY_RELATIONS / enable_dspy_relations is retired and ignored; "
+                "the decoder follows Memory(mode=...) alone.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return None
 
     @property
     def topic_mode(self) -> TopicMode:
