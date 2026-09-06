@@ -59,11 +59,15 @@ def build_lm(
     # and the whole run wedges with the process alive and its log frozen
     # (observed: 2h49m on a single judge call). Every LM this repo builds gets a
     # ceiling; pass timeout=... to widen it for a deliberately long call.
+    # dspy caches every prompt and completion under ~/.dspy_cache by default,
+    # which puts ingested chunk text on disk outside the configured database.
+    # Off for every LM this repo builds; pass cache=True to opt one back in.
     kwargs: dict[str, Any] = {
         "model": model,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "timeout": timeout,
+        "cache": False,
     }
     if api_key:
         kwargs["api_key"] = api_key
