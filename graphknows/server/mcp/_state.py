@@ -1,34 +1,21 @@
-"""Lazy settings + per-namespace runtime accessors for MCP tool modules.
+"""Lazy settings + the process runtime accessor for MCP tool modules.
 
-The MCP server is one process that can serve many tenants concurrently. Each
-*namespace* (see :mod:`graphknows.storage.namespace`) is a hard isolation boundary
-backed by its own physical ArcadeDB database pair, so we keep one ``Memory`` per
-namespace and route each tool call to it. Namespaces resolve as:
-explicit tool argument → ``GRAPHKNOWS_NAMESPACE`` (settings default) → ``""``.
-
-The cache is bounded: past ``_MAX_OPEN_NAMESPACES`` live runtimes the
-least-recently-used one is closed, so unbounded tenant cardinality cannot leak
-httpx connection pools.
+One MCP server process serves exactly one namespace, bound at startup from
+``settings.namespace`` (``GRAPHKNOWS_NAMESPACE``). Serving several tenants means
+running one process per tenant: no caller can name a namespace, so no caller can
+reach another tenant's database.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
-from collections import OrderedDict
 from typing import Any
 
 from graphknows.settings import GraphKnowsSettings
-from graphknows.storage.namespace import resolve
 
 _settings: GraphKnowsSettings | None = None
-# LRU cache: namespace → Memory. Ordered so the front is least-recently-used.
-_runtimes: OrderedDict[str, Any] = OrderedDict()
+_runtime: Any | None = None
 _lock = asyncio.Lock()
-
-# Cap on concurrently-open namespace runtimes. Configurable so a deployment
-# serving many tenants can raise it to match its ArcadeDB server sizing.
-_MAX_OPEN_NAMESPACES = int(os.environ.get("GRAPHKNOWS_MAX_OPEN_NAMESPACES", "64"))
 
 
 def get_settings() -> GraphKnowsSettings:
@@ -39,59 +26,35 @@ def get_settings() -> GraphKnowsSettings:
     return _settings
 
 
-def _resolve(namespace: str) -> str:
-    """Effective namespace: explicit arg wins, else the settings default."""
-    return resolve(namespace, get_settings())
+async def get_runtime() -> Any:
+    """Return the process ``Memory``, creating and caching it lazily.
 
-
-async def get_runtime(namespace: str = "") -> Any:
-    """Return the ``Memory`` for *namespace*, creating and caching it lazily.
-
-    Concurrent first-use callers for the same namespace build it exactly once
-    (guarded). Evicts (closes) the least-recently-used runtime past the cap.
+    Concurrent first-use callers build it exactly once (guarded).
     """
-    ns = _resolve(namespace)
-    runtime = _runtimes.get(ns)
-    if runtime is not None:
-        _runtimes.move_to_end(ns)  # mark most-recently-used
-        return runtime
+    global _runtime
+    if _runtime is not None:
+        return _runtime
     async with _lock:
-        runtime = _runtimes.get(ns)
-        if runtime is not None:
-            _runtimes.move_to_end(ns)
-            return runtime
-        from graphknows.memory import Memory
+        if _runtime is None:
+            from graphknows.memory import Memory
 
-        runtime = Memory(get_settings(), namespace=ns)
-        _runtimes[ns] = runtime
-        _runtimes.move_to_end(ns)
-        await _evict_if_needed()
-        return runtime
+            _runtime = Memory(get_settings(), namespace=get_settings().namespace)
+        return _runtime
 
 
-async def _evict_if_needed() -> None:
-    """Close least-recently-used runtimes until under the open cap. Caller holds _lock."""
-    import contextlib
-
-    while len(_runtimes) > _MAX_OPEN_NAMESPACES:
-        _evicted_ns, evicted = _runtimes.popitem(last=False)  # least-recently-used
-        with contextlib.suppress(Exception):
-            await evicted.close()
-
-
-async def get_or_init_retriever(namespace: str = "") -> Any:
-    """Return the retriever for *namespace* via its shared runtime."""
-    return await (await get_runtime(namespace))._get_retriever()
+async def get_or_init_retriever() -> Any:
+    """Return the retriever via the process runtime."""
+    return await (await get_runtime())._get_retriever()
 
 
 async def close() -> None:
-    """Close all cached namespace runtimes (e.g. in tests / shutdown)."""
+    """Close the cached runtime (e.g. in tests / shutdown)."""
     import contextlib
 
-    global _settings
+    global _settings, _runtime
     async with _lock:
-        for runtime in _runtimes.values():
+        if _runtime is not None:
             with contextlib.suppress(Exception):
-                await runtime.close()
-        _runtimes.clear()
+                await _runtime.close()
+        _runtime = None
         _settings = None

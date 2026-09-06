@@ -14,7 +14,6 @@ async def memory_query(
     session_id: str = "",
     top_k: int = 10,
     scope: str = "both",
-    namespace: str = "",
 ) -> dict[str, Any]:
     """Retrieve the most relevant memories for a query.
 
@@ -32,8 +31,6 @@ async def memory_query(
             memory it wants and pays the context for it.
         scope: Which memory tier to search — ``"stm"`` (this session's buffered,
             unflushed turns), ``"ltm"`` (the graph), or ``"both"`` (default).
-        namespace: Tenant isolation boundary (default: the server's
-            ``GRAPHKNOWS_NAMESPACE``).
 
     Returns:
         Dict with a ``hits`` list — each hit the wire form of
@@ -42,7 +39,7 @@ async def memory_query(
         ``entities``, ``metadata``) — plus ``total``, ``query``, ``scope`` and
         the structured ``facts`` sheet.
     """
-    runtime = await get_runtime(namespace)
+    runtime = await get_runtime()
     result = await runtime.recall_memory(query, session_id=session_id, top_k=top_k, scope=scope)
     hits = result.get("hits", [])
     return {

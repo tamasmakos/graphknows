@@ -10,7 +10,6 @@ from graphknows.server.mcp._state import get_runtime
 
 @app.tool()
 async def memory_topics(
-    namespace: str = "",
     mode: str = "",
     min_size: int = 2,
     persist: bool = True,
@@ -27,7 +26,6 @@ async def memory_topics(
     is therefore the only setting that changes the shape of the output.
 
     Args:
-        namespace: Tenant isolation boundary (default: server's namespace).
         mode: ``extractive`` (deterministic, no LLM), ``llm``, or ``none``.
             Empty uses ``GRAPHKNOWS_TOPICS``.
         min_size: Clusters smaller than this are dropped as stragglers.
@@ -44,7 +42,7 @@ async def memory_topics(
     from graphknows.settings import TopicMode
     from graphknows.topics import TopicConfig
 
-    runtime = await get_runtime(namespace)
+    runtime = await get_runtime()
     resolved = TopicMode(mode) if mode else runtime.settings.topic_mode
     config = TopicConfig(min_size=max(1, min_size), mode=resolved)
     return await runtime.build_topics(  # type: ignore[no-any-return]

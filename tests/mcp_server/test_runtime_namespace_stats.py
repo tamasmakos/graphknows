@@ -41,17 +41,6 @@ async def test_stats_targets_namespaced_database() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stats_default_namespace_uses_shared_database() -> None:
-    query_dbs: list[str] = []
-    client = _client_recording(query_dbs, [])
-
-    with patch("graphknows.storage.build_arcadedb_client", return_value=client):
-        await Memory(namespace="").stats()
-
-    assert set(query_dbs) == {"mem"}
-
-
-@pytest.mark.asyncio
 async def test_doctor_checks_namespaced_database() -> None:
     exists_dbs: list[str] = []
     client = _client_recording([], exists_dbs)

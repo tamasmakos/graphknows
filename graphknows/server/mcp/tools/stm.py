@@ -19,14 +19,9 @@ async def memory_ingest(
     infer: bool = True,
     metadata: dict[str, Any] | None = None,
     text: str = "",
-    namespace: str = "",
 ) -> dict[str, Any]:
-    """Ingest text or a conversation thread into short-term memory.
-
-    ``namespace`` selects the tenant's isolated database (default: the
-    server's ``GRAPHKNOWS_NAMESPACE``).
-    """
-    runtime = await get_runtime(namespace)
+    """Ingest text or a conversation thread into short-term memory."""
+    runtime = await get_runtime()
     return await runtime.ingest_memory(
         messages=messages,
         session_id=session_id,
@@ -41,7 +36,7 @@ async def memory_ingest(
 
 
 @app.tool()
-async def memory_flush(session_id: str, namespace: str = "") -> dict[str, Any]:
+async def memory_flush(session_id: str) -> dict[str, Any]:
     """Flush a session from short-term memory into long-term memory."""
-    runtime = await get_runtime(namespace)
+    runtime = await get_runtime()
     return await runtime.flush_memory(session_id)
