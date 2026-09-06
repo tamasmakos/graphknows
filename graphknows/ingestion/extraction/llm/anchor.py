@@ -6,7 +6,10 @@ what decides which counter a doubly-bad item lands in:
 1. **anchor** — every entity surface and role filler is located by *exact*
    substring against the chunk, first unclaimed occurrence winning, so the same
    response always yields the same offsets (research.md R9). Relation endpoints
-   are matched downstream by name, not by offset, so they are not anchored here.
+   are matched downstream by name, not by offset, so they are not anchored here;
+   a relation's quoted ``evidence`` is checked for containment instead, and nulled
+   when it is absent, because that string is the one the answer generator's fact
+   sheet turns back into prompt text (FR-011).
 2. **vocabulary** — labels, predicates, frames and role names are matched
    casefolded-exact against the request's closed sets. A near miss is a drop,
    never a mapping: an approximate match would manufacture the grounding the
@@ -52,6 +55,7 @@ logger = logging.getLogger(__name__)
 UNANCHORABLE_SURFACE = "unanchorable_surface"
 OUT_OF_VOCABULARY = "out_of_vocabulary"
 LOW_CONFIDENCE_RELATION = "low_confidence_relation"
+UNANCHORABLE_EVIDENCE = "unanchorable_evidence"
 MALFORMED_ITEM = "malformed_item"
 
 # The LLM returns no per-entity confidence, and ENTITY.score is a real column the
@@ -90,15 +94,20 @@ class _Anchor:
         self._claimed.append(span)
 
 
+def _normalized(value: str) -> str:
+    """Whitespace-collapsed and casefolded: the module's one comparison form."""
+    return " ".join(value.split()).casefold()
+
+
 def _offered(value: str, vocabulary: Iterable[str]) -> str:
     """The offered term this value names casefolded-exactly, or ``""``.
 
     Returns the *offered* spelling rather than the returned one, so the graph
     stores the closed vocabulary's own label whatever case the model replied in.
     """
-    folded = " ".join(value.split()).casefold()
+    folded = _normalized(value)
     return next(
-        (term for term in vocabulary if " ".join(term.split()).casefold() == folded),
+        (term for term in vocabulary if _normalized(term) == folded),
         "",
     )
 
@@ -212,10 +221,24 @@ class ResponseGates:
             seen.add(key)
             # The confidence occupies the place the DeBERTa verifier's score
             # occupies today in the write path (FR-014, research.md R11).
-            built["evidence"] = relation.evidence
+            built["evidence"] = self._evidence(relation.evidence)
             built["verifier_score"] = relation.confidence
             out.append(built)
         return out
+
+    def _evidence(self, evidence: str) -> str:
+        """The quoted span when it occurs in the chunk, else ``""`` and a counted drop.
+
+        The relation itself survives: its head, tail and predicate each passed
+        their own gate, so dropping the triple would discard three grounded facts
+        to punish one ungrounded decoration (research.md R13).
+        """
+        if not evidence.strip():
+            return ""
+        if _normalized(evidence) in _normalized(self._request.text):
+            return evidence
+        self._abstentions[UNANCHORABLE_EVIDENCE] += 1
+        return ""
 
     def _frames(self, decoded: Iterable[DecodedFrameInstance]) -> list[dict[str, Any]]:
         """Role fillers for the frames the LOCAL pass offered — never a new frame."""
