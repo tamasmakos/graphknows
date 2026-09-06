@@ -40,3 +40,36 @@ def test_worth_gate_docstring_says_opt_in() -> None:
     assert "infer: bool = True" in memory_source, (
         "Memory.ingest_memory must still hardcode infer=True"
     )
+
+
+def test_docs_name_no_absent_symbols() -> None:
+    """Docs must not describe code that does not exist (FR-026, SC-017).
+
+    Greps `graphknows/` for each symbol FR-026 named as removed — the
+    `community_boost` / `shape_score` ranking stage and `ArcadeDBSTMStore` /
+    `ArcadeDBLTMStore` — so the removal claim is checked against the code, not
+    assumed. Then greps `docs/architecture.md` and `docs/topics.md` for the
+    same symbols, plus "the web server" and the `graph_embedding` topic
+    source, both prose claims rather than single tokens.
+    """
+    absent_symbols = {"community_boost", "shape_score", "ArcadeDBSTMStore", "ArcadeDBLTMStore"}
+
+    code_text = "\n".join(
+        p.read_text(encoding="utf-8") for p in (REPO_ROOT / "graphknows").rglob("*.py")
+    )
+    for symbol in absent_symbols:
+        assert symbol not in code_text, (
+            f"{symbol} exists in graphknows/ — the FR-026 doc claim is stale"
+        )
+
+    for doc_name in ("architecture.md", "topics.md"):
+        doc_path = REPO_ROOT / "docs" / doc_name
+        text = doc_path.read_text(encoding="utf-8")
+        for symbol in absent_symbols:
+            assert symbol not in text, f"{doc_name} still names {symbol}, absent from graphknows/"
+        assert "web server" not in text.lower(), f"{doc_name} still names the web server"
+
+    topics_text = (REPO_ROOT / "docs" / "topics.md").read_text(encoding="utf-8")
+    assert "graph_embedding" not in topics_text, (
+        "topics.md still names the removed graph_embedding topic source"
+    )
