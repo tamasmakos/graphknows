@@ -91,6 +91,18 @@ _BUNDLED_OVERLAY = str(
 )
 
 
+class Env(StrEnum):
+    """Which deployment the process believes it is running in.
+
+    Lowercase and closed: ``prod``, ``Production`` and ``PROD`` are rejected at
+    construction rather than silently skipping
+    :meth:`GraphKnowsSettings.check_production_secrets`.
+    """
+
+    development = "development"
+    production = "production"
+
+
 class MemoryMode(StrEnum):
     """Named preset over the orthogonal capability knobs.
 
@@ -169,7 +181,7 @@ class GraphKnowsSettings(BaseSettings):
         populate_by_name=True,
     )
 
-    graphknows_env: str = Field(default="development", alias="GRAPHKNOWS_ENV")
+    graphknows_env: Env = Field(default=Env.development, alias="GRAPHKNOWS_ENV")
 
     # Named preset. The decoder follows the mode alone; the topic layer can be
     # overridden independently. Read the resolved values through the
@@ -510,7 +522,7 @@ class GraphKnowsSettings(BaseSettings):
             ConfigurationError: When production env is detected with the default
                 password, or with an LLM-using capability enabled but no API key.
         """
-        if self.graphknows_env != "production":
+        if self.graphknows_env is not Env.production:
             return
         if self.arcadedb_password == "changeme":
             raise ConfigurationError(
