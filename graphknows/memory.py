@@ -556,6 +556,7 @@ class Memory:
         config: Any = None,
         persist: bool = True,
         export_path: str = "",
+        include_export: bool = False,
         **overrides: Any,
     ) -> dict[str, Any]:
         """Rebuild the topic layer over the existing graph. Returns the metrics.
@@ -570,11 +571,16 @@ class Memory:
                 runtime defaults when omitted.
             persist: Write the resulting TOPIC layer (replacing the previous one).
             export_path: Optional path for a read-only JSON artifact.
+            include_export: Return the artifact payload in-band under
+                ``export`` — the same dict ``export_path`` would have written —
+                for callers that cannot be handed a file. Off by default: the
+                CLI prints every key it gets back.
             **overrides: Field overrides applied to ``config`` (e.g.
                 ``min_size=3``).
 
         Returns:
-            The build's metrics, plus ``persisted`` and ``export_path``.
+            The build's metrics, plus ``persisted``, and ``export`` or
+            ``export_path`` when either was asked for.
         """
         from dataclasses import replace
 
@@ -595,6 +601,8 @@ class Memory:
             "persisted": persisted,
             "config_fingerprint": cfg.fingerprint(),
         }
+        if include_export:
+            out["export"] = topic_set.to_dict()
         if export_path:
             out["export_path"] = str(export_json(topic_set, export_path))
         return out

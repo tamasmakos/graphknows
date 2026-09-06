@@ -13,7 +13,6 @@ async def memory_topics(
     mode: str = "",
     min_size: int = 2,
     persist: bool = True,
-    export_path: str = "",
 ) -> dict[str, Any]:
     """Rebuild the topic layer over the already-ingested graph.
 
@@ -30,14 +29,16 @@ async def memory_topics(
             Empty uses ``GRAPHKNOWS_TOPICS``.
         min_size: Clusters smaller than this are dropped as stragglers.
         persist: Write the TOPIC layer, replacing the previous build.
-        export_path: Optional path for a read-only JSON artifact.
 
     Returns:
         Build metrics — ``topics``, ``newman_modularity``, ``mean_coherence``,
         ``chunk_coverage``, ``entity_coverage``, ``largest_topic`` — plus
-        ``persisted``. Tune against ``newman_modularity`` and
-        ``mean_coherence``; the reported ``arcadedb_modularity_untrustworthy``
-        rewards coarser partitions and must not be optimised.
+        ``persisted`` and ``export``, the full topic payload in-band. The tool
+        takes no export path and writes no file: a caller over the transport
+        does not choose a location in the server's filesystem. Tune against
+        ``newman_modularity`` and ``mean_coherence``; the reported
+        ``arcadedb_modularity_untrustworthy`` rewards coarser partitions and
+        must not be optimised.
     """
     from graphknows.settings import TopicMode
     from graphknows.topics import TopicConfig
@@ -46,5 +47,5 @@ async def memory_topics(
     resolved = TopicMode(mode) if mode else runtime.settings.topic_mode
     config = TopicConfig(min_size=max(1, min_size), mode=resolved)
     return await runtime.build_topics(  # type: ignore[no-any-return]
-        config=config, persist=persist, export_path=export_path
+        config=config, persist=persist, include_export=True
     )
