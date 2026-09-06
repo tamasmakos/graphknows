@@ -18,6 +18,8 @@ from typing import Any
 
 import httpx
 
+from graphknows.exceptions import StoreError
+
 # ArcadeDB pins an open HTTP transaction to this header; every statement that
 # carries it joins that transaction. A ContextVar rather than an attribute
 # because ingestion writes several chunks concurrently on one client: each
@@ -33,6 +35,10 @@ def _raise_for_status(r: httpx.Response) -> None:
     ArcadeDB returns the real error (``"detail"`` / ``"exception"``) in the
     body; the default httpx message only carries the status code, which hides
     idempotent signals like "already exists" from callers that match on them.
+
+    Raises :class:`StoreError`, not the raw ``httpx`` exception — nothing above
+    this client should ever have to catch ``httpx`` directly — chaining the
+    original as ``__cause__`` so the status code and response stay reachable.
     """
     if r.is_success:
         return
@@ -40,11 +46,12 @@ def _raise_for_status(r: httpx.Response) -> None:
         body = r.text
     except Exception:  # pragma: no cover - body already consumed/streamed
         body = ""
-    raise httpx.HTTPStatusError(
+    cause = httpx.HTTPStatusError(
         f"{r.status_code} {r.reason_phrase} for {r.request.url}: {body}",
         request=r.request,
         response=r,
     )
+    raise StoreError(str(cause)) from cause
 
 
 class ArcadeDBClient:
@@ -96,13 +103,28 @@ class ArcadeDBClient:
             raise RuntimeError("ArcadeDBClient not connected — call connect() first")
         return self._client
 
+    async def _send(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """Issue one request, wrapping a transport failure as :class:`StoreError`.
+
+        ``httpx.TransportError`` (connection refused, DNS failure, timeout) means
+        the request never reached ArcadeDB at all — the counterpart of
+        ``_raise_for_status`` for a response that did. Every request the client
+        makes routes through here, so no caller ever sees a raw ``httpx``
+        exception.
+        """
+        try:
+            return await self._c().request(method, url, **kwargs)
+        except httpx.TransportError as exc:
+            raise StoreError(f"ArcadeDB request to {url} failed: {exc}") from exc
+
     # ------------------------------------------------------------------
     # Database lifecycle
     # ------------------------------------------------------------------
 
     async def _server_command(self, command: str) -> dict:
         """Execute a server-level SQL command via /api/v1/server."""
-        r = await self._c().post(
+        r = await self._send(
+            "POST",
             f"{self._base}/api/v1/server",
             json={"command": command},
         )
@@ -121,7 +143,7 @@ class ArcadeDBClient:
 
     async def database_exists(self, name: str) -> bool:
         """Return True if the database exists."""
-        r = await self._c().get(f"{self._base}/api/v1/exists/{name}")
+        r = await self._send("GET", f"{self._base}/api/v1/exists/{name}")
         if r.status_code == 200:
             return bool(r.json().get("result", False))
         return False
@@ -148,7 +170,8 @@ class ArcadeDBClient:
         body: dict[str, Any] = {"language": language, "command": command}
         if params:
             body["params"] = params
-        r = await self._c().post(
+        r = await self._send(
+            "POST",
             f"{self._base}/api/v1/command/{db}",
             json=body,
             headers=self._session_headers(),
@@ -174,7 +197,8 @@ class ArcadeDBClient:
         body: dict[str, Any] = {"language": language, "command": command}
         if params:
             body["params"] = params
-        r = await self._c().post(
+        r = await self._send(
+            "POST",
             f"{self._base}/api/v1/query/{db}",
             json=body,
             headers=self._session_headers(),
@@ -202,7 +226,7 @@ class ArcadeDBClient:
         Args:
             db: Target database name.
         """
-        r = await self._c().post(f"{self._base}/api/v1/begin/{db}")
+        r = await self._send("POST", f"{self._base}/api/v1/begin/{db}")
         _raise_for_status(r)
         session = r.headers[SESSION_HEADER]
         token = _session.set(session)
@@ -218,7 +242,8 @@ class ArcadeDBClient:
 
     async def _end_transaction(self, db: str, verb: str, session: str) -> None:
         """POST ``/api/v1/commit|rollback/{db}`` for an open session."""
-        r = await self._c().post(
+        r = await self._send(
+            "POST",
             f"{self._base}/api/v1/{verb}/{db}",
             headers={SESSION_HEADER: session},
         )

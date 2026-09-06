@@ -32,7 +32,10 @@ def _with_mode(settings: GraphKnowsSettings, mode: MemoryMode | str | None) -> G
     """
     if mode is None:
         return settings
-    resolved = settings.model_copy(update={"mode": MemoryMode(mode)})
+    try:
+        resolved = settings.model_copy(update={"mode": MemoryMode(mode)})
+    except ValueError as exc:
+        raise ConfigurationError(str(exc)) from exc
     resolved.check_production_secrets()
     return resolved
 

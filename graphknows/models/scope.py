@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, model_validator
+from typing import Any
+
+from pydantic import BaseModel, ValidationError, model_validator
+
+from graphknows.exceptions import ConfigurationError
 
 
 class MemoryScope(BaseModel, frozen=True):
@@ -20,6 +24,15 @@ class MemoryScope(BaseModel, frozen=True):
     user_id: str | None = None
     agent_id: str | None = None
     run_id: str | None = None
+
+    def __init__(self, **data: Any) -> None:
+        # pydantic wraps the "at least one" check below into a ValidationError;
+        # this is the public constructor path, so callers never have to catch
+        # pydantic directly — only GraphKnowsError.
+        try:
+            super().__init__(**data)
+        except ValidationError as exc:
+            raise ConfigurationError(str(exc)) from exc
 
     @model_validator(mode="after")
     def _at_least_one(self) -> MemoryScope:
