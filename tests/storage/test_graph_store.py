@@ -890,14 +890,17 @@ async def test_search_chunks_ann_filters_state_and_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_full_text_search_threads_state_filter_into_cypher() -> None:
+async def test_full_text_search_threads_state_filter_into_sql() -> None:
     client = _mock_client()
     store = GraphStore(client=client)
     await store.full_text_search_chunks(["camping"], session_id="s1", state="raw")
-    cypher = client.query.await_args_list[0].args[1]
-    assert "toLower(c.text) CONTAINS 'camping'" in cypher
-    assert "c.session_id = 's1'" in cypher
-    assert "c.state = 'raw'" in cypher
+    sql = client.query.await_args_list[0].args[1]
+    # CONTAINSTEXT, unqualified and un-lowercased: the operator the FULL_TEXT
+    # index answers, in SQL because openCypher has no equivalent.
+    assert client.query.await_args_list[0].kwargs["language"] == "sql"
+    assert "text CONTAINSTEXT 'camping'" in sql
+    assert "session_id = 's1'" in sql
+    assert "state = 'raw'" in sql
 
 
 @pytest.mark.asyncio

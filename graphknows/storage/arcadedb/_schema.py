@@ -83,6 +83,14 @@ _CORE_DDL: list[tuple[str, str]] = [
         f"CREATE INDEX IF NOT EXISTS ON CHUNK(embedding) LSM_VECTOR "
         f"METADATA {{dimensions:{_VEC_DIM},distanceFunction:'COSINE'}}",
     ),
+    # What serves the BM25 candidate pool (full_text_search_chunks). ArcadeDB
+    # answers CONTAINSTEXT from a FULL_TEXT index and scans the bucket for
+    # everything else — including the substring CONTAINS this replaced. BOTH
+    # properties are indexed because the candidate query ORs across them, and
+    # indexing only `text` would leave the `search_text` half a scan; dropping
+    # that half instead would be a recall change hidden inside a plan change.
+    ("sql", "CREATE INDEX IF NOT EXISTS ON CHUNK(text) FULL_TEXT"),
+    ("sql", "CREATE INDEX IF NOT EXISTS ON CHUNK(search_text) FULL_TEXT"),
     ("sql", "CREATE VERTEX TYPE ENTITY IF NOT EXISTS"),
     ("sql", "CREATE PROPERTY ENTITY.name_norm IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY ENTITY.name IF NOT EXISTS STRING"),

@@ -2630,13 +2630,17 @@ class GraphStore(ArcadeStoreBase):
         return results
 
     @staticmethod
-    def _chunk_filters(session_id: str | None, state: str | None) -> str:
-        """Optional AND-filter tail for CHUNK queries (interpolated via _sql)."""
+    def _chunk_filters(session_id: str | None, state: str | None, alias: str = "c.") -> str:
+        """Optional AND-filter tail for CHUNK queries (interpolated via _sql).
+
+        ``alias`` is the Cypher pattern variable the tail qualifies; the SQL
+        candidate query selects straight from the type and passes ``""``.
+        """
         parts = []
         if session_id:
-            parts.append(f"c.session_id = {quote(session_id)}")
+            parts.append(f"{alias}session_id = {quote(session_id)}")
         if state:
-            parts.append(f"c.state = {quote(state)}")
+            parts.append(f"{alias}state = {quote(state)}")
         return (" AND " + " AND ".join(parts)) if parts else ""
 
     async def query_entity_chunks(
@@ -2681,14 +2685,21 @@ class GraphStore(ArcadeStoreBase):
     ) -> list[dict[str, Any]]:
         """Return CHUNKs whose text contains the given terms.
 
-        A CONTAINS scan for now; a FULL_TEXT index replaces this in Phase 4.
-        ``require_all=True`` uses AND (all terms must appear); False uses OR.
+        Served by the ``FULL_TEXT`` indexes on ``CHUNK.text`` and
+        ``CHUNK.search_text``: ``CONTAINSTEXT`` is the operator ArcadeDB answers
+        from one (``EXPLAIN`` reports ``FETCH FROM INDEX CHUNK[text]``), where
+        the ``toLower(...) CONTAINS`` predicate this replaces got a bucket scan —
+        the ``toLower()`` wrapper alone defeated any index. SQL rather than
+        Cypher because ArcadeDB's openCypher dialect has no ``CONTAINSTEXT``; the
+        full-text analyser folds case on both sides, so dropping ``toLower()``
+        costs nothing. ``require_all=True`` uses AND (all terms must appear);
+        False uses OR.
 
-        Scans ``search_text`` — ``text`` prefixed with the speaker — so a query
+        Searches ``search_text`` — ``text`` prefixed with the speaker — so a query
         naming a person reaches utterances that never name them ("I'm opening a
         dance studio" is about Gina and says so nowhere). ``text`` stays in the
         predicate as a fallback: chunks written before ``search_text`` existed
-        have it unset, and a bare CONTAINS on a null would silently drop them.
+        have it unset, and matching a null would silently drop them.
         """
         if not terms:
             return []
@@ -2697,15 +2708,13 @@ class GraphStore(ArcadeStoreBase):
             return []
         op = " AND " if require_all else " OR "
         text_where = op.join(
-            f"(toLower(c.search_text) CONTAINS '{t.lower()}' "
-            f"OR toLower(c.text) CONTAINS '{t.lower()}')"
-            for t in safe
+            f"(search_text CONTAINSTEXT '{t}' OR text CONTAINSTEXT '{t}')" for t in safe
         )
-        filters = self._chunk_filters(session_id, state)
-        rows = await self.query(
-            f"MATCH (c:CHUNK) WHERE ({text_where}){filters} "
-            f"RETURN c.chunk_id AS chunk_id, c.text AS text LIMIT $k",
-            k=top_k,
+        filters = self._chunk_filters(session_id, state, alias="")
+        rows = await self._c.query(
+            self._db,
+            f"SELECT chunk_id, text FROM CHUNK WHERE ({text_where}){filters} LIMIT {int(top_k)}",  # nosec B608
+            language="sql",
         )
         return [{"chunk_id": r["chunk_id"], "text": r.get("text", "")} for r in rows]
 
