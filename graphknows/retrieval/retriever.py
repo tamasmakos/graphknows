@@ -237,7 +237,7 @@ class DETRetriever:
             session_id=session_id,
             fused_results=fused,
             search_type="DET",
-            facts=await self._fact_sheet(ctx.words_graph),
+            facts=await self._fact_sheet(ctx),
         )
 
     async def _frame_rerank(
@@ -270,7 +270,7 @@ class DETRetriever:
             frames = sorted(expand_frames(matched, hops=1)) if matched else []
             if not frames:
                 return combined
-            anchors = await self.store.resolve_query_entities(ctx.words_graph)
+            anchors = await ctx.resolve_entities(self.store)
             rows, df, total = await self.store.frame_rank_signals(
                 list(combined), frames, anchors, ctx.session_id or None, ctx.state
             )
@@ -388,7 +388,7 @@ class DETRetriever:
             )
         return rows
 
-    async def _fact_sheet(self, words_graph: list[str]) -> list[str]:
+    async def _fact_sheet(self, ctx: ChannelContext) -> list[str]:
         """Structured fact-sheet (D8) for the query's resolved entities.
 
         Surfaces their typed relations + frame-instance role fills. Soft-fails —
@@ -397,7 +397,7 @@ class DETRetriever:
         if not _fact_context_enabled():
             return []
         try:
-            resolved = await self.store.resolve_query_entities(words_graph)
+            resolved = await ctx.resolve_entities(self.store)
             if not resolved:
                 return []
             # Measured on conv-41 (--no-ingest, identical graph): turning the

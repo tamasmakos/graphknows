@@ -67,7 +67,7 @@ class FrameFactChannel(Channel):
         # frame — "what did she give him" is Giving, the chunk may be Receiving
         # or Commerce_pay under a shared parent.
         frames = sorted(parse.get("expanded") or parse.get("q_frames") or ())
-        norms = await rt.store.resolve_query_entities(ctx.words_graph)
+        norms = await ctx.resolve_entities(rt.store)
         if not frames and not norms:
             return {}
 
