@@ -1507,9 +1507,11 @@ class _STMIngestHandler:
         A store that cannot transact (the in-memory doubles the unit tests
         drive this handler with) writes exactly as it did before.
         """
-        tx = getattr(self._store, "transaction", None)
+        # Looked up on the class, not the instance: a test double whose
+        # ``__getattr__`` answers everything would hand back a coroutine here.
+        can_transact = hasattr(type(self._store), "transaction")
         try:
-            async with tx() if tx is not None else nullcontext():
+            async with self._store.transaction() if can_transact else nullcontext():
                 yield
         except Exception:
             self._abstentions["chunk_write_rolled_back"] += 1
