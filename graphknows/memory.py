@@ -641,7 +641,18 @@ class Memory:
         # time. A turn stored with infer=False is still written and embedded —
         # it stays retrievable as text — it just mints no entities.
         infer_flags = [bool(t.get("infer", True)) for t in ordered]
-        options = IngestOptions(scope=MemoryScope(run_id=session_id))
+        scope = MemoryScope(run_id=session_id)
+        # Continue this dialog file's chunk sequence instead of restarting at 0.
+        # Every flush ingests into the same file_id, and neighbor_chunks expands
+        # a hit to its siblings by (file_id, seq ± radius) — a second flush
+        # numbering from 0 again hands retrieval the first flush's chunks as
+        # this one's neighbours. Forward-only: seq values already colliding on
+        # disk stay as they are.
+        last_seq = await store.max_chunk_seq(scope.to_dialog_id())
+        options = IngestOptions(
+            scope=scope,
+            turn_index_offset=0 if last_seq is None else last_seq + 1,
+        )
 
         service = build_stm_service(self.settings, self.namespace)
         try:

@@ -563,6 +563,22 @@ class GraphStore(ArcadeStoreBase):
                 if c.get("embedding"):
                     await self._set_embedding("CHUNK", "chunk_id", c["chunk_id"], c["embedding"])
 
+    async def max_chunk_seq(self, file_id: str) -> int | None:
+        """Highest ``CHUNK.seq`` written for this file; ``None`` when it has none.
+
+        ``seq`` is a per-file position, not a per-batch counter: ``neighbor_chunks``
+        expands a hit to its siblings by walking ``(file_id, seq ± radius)``. A
+        second ingest into the same file therefore has to continue the sequence —
+        restarting at 0 makes the new chunks read as neighbours of the old ones.
+        The file is reached through PART_OF; CHUNK carries no ``file_id`` property.
+        """
+        rows = await self.query(
+            "MATCH (c:CHUNK)-[:PART_OF]->(f:FILE {file_id: $fid}) RETURN max(c.seq) AS m",
+            fid=file_id,
+        )
+        m = rows[0].get("m") if rows else None
+        return None if m is None else int(m)
+
     # ------------------------------------------------------------------
     # Write API — TURN (short-term conversation buffer)
     # ------------------------------------------------------------------
