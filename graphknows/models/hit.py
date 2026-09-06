@@ -30,11 +30,6 @@ from datetime import datetime
 from functools import cached_property
 from typing import Any
 
-# dateparser ships no py.typed marker and its stubs are a separate package that
-# is not a declared dependency — same ignore, same reason, as every other
-# dateparser import in this package (see graphknows/temporal.py).
-from dateparser import parse as _parse_date  # type: ignore[import-untyped]
-
 # Default ceiling on the rendered block, in characters (~4 per token, so ~18k
 # tokens). A budget belongs here only as a DEFAULT — it is a per-call argument,
 # so an application sizes it to its own model. The value is a safe fraction of a
@@ -60,6 +55,8 @@ def _naive(when: datetime | None) -> datetime | None:
 
 def date_in(text: str) -> datetime | None:
     """The first calendar date written into *text* (scans a bounded prefix)."""
+    from dateparser import parse as _parse_date  # type: ignore[import-untyped]
+
     head = text[:400]
     for pattern in _DATE_PATTERNS:
         if (match := pattern.search(head)) and (parsed := _parse_date(match.group(0))):
@@ -91,6 +88,8 @@ class Hit:
     @cached_property
     def stamped(self) -> datetime | None:
         """This hit's own timestamp, parsed. ``None`` when it carries none."""
+        from dateparser import parse as _parse_date  # type: ignore[import-untyped]
+
         return _naive(_parse_date(self.ts)) if self.ts.strip() else None
 
     @cached_property
