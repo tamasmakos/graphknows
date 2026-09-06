@@ -8,10 +8,18 @@ Importing this package imports every tool submodule, which runs the
 from __future__ import annotations
 
 from graphknows.server.mcp.tools.admin import (
+    ENABLED_ADMIN_TOOLS,
     memory_doctor,
-    memory_drop_namespace,
-    memory_purge,
     memory_stats,
+)
+
+# Explicit re-exports: the two destructive tools are bound here whether or not
+# the admin gate is open, so that ``__all__`` can name them when it is.
+from graphknows.server.mcp.tools.admin import (
+    memory_drop_namespace as memory_drop_namespace,
+)
+from graphknows.server.mcp.tools.admin import (
+    memory_purge as memory_purge,
 )
 from graphknows.server.mcp.tools.corpus import corpus_ingest
 from graphknows.server.mcp.tools.ltm import ltm_entities, ltm_entity, ltm_topics
@@ -25,11 +33,13 @@ __all__ = [
     "ltm_entity",
     "ltm_topics",
     "memory_doctor",
-    "memory_drop_namespace",
     "memory_flush",
     "memory_ingest",
-    "memory_purge",
     "memory_query",
     "memory_stats",
     "memory_topics",
 ]
+
+# The destructive tools join the inventory only when they were registered, so
+# ``__all__`` keeps describing exactly what a client can list and call.
+__all__ += list(ENABLED_ADMIN_TOOLS)

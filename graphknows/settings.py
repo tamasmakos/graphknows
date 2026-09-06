@@ -194,6 +194,11 @@ class GraphKnowsSettings(BaseSettings):
     # default when an MCP call omits an explicit namespace.
     namespace: str = Field(default="", alias="GRAPHKNOWS_NAMESPACE")
 
+    # The destructive MCP surface (``memory_purge``, ``memory_drop_namespace``).
+    # Read at import time by ``server/mcp/tools/admin.py``: the gate is on
+    # REGISTRATION, so with this off the tools are never advertised at all.
+    enable_admin_tools: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_ADMIN_TOOLS")
+
     # LLM (provider-neutral; litellm model strings)
     llm_model: str = Field(
         default="openrouter/deepseek/deepseek-v4-flash", alias="GRAPHKNOWS_LLM_MODEL"
