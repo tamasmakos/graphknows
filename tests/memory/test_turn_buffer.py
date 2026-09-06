@@ -18,34 +18,11 @@ from collections.abc import AsyncIterator
 import pytest
 import pytest_asyncio
 
-
-def _arcadedb_reachable() -> bool:
-    """Return True when ArcadeDB is up at the configured URL."""
-    import httpx
-
-    from graphknows.settings import GraphKnowsSettings
-
-    try:
-        s = GraphKnowsSettings()
-        r = httpx.get(
-            f"{s.arcadedb_url}/api/v1/exists/mem",
-            auth=(s.arcadedb_user, s.arcadedb_password),
-            timeout=3,
-        )
-    except Exception:
-        return False
-    else:
-        return r.status_code == 200
-
-
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
 @pytest_asyncio.fixture
-async def mem() -> AsyncIterator[object]:
-    if not _arcadedb_reachable():
-        pytest.skip("ArcadeDB not reachable")
-
+async def mem(arcadedb_required: None) -> AsyncIterator[object]:
     from graphknows.memory import Memory
     from graphknows.settings import GraphKnowsSettings
 

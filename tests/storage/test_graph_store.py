@@ -1847,32 +1847,10 @@ async def test_compute_communities_soft_fails_on_empty_result() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _arcadedb_reachable() -> bool:
-    """Return True when ArcadeDB is up at the configured URL."""
-    import httpx
-
-    from graphknows.settings import GraphKnowsSettings
-
-    try:
-        s = GraphKnowsSettings()
-        r = httpx.get(
-            f"{s.arcadedb_url}/api/v1/exists/ltm",
-            auth=(s.arcadedb_user, s.arcadedb_password),
-            timeout=3,
-        )
-    except Exception:
-        return False
-    else:
-        return r.status_code == 200
-
-
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_graph_store_round_trip_on_scratch_database() -> None:
+async def test_graph_store_round_trip_on_scratch_database(arcadedb_required: None) -> None:
     """Full write→read round trip on a scratch mem_test_<uuid> database."""
-    if not _arcadedb_reachable():
-        pytest.skip("ArcadeDB not reachable")
-
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_arcadedb_client
 
@@ -2397,16 +2375,15 @@ async def test_frame_instances_dropped_by_an_absent_chunk_are_counted(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_entity_merge_keeps_frame_adjacency_on_scratch_database() -> None:
+async def test_entity_merge_keeps_frame_adjacency_on_scratch_database(
+    arcadedb_required: None,
+) -> None:
     """The whole of #150 against a real ArcadeDB: merge, then re-ingest.
 
     Two frame edges differing only in polarity must survive the merge as two
     edges, and the re-ingest that follows must MERGE onto them instead of
     duplicating the adjacency.
     """
-    if not _arcadedb_reachable():
-        pytest.skip("ArcadeDB not reachable")
-
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_arcadedb_client
 

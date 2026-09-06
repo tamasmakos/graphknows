@@ -25,25 +25,6 @@ import pytest
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 
 
-def _arcadedb_reachable() -> bool:
-    """Return True when ArcadeDB is up at the configured URL."""
-    import httpx
-
-    from graphknows.settings import GraphKnowsSettings
-
-    try:
-        s = GraphKnowsSettings()
-        r = httpx.get(
-            f"{s.arcadedb_url}/api/v1/exists/ltm",
-            auth=(s.arcadedb_user, s.arcadedb_password),
-            timeout=3,
-        )
-    except Exception:
-        return False
-    else:
-        return r.status_code == 200
-
-
 class _StubExtractor:
     """Yields a fixed ExtractionResult per call, standing in for relex+verifier.
 
@@ -73,11 +54,8 @@ def _rel(head: str, relation: str, tail: str, score: float, **extra: Any) -> dic
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_verifier_score_persists_to_rel_edge() -> None:
+async def test_verifier_score_persists_to_rel_edge(arcadedb_required: None) -> None:
     """A gated relation's verifier_score reaches the graph; max wins; absent is null."""
-    if not _arcadedb_reachable():
-        pytest.skip("ArcadeDB not reachable")
-
     from graphknows.ingestion.stm.ingest import _STMIngestHandler
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_arcadedb_client
@@ -144,7 +122,7 @@ async def test_verifier_score_persists_to_rel_edge() -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_verifier_score_survives_entity_merge() -> None:
+async def test_verifier_score_survives_entity_merge(arcadedb_required: None) -> None:
     """Entity-hygiene repair re-points relation edges; the score must survive it.
 
     ``merge_entities`` replays the loser's edges onto the winner through
@@ -153,9 +131,6 @@ async def test_verifier_score_survives_entity_merge() -> None:
     dropped here is a score wiped at the moment the graph is finalised — and
     wiped to NULL, which this module defines to mean "never scored".
     """
-    if not _arcadedb_reachable():
-        pytest.skip("ArcadeDB not reachable")
-
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_arcadedb_client
     from graphknows.storage.arcadedb.graph_store import GraphStore

@@ -15,28 +15,9 @@ import uuid
 import pytest
 
 
-def _arcadedb_reachable() -> bool:
-    """Return True when ArcadeDB is up at the configured URL."""
-    import httpx
-
-    from graphknows.settings import GraphKnowsSettings
-
-    try:
-        s = GraphKnowsSettings()
-        r = httpx.get(
-            f"{s.arcadedb_url}/api/v1/exists/mem",
-            auth=(s.arcadedb_user, s.arcadedb_password),
-            timeout=3,
-        )
-    except Exception:
-        return False
-    else:
-        return r.status_code == 200
-
-
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_graph_store_ensure_schema_does_not_raise() -> None:
+async def test_graph_store_ensure_schema_does_not_raise(arcadedb_required: None) -> None:
     """ensure_schema(dims) on a live ArcadeDB must succeed without raising.
 
     This guards the regression where CREATE PROPERTY E.valid_at (and three
@@ -44,9 +25,6 @@ async def test_graph_store_ensure_schema_does_not_raise() -> None:
     found", which made _get_retriever() fail on every call and forced every
     memory_query to return empty results.
     """
-    if not _arcadedb_reachable():
-        pytest.skip("ArcadeDB not reachable")
-
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_graph_store
     from graphknows.storage.embedder import embed_dim
@@ -63,16 +41,13 @@ async def test_graph_store_ensure_schema_does_not_raise() -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_det_retriever_returns_results_after_ingest() -> None:
+async def test_det_retriever_returns_results_after_ingest(arcadedb_required: None) -> None:
     """DETRetriever.retrieve() returns at least one passage for an ingested session.
 
     Writes a single chunk with its embedding to the graph store so the semantic
     ANN branch can return it, then runs retrieve() and asserts non-empty
     fused_results. Cleans up after itself so the test is idempotent.
     """
-    if not _arcadedb_reachable():
-        pytest.skip("ArcadeDB not reachable")
-
     from graphknows.retrieval.retriever import DETRetriever
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_graph_store
@@ -121,7 +96,7 @@ async def test_det_retriever_returns_results_after_ingest() -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_entities_are_shared_across_relation_writes() -> None:
+async def test_entities_are_shared_across_relation_writes(arcadedb_required: None) -> None:
     """Two relation writes reusing an entity name must not raise on the MERGE.
 
     Regression for the DuplicatedKeyException where the old STM schema had a
@@ -136,9 +111,6 @@ async def test_entities_are_shared_across_relation_writes() -> None:
     same entity name from two independent ``write_relation`` calls never 409s
     and always MERGEs onto the same single ENTITY node.
     """
-    if not _arcadedb_reachable():
-        pytest.skip("ArcadeDB not reachable")
-
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_graph_store
     from graphknows.storage.embedder import embed_dim
