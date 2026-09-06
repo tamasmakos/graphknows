@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import uuid
+from collections import defaultdict
 from typing import Any
 
 from graphknows.exceptions import ConfigurationError
@@ -134,6 +135,14 @@ class Memory:
         self._retriever: Any = None
         self._store: Any = None
         self._connect_lock = asyncio.Lock()
+        # One lock per session: allocating the next TURN sequence and writing at
+        # it is a read-then-write, so two concurrent add() calls on one session
+        # would otherwise read the same max(seq) and overwrite each other's
+        # turn_id. Per-session, not global, so unrelated sessions still ingest
+        # in parallel.
+        # ponytail: in-process only — a second worker on the same session needs
+        # a store-side sequence.
+        self._turn_seq_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def __aenter__(self) -> Memory:
         return self
@@ -381,23 +390,27 @@ class Memory:
             await self._get_retriever()  # connects the store + ensures schema
             store = self._store
             sid = scope.to_session_id()
-            await store.ensure_session(sid)
-            seq = await store.next_turn_seq(sid)
-            for m in msgs:
-                # The message's own timestamp, when it carries one, becomes the
-                # TURN's ts — and flush() feeds it back as the temporal anchor.
-                # Defaulting to write time would date every relative expression
-                # in the turn to whenever the buffer happened to be written.
-                await store.write_turn(
-                    sid,
-                    m.role.value,
-                    m.content,
-                    seq,
-                    m.timestamp or "",
-                    speaker=m.name or "",
-                    infer=infer,
-                )
-                seq += 1
+            # Held across the writes, not just the read: next_turn_seq derives
+            # the sequence from the turns already written, so releasing before
+            # they land would hand the same number to the next caller.
+            async with self._turn_seq_locks[sid]:
+                await store.ensure_session(sid)
+                seq = await store.next_turn_seq(sid)
+                for m in msgs:
+                    # The message's own timestamp, when it carries one, becomes the
+                    # TURN's ts — and flush() feeds it back as the temporal anchor.
+                    # Defaulting to write time would date every relative expression
+                    # in the turn to whenever the buffer happened to be written.
+                    await store.write_turn(
+                        sid,
+                        m.role.value,
+                        m.content,
+                        seq,
+                        m.timestamp or "",
+                        speaker=m.name or "",
+                        infer=infer,
+                    )
+                    seq += 1
             return {
                 "file_id": "",
                 "chunks": 0,
