@@ -1,6 +1,9 @@
-"""Is a turn worth extracting from? The default for ``infer``.
+"""Is a turn worth extracting from? An opt-in gate for ``infer``.
 
-Buffering every turn with ``infer=True`` mints entities from greetings: measured
+Both primary entry points — ``server/mcp/tools/stm.py`` and
+``Memory.ingest_memory`` — hardcode ``infer=True``; only the LangGraph adapter
+opts into this gate, via ``infer=worth_extracting``. Buffering every turn with
+``infer=True`` mints entities from greetings: measured
 on LoCoMo conv-30, "Jon" never existed as a node while "Hey Jon", "Thanks, Jon!"
 and "Oh no, Jon!" did, across 15 fragments. The decision is per-turn and purely
 linguistic — nothing about it is dataset-specific — so it belongs here rather
