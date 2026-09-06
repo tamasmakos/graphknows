@@ -44,6 +44,9 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     environment:
+      # The shipped stack is production, so check_production_secrets runs on this
+      # path: a still-default GRAPHKNOWS_ARCADEDB_PASSWORD stops boot (FR-005).
+      GRAPHKNOWS_ENV: "production"
       GRAPHKNOWS_ARCADEDB_URL: "http://arcadedb:2480"
       GRAPHKNOWS_ARCADEDB_USER: "${GRAPHKNOWS_ARCADEDB_USER:-root}"
       GRAPHKNOWS_ARCADEDB_PASSWORD: "${GRAPHKNOWS_ARCADEDB_PASSWORD:-changeme}"
