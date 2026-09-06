@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import os
 import re
 import sys
 import time
@@ -54,10 +53,11 @@ from graphknows.ingestion.extraction.relations._lingfeatures import (
     resolve_deixis,
 )
 from graphknows.nlp import load_spacy_model
+from graphknows.settings import get_settings
 
 log = logging.getLogger(__name__)
 
-_BASE_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_THRESHOLD", "0.35"))
+_BASE_THRESHOLD: float = get_settings().relex_threshold
 # relex classifies a candidate entity PAIR as bearing a relation, and its card
 # recommends a markedly higher floor here than for entity spans (0.7-0.9 vs
 # 0.3-0.5) because a low relation threshold pairs up every co-occurring entity.
@@ -69,11 +69,11 @@ _BASE_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_THRESHOLD", "0.3
 # textbook sentence, a correct relation — scores 0.437. At 0.3 it survives; at
 # 0.1 sub-span noise appears; at 0.0 the output explodes. Precision is defended
 # by the endpoint guards in _relation_reject, not by an unreachable floor.
-_RELATION_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_RELATION_THRESHOLD", "0.3"))
+_RELATION_THRESHOLD: float = get_settings().relex_relation_threshold
 # Floor on relex's entity-PAIR candidate score. Without it every co-occurring
 # pair of entities is a relation candidate and gets scored against every supplied
 # predicate, which manufactures confident nonsense between unrelated spans.
-_ADJACENCY_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_ADJACENCY", "0.6"))
+_ADJACENCY_THRESHOLD: float = get_settings().relex_adjacency
 
 # relex is ZERO-SHOT: it can only assign a type it was handed, so feeding it only
 # the labels spaCy happened to observe in one chunk collapses the type space —

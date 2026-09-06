@@ -16,6 +16,7 @@ from typing import Any, ClassVar
 import pytest
 
 from graphknows.ingestion.extraction.entities import typing_model
+from graphknows.settings import get_settings
 from graphknows.symbolic.ontology.loader import OntologyTerm
 
 
@@ -130,6 +131,8 @@ class TestBuildSchema:
 
 def test_the_pass_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GRAPHKNOWS_DEFINITION_TYPING", raising=False)
+    get_settings.cache_clear()
     assert typing_model.typing_enabled() is False
     monkeypatch.setenv("GRAPHKNOWS_DEFINITION_TYPING", "1")
+    get_settings.cache_clear()
     assert typing_model.typing_enabled() is True

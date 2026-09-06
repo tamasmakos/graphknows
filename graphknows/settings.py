@@ -249,9 +249,42 @@ class GraphKnowsSettings(BaseSettings):
     # you deliberately re-size the store.
     embed_dimensions: int = Field(default=0, alias="GRAPHKNOWS_EMBED_DIMENSIONS")
 
-    # Entity extraction. The relex model itself is set with GRAPHKNOWS_RELEX_MODEL
-    # (see ingestion/extraction/entities/gliner_model.py).
+    # Entity extraction.
     spacy_model: str = Field(default="en_core_web_lg", alias="GRAPHKNOWS_SPACY_MODEL")
+    # The relex model and its three score floors. What each floor defends, and
+    # the measurements behind the numbers, are at the use sites —
+    # ingestion/extraction/entities/gliner_model.py and .../extractor.py.
+    relex_model: str = Field(
+        default="knowledgator/gliner-relex-large-v1.0", alias="GRAPHKNOWS_RELEX_MODEL"
+    )
+    relex_threshold: float = Field(default=0.35, alias="GRAPHKNOWS_RELEX_THRESHOLD")
+    relex_relation_threshold: float = Field(
+        default=0.3, alias="GRAPHKNOWS_RELEX_RELATION_THRESHOLD"
+    )
+    relex_adjacency: float = Field(default=0.6, alias="GRAPHKNOWS_RELEX_ADJACENCY")
+
+    # Definition-described entity typing — a SECOND, smaller model run per line so
+    # ontology definitions reach the extractor as label descriptions. Default off:
+    # it is another ~0.5B model resident per process and a forward pass per line.
+    # See ingestion/extraction/entities/typing_model.py.
+    definition_typing: bool = Field(default=False, alias="GRAPHKNOWS_DEFINITION_TYPING")
+    # base, not large. Measured on eight conversational lines against the same
+    # 13-label CCO schema: base is 784 ms/line to large's 2574 (3.3x), types MORE
+    # surfaces (19 vs 17), and wins the two clearest semantic calls outright —
+    # "charity race" as an Act (0.93) where large says Organization (0.46), and
+    # "fashion internship" as an Occupation Role (0.78) where large says
+    # Organization (0.42). Large is better on a couple ("dance studio" as a
+    # Facility) but not enough to buy at triple the ingest cost, and the
+    # prototype's 22/26 typing result was measured on base too. Both are baked
+    # into the image.
+    typing_model: str = Field(default="fastino/gliner2-base-v1", alias="GRAPHKNOWS_TYPING_MODEL")
+    # Device override for that model ("" = let the library choose).
+    typing_device: str = Field(default="", alias="GRAPHKNOWS_TYPING_DEVICE")
+
+    # Order the properties offered inside one (domain, range) group by chunk fit.
+    # Ordering, never filtering — the offered set is identical. Default off until
+    # its A/B arm decides. See ingestion/stm/ingest.py.
+    relation_group_ranking: bool = Field(default=False, alias="GRAPHKNOWS_RELATION_GROUP_RANKING")
 
     # Relation verifier — semantic gate that drops relex false positives before
     # they merge into the graph (co-occurring spans relex confidently pairs but
@@ -398,6 +431,33 @@ class GraphKnowsSettings(BaseSettings):
     # fillability) does not depend on this flag — it is default OFF so the
     # type veto itself can be A/B'd independently before it gates real writes.
     enable_fe_type_gate: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_FE_TYPE_GATE")
+
+    # Saturation ceilings for the two tag-driven channels (channels/frames.py,
+    # channels/ontology.py). A tag covering more than this fraction of a
+    # session's chunks is dropped from the join: like the conversation
+    # participants (see the entity-saturation drop), a generic frame such as
+    # ``Activity_ongoing`` — or the class ``Person`` in a personal-conversation
+    # corpus — matches nearly every chunk, so returning its chunks floods recall
+    # with the whole conversation and carries no discriminative signal.
+    frame_saturation_ratio: float = Field(default=0.5, alias="GRAPHKNOWS_FRAME_SATURATION_RATIO")
+    class_saturation_ratio: float = Field(default=0.5, alias="GRAPHKNOWS_CLASS_SATURATION_RATIO")
+
+    # Frame-aware re-ranking of the fused pool (ranking/frame_boost.py), where
+    # the alpha is sized to the observed probe-to-context gap.
+    frame_rerank: bool = Field(default=True, alias="GRAPHKNOWS_FRAME_RERANK")
+    frame_rerank_alpha: float = Field(default=0.5, alias="GRAPHKNOWS_FRAME_RERANK_ALPHA")
+    frame_rerank_top_k: int = Field(default=8, alias="GRAPHKNOWS_FRAME_RERANK_TOP_K")
+
+    # Pool shape and post-cut expansion (retrieval/retriever.py): retrieve wide,
+    # return narrow, and — off by default — stitch each result's seq-adjacent
+    # siblings back in for long-document corpora.
+    pool_factor: int = Field(default=4, alias="GRAPHKNOWS_POOL_FACTOR")
+    min_pool: int = Field(default=100, alias="GRAPHKNOWS_MIN_POOL")
+    neighbor_radius: int = Field(default=0, alias="GRAPHKNOWS_NEIGHBOR_RADIUS")
+
+    # The structured fact sheet handed to the generator, and its size cap.
+    fact_context: bool = Field(default=True, alias="GRAPHKNOWS_FACT_CONTEXT")
+    max_facts: int = Field(default=40, alias="GRAPHKNOWS_MAX_FACTS")
 
     # The LLM decoder's knobs. Only read on the ``llm`` decoder; inert under the
     # local stack, which has its own (relex, verifier, frames) switches above.

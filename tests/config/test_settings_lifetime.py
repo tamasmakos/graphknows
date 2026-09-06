@@ -10,6 +10,7 @@ per process a constant rather than a function of the workload.
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 
 import pytest
@@ -91,3 +92,30 @@ def test_passed_settings_instance_wins(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert handler._settings is passed
     assert handler._extract_window == 11
+
+
+def test_dotenv_only_variable_takes_effect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR-014: a knob set ONLY in ``.env`` reaches the code that reads it.
+
+    pydantic-settings parses ``.env`` into the settings object and never writes
+    ``os.environ``, so every knob still read through ``os.environ.get`` was inert
+    for anyone who configured it the documented way. ``GRAPHKNOWS_RELEX_MODEL``
+    is the documented case: it is in configuration.md and it did nothing.
+    """
+    from graphknows.ranking import frame_boost
+
+    (tmp_path / ".env").write_text(
+        "GRAPHKNOWS_RELEX_MODEL=acme/relex-tiny\nGRAPHKNOWS_FRAME_RERANK=false\n",
+        encoding="utf-8",
+    )
+    for var in ("GRAPHKNOWS_RELEX_MODEL", "GRAPHKNOWS_FRAME_RERANK"):
+        monkeypatch.delenv(var, raising=False)
+    # ``env_file=".env"`` is resolved against the working directory.
+    monkeypatch.chdir(tmp_path)
+    get_settings.cache_clear()
+
+    assert os.environ.get("GRAPHKNOWS_RELEX_MODEL") is None
+    assert get_settings().relex_model == "acme/relex-tiny"
+    # And the consumer reads the field rather than the environment behind it.
+    assert os.environ.get("GRAPHKNOWS_FRAME_RERANK") is None
+    assert frame_boost.enabled() is False

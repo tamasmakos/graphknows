@@ -193,12 +193,9 @@ def _group_ranking_enabled() -> bool:
     Read at call time so the eval A/B can flip it per subprocess, matching
     ``GRAPHKNOWS_FRAME_SRL``. Delete the knob once the arm has decided it.
     """
-    return os.environ.get("GRAPHKNOWS_RELATION_GROUP_RANKING", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    from graphknows.settings import get_settings
+
+    return get_settings().relation_group_ranking
 
 
 def _entities_from(entities: list[dict[str, Any]], offset: int) -> list[dict[str, Any]]:

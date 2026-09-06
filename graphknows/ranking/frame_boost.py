@@ -26,16 +26,11 @@ ranking rather than overriding it.
 from __future__ import annotations
 
 import math
-import os
 from collections.abc import Iterable
 from typing import Any
 
-# A chunk with a perfect frame signal ranks as if its fused score were this much
-# higher. At 0.5 a strong match climbs roughly 15-20 places at the depths that
-# matter (RRF decays slowly: rank 25 scores 0.0118, rank 40 scores 0.0100), which
-# is the size of the observed probe-to-context gap. Higher would let the frame
-# layer overrule agreement between four other channels.
-ALPHA = float(os.environ.get("GRAPHKNOWS_FRAME_RERANK_ALPHA", "0.5"))
+from graphknows.settings import get_settings
+
 # A role-bound match is worth this many plain frame matches. Binding is the rarer
 # and more precise signal, so it dominates without erasing the frame term.
 ROLE_BINDING_WEIGHT = 2.0
@@ -47,11 +42,7 @@ def enabled() -> bool:
     Read at call time so an eval A/B can flip ``GRAPHKNOWS_FRAME_RERANK`` per
     subprocess.
     """
-    return os.environ.get("GRAPHKNOWS_FRAME_RERANK", "true").strip().lower() not in (
-        "0",
-        "false",
-        "no",
-    )
+    return get_settings().frame_rerank
 
 
 def idf(df: int, total: int) -> float:
@@ -92,9 +83,16 @@ def score_chunks(
 def apply(
     combined: dict[str, tuple[float, dict[str, Any]]],
     frame_scores: dict[str, float],
-    alpha: float = ALPHA,
+    alpha: float | None = None,
 ) -> dict[str, tuple[float, dict[str, Any]]]:
     """Scale fused scores by their normalised frame signal.
+
+    ``alpha`` is how much higher a chunk with a perfect frame signal ranks; the
+    default (``frame_rerank_alpha``, 0.5) lets a strong match climb roughly 15-20
+    places at the depths that matter (RRF decays slowly: rank 25 scores 0.0118,
+    rank 40 scores 0.0100), which is the size of the observed probe-to-context
+    gap. Higher would let the frame layer overrule agreement between four other
+    channels.
 
     Normalised against the pool's own best, so the boost is relative to what this
     query found rather than to an absolute scale that varies per conversation.
@@ -106,6 +104,8 @@ def apply(
     best = max(frame_scores.values())
     if best <= 0:
         return combined
+    if alpha is None:
+        alpha = get_settings().frame_rerank_alpha
     out: dict[str, tuple[float, dict[str, Any]]] = {}
     for cid, (score, info) in combined.items():
         boost = 1.0 + alpha * (frame_scores.get(cid, 0.0) / best)

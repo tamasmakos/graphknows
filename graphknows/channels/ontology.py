@@ -32,7 +32,6 @@ Schema: ONTOLOGY_CLASS + MATCHES_CLASS live in the GraphStore core DDL.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from graphknows.channels._shared import (
@@ -42,15 +41,9 @@ from graphknows.channels._shared import (
     tag_coverage,
 )
 from graphknows.channels.base import Channel, ChannelContext, CollectResult
+from graphknows.settings import get_settings
 
 log = logging.getLogger(__name__)
-
-# A class matching more than this fraction of a session's chunks carries no
-# discriminative signal: in a personal-conversation corpus nearly every chunk is
-# "about" a Person, so returning its chunks floods recall with the whole
-# conversation. Same failure mode (and same remedy) as saturated speaker
-# entities and saturated generic frames.
-_CLASS_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_CLASS_SATURATION_RATIO", "0.5"))
 
 # Ontology classes considered per query.
 _CLASS_TOP_K: int = 5
@@ -104,6 +97,6 @@ class OntologyChannel(Channel):
             field="uri",
             coverage=cover,
             total=total,
-            ratio=_CLASS_SATURATION_RATIO,
+            ratio=get_settings().class_saturation_ratio,
             label="ontology",
         )

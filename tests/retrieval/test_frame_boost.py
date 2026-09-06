@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from graphknows.ranking import frame_boost
+from graphknows.settings import get_settings
 
 
 def test_a_frame_in_every_chunk_contributes_nothing() -> None:
@@ -72,6 +73,8 @@ def test_no_signal_leaves_the_pool_untouched() -> None:
 
 def test_disabled_by_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GRAPHKNOWS_FRAME_RERANK", "false")
+    get_settings.cache_clear()
     assert frame_boost.enabled() is False
     monkeypatch.setenv("GRAPHKNOWS_FRAME_RERANK", "true")
+    get_settings.cache_clear()
     assert frame_boost.enabled() is True
