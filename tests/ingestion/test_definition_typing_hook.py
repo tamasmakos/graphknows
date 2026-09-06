@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from graphknows.ingestion.extraction.entities import typing_model
-from graphknows.ingestion.stm.ingest import _STMIngestHandler
+from graphknows.ingestion.stm.ingest import ExtractedChunk, _STMIngestHandler
 from graphknows.symbolic.ontology.loader import OntologyTerm
 
 
@@ -56,18 +56,20 @@ class _Extraction:
 
 async def _write(handler: _STMIngestHandler, text: str, entities: list[dict[str, Any]]) -> None:
     await handler._write_extracted(
-        session_id="s1",
-        file_id="f1",
-        chunk_id="c1",
-        text=text,
-        seq=0,
-        kind="window",
-        speaker="Mel",
-        ts="",
-        embedding=[0.1],
-        extraction=_Extraction(entities),
-        temporal=[],
-        memory_class="ltm",
+        ExtractedChunk(
+            session_id="s1",
+            file_id="f1",
+            chunk_id="c1",
+            text=text,
+            seq=0,
+            kind="window",
+            speaker="Mel",
+            ts="",
+            embedding=[0.1],
+            extraction=_Extraction(entities),
+            temporal=[],
+            memory_class="ltm",
+        )
     )
 
 

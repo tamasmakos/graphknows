@@ -16,6 +16,7 @@ import time
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, nullcontext
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -32,6 +33,7 @@ from graphknows.ingestion.parsers.text import (
     strip_content_heading,
 )
 from graphknows.models.ingest import IngestResult
+from graphknows.storage.arcadedb.graph_store import RelationWrite
 from graphknows.symbolic import match
 
 if TYPE_CHECKING:
@@ -397,6 +399,32 @@ def _decoded_instances(frames: list[dict[str, Any]]) -> list[Any]:
     ]
 
 
+@dataclass(frozen=True)
+class ExtractedChunk:
+    """One :meth:`_STMIngestHandler._write_extracted` call's fields, bundled.
+
+    A single chunk's CHUNK row plus everything already computed upstream for
+    it — entities/relations, temporal facts, ontology classes, frame triggers.
+    """
+
+    session_id: str
+    file_id: str
+    chunk_id: str
+    text: str
+    seq: int
+    kind: str
+    speaker: str
+    ts: str
+    embedding: list[float]
+    extraction: ExtractionResult
+    temporal: list[dict[str, str]]
+    memory_class: str
+    search_text: str = ""
+    ontology_classes: list[tuple[str, float]] | None = None
+    srl_hits: list[Any] | None = None
+    decode_state: str = ""
+
+
 class _STMIngestHandler:
     """Ingest parsed text into the golden GraphStore (state='raw').
 
@@ -693,22 +721,24 @@ class _STMIngestHandler:
             temporal = self._resolve_temporal(extraction.entities, seg, metadata)
             chunk_id = self._make_chunk_id(session_id, parsed.source_id, seg)
             return await self._write_extracted(
-                session_id=session_id,
-                file_id=parsed.source_id,
-                chunk_id=chunk_id,
-                text=clean,
-                seq=idx,
-                kind="text",
-                speaker="",
-                ts=str(seg.metadata.get("timestamp") or metadata.get("timestamp") or ""),
-                embedding=embedding,
-                extraction=extraction,
-                temporal=temporal,
-                memory_class=seg.metadata.get("memory_class")
-                or metadata.get("memory_class")
-                or "raw_evidence",
-                ontology_classes=ont_classes[idx] if idx < len(ont_classes) else [],
-                srl_hits=batch_srl_hits[idx],
+                ExtractedChunk(
+                    session_id=session_id,
+                    file_id=parsed.source_id,
+                    chunk_id=chunk_id,
+                    text=clean,
+                    seq=idx,
+                    kind="text",
+                    speaker="",
+                    ts=str(seg.metadata.get("timestamp") or metadata.get("timestamp") or ""),
+                    embedding=embedding,
+                    extraction=extraction,
+                    temporal=temporal,
+                    memory_class=seg.metadata.get("memory_class")
+                    or metadata.get("memory_class")
+                    or "raw_evidence",
+                    ontology_classes=ont_classes[idx] if idx < len(ont_classes) else [],
+                    srl_hits=batch_srl_hits[idx],
+                )
             )
 
         async def _run_all() -> tuple[list[int], list[str]]:
@@ -808,22 +838,24 @@ class _STMIngestHandler:
         failed = self._decode_failures > before
         embedding = await self._aembed(text)
         await self._write_extracted(
-            session_id=session_id,
-            # The CHUNK already carries its PART_OF edge; an empty file_id is
-            # what stops this write from re-asserting one it was not told.
-            file_id="",
-            chunk_id=row["chunk_id"],
-            text=text,
-            seq=int(row.get("seq") or 0),
-            kind=str(stored.get("kind") or "text"),
-            speaker=speaker,
-            ts=ts,
-            embedding=embedding,
-            extraction=extraction,
-            temporal=self._resolve_temporal_entities(extraction.entities, ts or None),
-            memory_class=str(stored.get("memory_class") or "raw_evidence"),
-            ontology_classes=self._match_classes(embedding, text),
-            decode_state="failed" if failed else "ok",
+            ExtractedChunk(
+                session_id=session_id,
+                # The CHUNK already carries its PART_OF edge; an empty file_id is
+                # what stops this write from re-asserting one it was not told.
+                file_id="",
+                chunk_id=row["chunk_id"],
+                text=text,
+                seq=int(row.get("seq") or 0),
+                kind=str(stored.get("kind") or "text"),
+                speaker=speaker,
+                ts=ts,
+                embedding=embedding,
+                extraction=extraction,
+                temporal=self._resolve_temporal_entities(extraction.entities, ts or None),
+                memory_class=str(stored.get("memory_class") or "raw_evidence"),
+                ontology_classes=self._match_classes(embedding, text),
+                decode_state="failed" if failed else "ok",
+            )
         )
         return failed
 
@@ -1170,23 +1202,25 @@ class _STMIngestHandler:
         ).hexdigest()[:16]
         self._chunks_written += 1
         return await self._write_extracted(
-            session_id=session_id,
-            file_id=file_id,
-            chunk_id=chunk_id,
-            text=chunk_text,
-            seq=seq,
-            kind="turn",
-            speaker=speaker or role,
-            search_text=chunk_surface,
-            # The same anchor the relative dates resolve against is what dates
-            # the chunk at retrieval. Until now nothing populated CHUNK.ts, so
-            # the column was written, indexed and selected as "" everywhere.
-            ts=str(anchor or ""),
-            embedding=embedding,
-            extraction=extraction,
-            temporal=temporal,
-            memory_class=metadata.get("memory_class") or "raw_evidence",
-            ontology_classes=self._match_classes(embedding, chunk_text) if infer else [],
+            ExtractedChunk(
+                session_id=session_id,
+                file_id=file_id,
+                chunk_id=chunk_id,
+                text=chunk_text,
+                seq=seq,
+                kind="turn",
+                speaker=speaker or role,
+                search_text=chunk_surface,
+                # The same anchor the relative dates resolve against is what dates
+                # the chunk at retrieval. Until now nothing populated CHUNK.ts, so
+                # the column was written, indexed and selected as "" everywhere.
+                ts=str(anchor or ""),
+                embedding=embedding,
+                extraction=extraction,
+                temporal=temporal,
+                memory_class=metadata.get("memory_class") or "raw_evidence",
+                ontology_classes=self._match_classes(embedding, chunk_text) if infer else [],
+            )
         )
 
     # ------------------------------------------------------------------
@@ -1332,27 +1366,11 @@ class _STMIngestHandler:
         await self._store.ensure_session(session_id, started_at=str(t0))
         await self._store.ensure_file(file_id=parsed.source_id, session_id=session_id)
 
-    async def _write_extracted(
-        self,
-        *,
-        session_id: str,
-        file_id: str,
-        chunk_id: str,
-        text: str,
-        seq: int,
-        kind: str,
-        speaker: str,
-        ts: str,
-        embedding: list[float],
-        search_text: str = "",
-        extraction: ExtractionResult,
-        temporal: list[dict[str, str]],
-        memory_class: str,
-        ontology_classes: list[tuple[str, float]] | None = None,
-        srl_hits: list[Any] | None = None,
-        decode_state: str = "",
-    ) -> int:
+    async def _write_extracted(self, chunk: ExtractedChunk) -> int:
         """Write one chunk's CHUNK + ENTITY/MENTIONS + RELATION + TEMPORAL. Returns entity count.
+
+        Takes its fields bundled in ``chunk`` (an :class:`ExtractedChunk`)
+        rather than as a flat parameter list.
 
         ``srl_hits`` are this chunk's parsed frame triggers when the batch stage
         already has them (``[]`` is a real answer there — no triggers found);
@@ -1362,6 +1380,22 @@ class _STMIngestHandler:
         ``'failed'``); the default leaves it absent, which is every chunk no LLM
         decoder ever saw.
         """
+        session_id = chunk.session_id
+        file_id = chunk.file_id
+        chunk_id = chunk.chunk_id
+        text = chunk.text
+        seq = chunk.seq
+        kind = chunk.kind
+        speaker = chunk.speaker
+        ts = chunk.ts
+        embedding = chunk.embedding
+        search_text = chunk.search_text
+        extraction = chunk.extraction
+        temporal = chunk.temporal
+        memory_class = chunk.memory_class
+        ontology_classes = chunk.ontology_classes
+        srl_hits = chunk.srl_hits
+        decode_state = chunk.decode_state
         filtered = graph_entities(extraction.entities)
         # Definition-described typing (default off). Runs BEFORE the entity write
         # so a surface only this pass saw is a first-class ENTITY rather than a
@@ -1584,19 +1618,21 @@ class _STMIngestHandler:
             counts["blocked_range"] += range_blocked
             blocked = domain_blocked or range_blocked
             await self._store.write_relation(
-                rel["head"],
-                rel["relation"],
-                rel["tail"],
-                fact=rel.get("evidence", "") or text,
-                chunk_id=chunk_id,
-                confidence=rel.get("score", 0.5),
-                source=rel.get("source", "gliner"),
-                src_type=rel.get("head_type", ""),
-                dst_type=rel.get("tail_type", ""),
-                ontology_property=ont_property,
-                verifier_score=rel.get("verifier_score"),
-                ontology_blocked=blocked,
-                speaker=speaker,
+                RelationWrite(
+                    rel["head"],
+                    rel["relation"],
+                    rel["tail"],
+                    fact=rel.get("evidence", "") or text,
+                    chunk_id=chunk_id,
+                    confidence=rel.get("score", 0.5),
+                    source=rel.get("source", "gliner"),
+                    src_type=rel.get("head_type", ""),
+                    dst_type=rel.get("tail_type", ""),
+                    ontology_property=ont_property,
+                    verifier_score=rel.get("verifier_score"),
+                    ontology_blocked=blocked,
+                    speaker=speaker,
+                )
             )
 
         return self._report(chunk_id, len(extraction.relations), counts)

@@ -113,6 +113,7 @@ async def test_entities_are_shared_across_relation_writes(arcadedb_required: Non
     """
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_graph_store
+    from graphknows.storage.arcadedb.graph_store import RelationWrite
     from graphknows.storage.embedder import embed_dim
 
     s = GraphKnowsSettings()
@@ -127,7 +128,9 @@ async def test_entities_are_shared_across_relation_writes(arcadedb_required: Non
         # Same (subject, object) names written twice — before the fix this
         # raised DuplicatedKeyException on the ENTITY unique index.
         for _ in range(2):
-            await store.write_relation(subject, "LIKES", obj, fact="evidence", confidence=0.9)
+            await store.write_relation(
+                RelationWrite(subject, "LIKES", obj, fact="evidence", confidence=0.9)
+            )
 
         rows = await store.query(
             "MATCH (e:ENTITY {name_norm: $name}) RETURN count(e) AS n",

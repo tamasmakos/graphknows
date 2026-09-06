@@ -19,6 +19,7 @@ from graphknows.storage.arcadedb.graph_store import (
     _CORE_DDL,
     _FRAME_REL_KEY,
     GraphStore,
+    RelationWrite,
     _evidence_set,
     _frame_merge_key,
 )
@@ -294,13 +295,15 @@ async def test_write_relation_evidence_append_sql_shape() -> None:
     client = _mock_client()
     store = GraphStore(client=client)
     await store.write_relation(
-        src_name="Melanie",
-        predicate="LIKES",
-        dst_name="Camping",
-        fact="Melanie likes camping",
-        chunk_id="chunk-1",
-        confidence=0.8,
-        source="gliner",
+        RelationWrite(
+            src_name="Melanie",
+            predicate="LIKES",
+            dst_name="Camping",
+            fact="Melanie likes camping",
+            chunk_id="chunk-1",
+            confidence=0.8,
+            source="gliner",
+        )
     )
     stmts = _command_strings(client)
     # One REL type carries every predicate as a property, so no per-predicate
@@ -327,10 +330,12 @@ async def test_write_relation_single_valued_tombstones() -> None:
     client = _mock_client()
     store = GraphStore(client=client)
     await store.write_relation(
-        src_name="Melanie",
-        predicate="LIVES_IN",
-        dst_name="Toronto",
-        chunk_id="chunk-2",
+        RelationWrite(
+            src_name="Melanie",
+            predicate="LIVES_IN",
+            dst_name="Toronto",
+            chunk_id="chunk-2",
+        )
     )
     stmts = _command_strings(client)
     tombstone = next(s for s in stmts if "r.invalid_at = $now" in s)
@@ -406,7 +411,7 @@ async def test_write_relation_accepts_predicate_that_is_not_a_valid_type_name() 
     """
     client = _mock_client()
     store = GraphStore(client=client)
-    await store.write_relation(src_name="a", predicate="123!!", dst_name="b")
+    await store.write_relation(RelationWrite(src_name="a", predicate="123!!", dst_name="b"))
     merge_call = next(c for c in client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1])
     assert merge_call.kwargs["params"]["predicate"] == "123!!"
 
@@ -415,7 +420,7 @@ async def test_write_relation_accepts_predicate_that_is_not_a_valid_type_name() 
 async def test_write_relation_skips_empty_predicate() -> None:
     client = _mock_client()
     store = GraphStore(client=client)
-    await store.write_relation(src_name="a", predicate="   ", dst_name="b")
+    await store.write_relation(RelationWrite(src_name="a", predicate="   ", dst_name="b"))
     client.command.assert_not_awaited()
 
 
@@ -580,7 +585,7 @@ async def test_both_rel_writers_share_one_evidence_append_form() -> None:
 
     relex_client = _mock_client()
     await GraphStore(client=relex_client).write_relation(
-        "Caroline", "WORKS_AT", "hospital", chunk_id="chunk-a"
+        RelationWrite("Caroline", "WORKS_AT", "hospital", chunk_id="chunk-a")
     )
     relex_stmt = next(
         c.args[1] for c in relex_client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1]
@@ -679,7 +684,7 @@ async def test_write_relation_without_a_chunk_logs_the_unsourced_edge(
     """The relex writer's own residue: no chunk_id means no provenance at all."""
     client = _mock_client()
     with caplog.at_level(logging.INFO):
-        await GraphStore(client=client).write_relation("Mel", "LIKES", "Camping")
+        await GraphStore(client=client).write_relation(RelationWrite("Mel", "LIKES", "Camping"))
 
     assert [r for r in caplog.records if "unsourced REL edge" in r.message]
 
@@ -1901,20 +1906,24 @@ async def test_graph_store_round_trip_on_scratch_database(arcadedb_required: Non
         )
         # Same relation from two chunks → evidence list must accumulate both.
         await store.write_relation(
-            "Melanie",
-            "LIKES",
-            "Camping",
-            fact="Melanie likes camping",
-            chunk_id="chunk-a",
-            confidence=0.7,
-            source="gliner",
+            RelationWrite(
+                "Melanie",
+                "LIKES",
+                "Camping",
+                fact="Melanie likes camping",
+                chunk_id="chunk-a",
+                confidence=0.7,
+                source="gliner",
+            )
         )
         await store.write_relation(
-            "Melanie",
-            "LIKES",
-            "Camping",
-            chunk_id="chunk-b",
-            confidence=0.9,
+            RelationWrite(
+                "Melanie",
+                "LIKES",
+                "Camping",
+                chunk_id="chunk-b",
+                confidence=0.9,
+            )
         )
 
         # ANN read-back

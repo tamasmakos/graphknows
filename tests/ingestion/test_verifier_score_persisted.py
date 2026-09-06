@@ -133,7 +133,7 @@ async def test_verifier_score_survives_entity_merge(arcadedb_required: None) -> 
     """
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_arcadedb_client
-    from graphknows.storage.arcadedb.graph_store import GraphStore
+    from graphknows.storage.arcadedb.graph_store import GraphStore, RelationWrite
 
     settings = GraphKnowsSettings()
     store = GraphStore(
@@ -145,32 +145,38 @@ async def test_verifier_score_survives_entity_merge(arcadedb_required: None) -> 
 
         # The loser carries a scored outgoing edge and a scored incoming one.
         await store.write_relation(
-            "Gina Hey",
-            "HAS",
-            "clothing store",
-            chunk_id="chunk-a",
-            confidence=0.6,
-            source="relex",
-            verifier_score=0.6079,
+            RelationWrite(
+                "Gina Hey",
+                "HAS",
+                "clothing store",
+                chunk_id="chunk-a",
+                confidence=0.6,
+                source="relex",
+                verifier_score=0.6079,
+            )
         )
         await store.write_relation(
-            "Jon",
-            "SUPPORT",
-            "Gina Hey",
-            chunk_id="chunk-a",
-            confidence=0.92,
-            source="relex",
-            verifier_score=0.7690,
+            RelationWrite(
+                "Jon",
+                "SUPPORT",
+                "Gina Hey",
+                chunk_id="chunk-a",
+                confidence=0.92,
+                source="relex",
+                verifier_score=0.7690,
+            )
         )
         # Winner must exist before the merge.
         await store.write_relation(
-            "Gina",
-            "LIVE",
-            "downtown",
-            chunk_id="chunk-a",
-            confidence=0.5,
-            source="relex",
-            verifier_score=0.5500,
+            RelationWrite(
+                "Gina",
+                "LIVE",
+                "downtown",
+                chunk_id="chunk-a",
+                confidence=0.5,
+                source="relex",
+                verifier_score=0.5500,
+            )
         )
 
         assert await store.merge_entities("gina", "gina hey") is True

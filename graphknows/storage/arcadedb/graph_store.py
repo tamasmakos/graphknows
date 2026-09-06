@@ -28,6 +28,7 @@ import hashlib
 import logging
 from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -342,6 +343,34 @@ def _drop_subsumed_siblings(
                 survivor, _ = min(supersets, key=lambda pair: (-len(pair[1]), pair[0]))
                 absorbed_by[index] = survivor
     return absorbed_by
+
+
+@dataclass(frozen=True)
+class RelationWrite:
+    """One :meth:`GraphStore.write_relation` call's fields, bundled.
+
+    ``src_name``/``predicate``/``dst_name`` identify the edge; every other
+    field annotates or merges it exactly as described in write_relation's own
+    docstring, which this bundle does not repeat.
+    """
+
+    src_name: str
+    predicate: str
+    dst_name: str
+    fact: str = ""
+    chunk_id: str = ""
+    confidence: float = 0.5
+    valid_at: str | None = None
+    source: str = ""
+    src_type: str = ""
+    dst_type: str = ""
+    ontology_property: str = ""
+    verifier_score: float | None = None
+    ontology_blocked: bool = False
+    speaker: str = ""
+    is_current: bool = True
+    invalid_at: str | None = None
+    merge_key: dict[str, str] | None = None
 
 
 class GraphStore(ArcadeStoreBase):
@@ -824,27 +853,11 @@ class GraphStore(ArcadeStoreBase):
                 "_supersede_edge %s (%s -> !=%s) skipped: %s", predicate, src_norm, dst_norm, exc
             )
 
-    async def write_relation(
-        self,
-        src_name: str,
-        predicate: str,
-        dst_name: str,
-        fact: str = "",
-        chunk_id: str = "",
-        confidence: float = 0.5,
-        valid_at: str | None = None,
-        source: str = "",
-        src_type: str = "",
-        dst_type: str = "",
-        ontology_property: str = "",
-        verifier_score: float | None = None,
-        ontology_blocked: bool = False,
-        speaker: str = "",
-        is_current: bool = True,
-        invalid_at: str | None = None,
-        merge_key: dict[str, str] | None = None,
-    ) -> None:
+    async def write_relation(self, write: RelationWrite) -> None:
         """MERGE a dynamic relation edge (type = taxonomy predicate).
+
+        Takes its fields bundled in ``write`` (a :class:`RelationWrite`) rather
+        than as a flat parameter list.
 
         PROVENANCE CONTRACT (both REL writers, see also
         ``write_frame_instances``): every REL edge carries the chunks that
@@ -906,7 +919,23 @@ class GraphStore(ArcadeStoreBase):
         key exists to protect. Only the repair path passes it; everything else
         keeps the one-edge-per-predicate semantics described above.
         """
-        predicate = predicate.strip()
+        src_name = write.src_name
+        dst_name = write.dst_name
+        fact = write.fact
+        chunk_id = write.chunk_id
+        confidence = write.confidence
+        valid_at = write.valid_at
+        source = write.source
+        src_type = write.src_type
+        dst_type = write.dst_type
+        ontology_property = write.ontology_property
+        verifier_score = write.verifier_score
+        ontology_blocked = write.ontology_blocked
+        speaker = write.speaker
+        is_current = write.is_current
+        invalid_at = write.invalid_at
+        merge_key = write.merge_key
+        predicate = write.predicate.strip()
         if not predicate or not src_name or not dst_name:
             return
         # Stability ladder, tiers 3-4: an ontology property IRI when relex
@@ -3857,18 +3886,20 @@ class GraphStore(ArcadeStoreBase):
         # replay must not drop an edge for arriving unsourced.
         for cid in evidence or [""]:
             await self.write_relation(
-                src_name,
-                predicate,
-                dst_name,
-                fact=fact,
-                chunk_id=cid,
-                confidence=conf,
-                valid_at=valid_at,
-                source=source,
-                verifier_score=vscore,
-                is_current=current,
-                invalid_at=row.get("invalid_at"),
-                merge_key=key,
+                RelationWrite(
+                    src_name,
+                    predicate,
+                    dst_name,
+                    fact=fact,
+                    chunk_id=cid,
+                    confidence=conf,
+                    valid_at=valid_at,
+                    source=source,
+                    verifier_score=vscore,
+                    is_current=current,
+                    invalid_at=row.get("invalid_at"),
+                    merge_key=key,
+                )
             )
         await self._carry_rel_columns(src_name, predicate, dst_name, row, merge_key=key)
         # frame_instance_id is carried above, so a frame edge with no evidence is
