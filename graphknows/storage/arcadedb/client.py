@@ -4,15 +4,27 @@ Covers the subset of endpoints needed by graphknows:
 - Database lifecycle (create / drop / exists)
 - Read-only queries  (POST /api/v1/query/{db})
 - Read-write commands (POST /api/v1/command/{db})
+- Transactions      (POST /api/v1/begin|commit|rollback/{db})
 
 Authentication uses HTTP Basic Auth (root + server password).
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import Any
 
 import httpx
+
+# ArcadeDB pins an open HTTP transaction to this header; every statement that
+# carries it joins that transaction. A ContextVar rather than an attribute
+# because ingestion writes several chunks concurrently on one client: each
+# asyncio task gets its own copy, so one chunk's session never leaks into
+# another's statements.
+SESSION_HEADER = "arcadedb-session-id"
+_session: ContextVar[str | None] = ContextVar("arcadedb_session", default=None)
 
 
 def _raise_for_status(r: httpx.Response) -> None:
@@ -136,7 +148,11 @@ class ArcadeDBClient:
         body: dict[str, Any] = {"language": language, "command": command}
         if params:
             body["params"] = params
-        r = await self._c().post(f"{self._base}/api/v1/command/{db}", json=body)
+        r = await self._c().post(
+            f"{self._base}/api/v1/command/{db}",
+            json=body,
+            headers=self._session_headers(),
+        )
         _raise_for_status(r)
         return r.json().get("result", [])
 
@@ -161,6 +177,49 @@ class ArcadeDBClient:
         r = await self._c().post(
             f"{self._base}/api/v1/query/{db}",
             json=body,
+            headers=self._session_headers(),
         )
         _raise_for_status(r)
         return r.json().get("result", [])
+
+    # ------------------------------------------------------------------
+    # Transactions
+    # ------------------------------------------------------------------
+
+    def _session_headers(self) -> dict[str, str]:
+        """Header binding this statement to the open transaction, if any."""
+        session = _session.get()
+        return {SESSION_HEADER: session} if session else {}
+
+    @asynccontextmanager
+    async def transaction(self, db: str) -> AsyncIterator[None]:
+        """Run the enclosed statements as one ArcadeDB transaction.
+
+        Commits on a clean exit; on any exception the transaction is rolled
+        back and the exception re-raised, so a half-written unit of work never
+        becomes visible and never passes for a successful one.
+
+        Args:
+            db: Target database name.
+        """
+        r = await self._c().post(f"{self._base}/api/v1/begin/{db}")
+        _raise_for_status(r)
+        session = r.headers[SESSION_HEADER]
+        token = _session.set(session)
+        try:
+            yield
+        except BaseException:
+            await self._end_transaction(db, "rollback", session)
+            raise
+        else:
+            await self._end_transaction(db, "commit", session)
+        finally:
+            _session.reset(token)
+
+    async def _end_transaction(self, db: str, verb: str, session: str) -> None:
+        """POST ``/api/v1/commit|rollback/{db}`` for an open session."""
+        r = await self._c().post(
+            f"{self._base}/api/v1/{verb}/{db}",
+            headers={SESSION_HEADER: session},
+        )
+        _raise_for_status(r)
