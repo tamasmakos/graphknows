@@ -64,3 +64,30 @@ def test_settings_construction_is_bounded(monkeypatch: pytest.MonkeyPatch) -> No
     assert calls == 1
 
     assert _direct_construction_sites() == []
+
+
+def test_passed_settings_instance_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR-013: the ingest handler reads the instance it was handed, not the environment.
+
+    ``get_settings()`` alone would not close this: a handler that called it
+    would still read the process environment, so ``Memory(settings=s)`` would
+    be silently ignored on the write path.
+    """
+    import graphknows.ingestion.extraction.entities as entities
+    import graphknows.storage as storage
+    import graphknows.symbolic.ontology as ontology
+    from graphknows.ingestion import build_stm_service
+
+    monkeypatch.setattr(storage, "build_graph_store", lambda settings, ns: object())
+    monkeypatch.setattr(entities, "build_decoder", lambda settings: object())
+    monkeypatch.setattr(ontology, "load_ontology_index", lambda source: None)
+
+    monkeypatch.setenv("GRAPHKNOWS_EXTRACT_WINDOW", "3")
+    get_settings.cache_clear()
+    assert get_settings().extract_window == 3
+
+    passed = GraphKnowsSettings(extract_window=11)
+    handler = build_stm_service(passed, "ns")._handler()
+
+    assert handler._settings is passed
+    assert handler._extract_window == 11

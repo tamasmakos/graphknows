@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from graphknows.models.ingest import IngestResult
     from graphknows.models.ingest_options import IngestOptions
     from graphknows.models.message import Message
+    from graphknows.settings import GraphKnowsSettings
 
 log = logging.getLogger("graphknows.ingestion.stm.service")
 
@@ -32,6 +33,8 @@ class STMService:
         _embed_fn: Embedding callable (text -> list[float]).
         _embed_dims: Embedding dimension for ensure_schema on connect.
         _ontology_index: Optional OntologyIndex steering extraction labels.
+        _settings: The settings instance the handler must read, so an explicit
+            ``Memory(settings=s)`` wins over the environment.
     """
 
     def __init__(
@@ -42,12 +45,14 @@ class STMService:
         embed_dims: int = 0,
         enable_frames: bool = False,
         ontology_index: Any | None = None,
+        settings: GraphKnowsSettings | None = None,
     ) -> None:
         self._store = store
         self._extractor = extractor
         self._embed_dims = embed_dims
         self._enable_frames = enable_frames
         self._ontology_index = ontology_index
+        self._settings = settings
 
         if embed_fn is not None:
             self._embed_fn = embed_fn
@@ -139,6 +144,7 @@ class STMService:
                 embed_fn=self._embed_fn,
                 enable_frames=self._enable_frames,
                 ontology_index=self._ontology_index,
+                settings=self._settings,
             )
         return self._ingest_handler
 

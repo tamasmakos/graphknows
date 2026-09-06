@@ -38,6 +38,9 @@ def build_stm_service(settings: GraphKnowsSettings, namespace: str = "") -> Any:
         # falls back to the bundled CCO digest. ``None`` here therefore
         # means the load FAILED, which load_ontology_index logs.
         ontology_index=load_ontology_index(settings.ontology_source),
+        # The handler reads this instance rather than rebuilding one from the
+        # environment, so ``Memory(settings=s)`` reaches the ingest path.
+        settings=settings,
     )
 
 

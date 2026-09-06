@@ -16,7 +16,7 @@ import time
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, nullcontext
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -33,6 +33,9 @@ from graphknows.ingestion.parsers.text import (
 )
 from graphknows.models.ingest import IngestResult
 from graphknows.symbolic import match
+
+if TYPE_CHECKING:
+    from graphknows.settings import GraphKnowsSettings
 
 log = logging.getLogger("graphknows.ingestion.stm.ingest")
 
@@ -424,7 +427,15 @@ class _STMIngestHandler:
         enable_frames: bool = False,
         ontology_index: Any | None = None,
         relation_index: Any | None = None,
+        settings: GraphKnowsSettings | None = None,
     ) -> None:
+        from graphknows.settings import get_settings
+
+        # The instance the caller was built with, not a fresh read of the
+        # environment: an explicit ``Memory(settings=s)`` must win. Only a
+        # caller that hands none (a bare STMService in tests) falls back to
+        # the process accessor.
+        self._settings = settings if settings is not None else get_settings()
         self._store = store
         self._extractor = extractor
         self._enable_frames = enable_frames
@@ -460,9 +471,7 @@ class _STMIngestHandler:
         # leaves at most that many strings behind. Read here rather than beside
         # the ontology settings below, because the window is independent of
         # whether an ontology is configured.
-        from graphknows.settings import get_settings
-
-        _cfg = get_settings()
+        _cfg = self._settings
         self._extract_window: int = _cfg.extract_window
         self._window_overlap: int = _cfg.extract_overlap
         self._window_chunks: bool = _cfg.window_chunks
@@ -546,9 +555,7 @@ class _STMIngestHandler:
         # ``GraphKnowsSettings.ontology_hint_min_sim`` for the measurement.
         self._hint_min_sim: float = 0.0
         if ontology_index is not None:
-            from graphknows.settings import get_settings
-
-            settings = get_settings()
+            settings = self._settings
             self._hint_min_sim = settings.ontology_hint_min_sim
             self._ontology_source = settings.ontology_source
             self._uri_by_label = {t.label.casefold(): t.uri for t in ontology_index.classes}
@@ -1203,10 +1210,9 @@ class _STMIngestHandler:
             log.info("Lexical label selection off: the extractor exposes no spaCy pipeline")
             return False
         if self._scheme is None:
-            from graphknows.settings import get_settings
             from graphknows.symbolic.ontology.scheme import load_coarse_aliases, load_scheme
 
-            cfg = get_settings()
+            cfg = self._settings
             self._scheme = load_scheme(cfg.ontology_source, cfg.overlay_source)
             self._coarse_aliases = load_coarse_aliases(cfg.overlay_source)
             self._overlay_index = self._build_overlay_index()
@@ -2556,13 +2562,12 @@ class _STMIngestHandler:
         # "Speaker=Yeah", "Cognizer=Wow").
         # Default-off experiment (settings.enable_fe_type_gate): vetoes a role
         # filler whose graph entity type conflicts with the FE's FrameNet
-        # semantic type. Read the same way this file reads other one-off
-        # settings (local import, process accessor) rather than threaded
-        # through the constructor, so an eval A/B can flip it by environment alone.
-        from graphknows.settings import get_settings
+        # semantic type. Read off the settings instance this handler was built
+        # with, so an eval A/B flips it through ``Memory(settings=...)`` as well
+        # as through the environment.
         from graphknows.symbolic.framenet import fe
 
-        type_gate_on = get_settings().enable_fe_type_gate
+        type_gate_on = self._settings.enable_fe_type_gate
 
         out: list[dict[str, Any]] = []
         kept_offsets: list[int] = []
