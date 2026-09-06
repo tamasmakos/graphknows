@@ -3,13 +3,13 @@
 Importing this module has no side-effects (no FastAPI, no store connections).
 Any agent or library that wants only settings can do::
 
-    from graphknows.settings import GraphKnowsSettings
-    cfg = GraphKnowsSettings()
+    from graphknows.settings import get_settings
+    cfg = get_settings()
 
 Example:
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
 
-    settings = GraphKnowsSettings()
+    settings = get_settings()
     settings.check_production_secrets()
 """
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -540,3 +541,18 @@ class GraphKnowsSettings(BaseSettings):
         """Fail fast at construction when production secrets are unsafe."""
         self.check_production_secrets()
         return self
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> GraphKnowsSettings:
+    """The process's settings, constructed once.
+
+    Construction costs ~140 ms (env + ``.env`` parsing, validation), so hot paths
+    read it through here rather than rebuilding per message or per chunk. Code
+    that is *handed* a settings instance keeps using that one: an explicit
+    ``Memory(settings=s)`` must win over the environment.
+
+    Tests that patch the environment call ``get_settings.cache_clear()``; the
+    autouse fixture in ``tests/conftest.py`` does it for every test.
+    """
+    return GraphKnowsSettings()

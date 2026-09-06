@@ -13,7 +13,7 @@ import argparse
 import asyncio
 from dataclasses import replace
 
-from graphknows.settings import GraphKnowsSettings, TopicMode
+from graphknows.settings import TopicMode, get_settings
 from graphknows.topics.config import TopicConfig
 
 
@@ -58,7 +58,7 @@ async def amain(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     from graphknows.memory import Memory
 
-    settings = GraphKnowsSettings()
+    settings = get_settings()
     base = TopicConfig(min_size=args.min_size, mode=TopicMode(args.mode))
 
     mem = Memory(settings, namespace=args.namespace or None)

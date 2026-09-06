@@ -835,9 +835,9 @@ class GLiNER2EntityExtractor:
         self._model_loader = model_loader
         settings = None
         if not spacy_model:
-            from graphknows.settings import GraphKnowsSettings
+            from graphknows.settings import get_settings
 
-            settings = GraphKnowsSettings()
+            settings = get_settings()
             spacy_model = settings.spacy_model
         self._schema_miner = schema_miner or _SpacySchemaMiner(model_name=spacy_model)
         # One-entry memo behind `parse()`; see its docstring.
@@ -849,9 +849,9 @@ class GLiNER2EntityExtractor:
             from graphknows.ingestion.extraction.relations.verifier import (
                 build_relation_verifier,
             )
-            from graphknows.settings import GraphKnowsSettings
+            from graphknows.settings import get_settings
 
-            relation_verifier = build_relation_verifier(settings or GraphKnowsSettings())
+            relation_verifier = build_relation_verifier(settings or get_settings())
         self._relation_verifier = relation_verifier
         # The relation label space is normally the per-chunk ontology properties
         # the caller passes to extract(). An explicit *relation_schema* (escape

@@ -81,9 +81,9 @@ def main() -> None:
     Reads JSON-RPC 2.0 requests on stdin, writes responses on stdout.
     All logging goes to stderr.
     """
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
 
-    GraphKnowsSettings().check_production_secrets()
+    get_settings().check_production_secrets()
     _announce_admin_tools()
     asyncio.run(_run_server())
 

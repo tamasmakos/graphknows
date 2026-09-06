@@ -28,11 +28,10 @@ EMBED_DIM: int = 384
 _MAX_CHARS_PER_TEXT = 20_000  # ~5000 tokens; headroom below typical 8192-token limits
 
 
-@functools.lru_cache(maxsize=1)
 def _settings() -> Any:
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
 
-    return GraphKnowsSettings()
+    return get_settings()
 
 
 @functools.lru_cache(maxsize=2)

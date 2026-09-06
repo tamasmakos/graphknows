@@ -11,19 +11,12 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from graphknows.settings import GraphKnowsSettings
+from graphknows.settings import get_settings
 
-_settings: GraphKnowsSettings | None = None
 _runtime: Any | None = None
 _lock = asyncio.Lock()
 
-
-def get_settings() -> GraphKnowsSettings:
-    """Return singleton settings instance."""
-    global _settings
-    if _settings is None:
-        _settings = GraphKnowsSettings()
-    return _settings
+__all__ = ["close", "get_or_init_retriever", "get_runtime", "get_settings"]
 
 
 async def get_runtime() -> Any:
@@ -51,10 +44,10 @@ async def close() -> None:
     """Close the cached runtime (e.g. in tests / shutdown)."""
     import contextlib
 
-    global _settings, _runtime
+    global _runtime
     async with _lock:
         if _runtime is not None:
             with contextlib.suppress(Exception):
                 await _runtime.close()
         _runtime = None
-        _settings = None
+        get_settings.cache_clear()

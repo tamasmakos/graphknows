@@ -35,12 +35,17 @@ for _offline_switch in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_O
 
 @pytest.fixture(autouse=True)
 def _reset_settings_singletons():
-    """Reset module-level _settings singletons so env-patching tests stay isolated."""
+    """Drop the process settings around each test, so env-patching stays isolated.
+
+    ``get_settings`` is an ``lru_cache``; without this a cached instance built
+    under one environment would leak into the next test, and tests would go back
+    to poking module globals to get a fresh one.
+    """
+    from graphknows.settings import get_settings
+
+    get_settings.cache_clear()
     yield
-    for mod_name in ("graphknows.server.mcp.stdio_server",):
-        mod = sys.modules.get(mod_name)
-        if mod is not None and hasattr(mod, "_settings"):
-            mod._settings = None
+    get_settings.cache_clear()
 
 
 # ---------------------------------------------------------------------------

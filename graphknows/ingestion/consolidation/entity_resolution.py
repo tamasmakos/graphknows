@@ -216,9 +216,9 @@ async def _merge_standardized(store: Any) -> int:
 def _parser() -> Any:
     """The shared spaCy pipeline, memoized by :func:`graphknows.nlp.load_spacy_model`."""
     from graphknows.nlp import load_spacy_model
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
 
-    return load_spacy_model(GraphKnowsSettings().spacy_model)
+    return load_spacy_model(get_settings().spacy_model)
 
 
 def _head_key(name: str, nlp: Any) -> str:

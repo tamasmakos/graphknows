@@ -18,7 +18,7 @@ from typing import Any
 from graphknows.exceptions import ConfigurationError
 from graphknows.ingestion.parsers.text import strip_content_heading
 from graphknows.models.hit import Hit
-from graphknows.settings import Decoder, GraphKnowsSettings, MemoryMode
+from graphknows.settings import Decoder, GraphKnowsSettings, MemoryMode, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ class Memory:
         # The mode picks the decoder. Explicit arg wins over the settings value;
         # nothing implicit sets it, so a caller who named it meant it — hence the
         # keyless LLM decoder failing here rather than mid-ingest.
-        self.settings = _with_mode(settings or GraphKnowsSettings(), mode)
+        self.settings = _with_mode(settings or get_settings(), mode)
         _require_decoder_key(self.settings)
         # The namespace selects one physical ArcadeDB database (mem_<ns>, "" -> mem,
         # the golden layer). Explicit arg wins over the settings default.

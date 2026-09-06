@@ -23,7 +23,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from graphknows.settings import GraphKnowsSettings
+from graphknows.settings import get_settings
 from graphknows.storage.arcadedb.client import ArcadeDBClient
 from graphknows.storage.namespace import db_name
 from graphknows.symbolic.ontology import rdf_io
@@ -60,7 +60,7 @@ async def _run(source: Path, ns: str, digest_out: Path | None, reset: bool) -> N
     )
 
     db = db_name(ns)
-    settings = GraphKnowsSettings()
+    settings = get_settings()
     client = ArcadeDBClient(
         settings.arcadedb_url, settings.arcadedb_user, settings.arcadedb_password
     )

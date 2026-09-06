@@ -388,9 +388,9 @@ def _lemmatise(labels: set[str]) -> set[str]:
     against noun compounds where lemmatising the whole phrase would not help.
     """
     from graphknows.nlp import load_spacy_model
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
 
-    nlp = load_spacy_model(GraphKnowsSettings().spacy_model)
+    nlp = load_spacy_model(get_settings().spacy_model)
     out = set(labels)
     for label in labels:
         out.add(" ".join(t.lemma_.lower() for t in nlp(label)))

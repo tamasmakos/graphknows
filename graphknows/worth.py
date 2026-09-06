@@ -18,9 +18,9 @@ from typing import Any
 def _nlp() -> Any:
     """The shared spaCy pipeline, memoized by :func:`graphknows.nlp.load_spacy_model`."""
     from graphknows.nlp import load_spacy_model
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
 
-    return load_spacy_model(GraphKnowsSettings().spacy_model)
+    return load_spacy_model(get_settings().spacy_model)
 
 
 def worth_extracting(text: str) -> bool:
