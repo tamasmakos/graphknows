@@ -38,7 +38,8 @@ next major. There are no current deprecations.
 
 1. Bump `__version__` in `graphknows/_version.py`.
 2. Update `CHANGELOG.md` (Keep a Changelog format) with an entry for the new version.
-3. `make ci` (lint, typecheck, import-linter, unit tests, wheel size + py.typed).
+3. `make ci` (the pre-push gate — ruff, `mypy --strict`, import-linter, bandit,
+   unit tests at the coverage floor, dependency audit — plus wheel size + py.typed).
 4. `make eval-smoke` against a live ArcadeDB for end-to-end acceptance.
 5. Commit, then `git tag vX.Y.Z` and push the tag: `git push origin vX.Y.Z`.
 

@@ -90,8 +90,7 @@ build-wheel: ## Build the wheel and assert it stays small + ships py.typed
 smoke: ## Core-only import smoke: import graphknows + client with no heavy deps
 	pytest -q tests/api/test_lazy_core.py tests/api/test_public_surface.py
 
-ci: lint typecheck arch test build-wheel ## Run the full local CI gate
-	@echo "CI gate passed."
+ci: gate build-wheel ## Run the full local CI gate (scripts/gate.sh + the wheel checks)
 
 gate: ## Run the pre-push gate exactly as the hook runs it
 	bash scripts/gate.sh
