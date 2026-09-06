@@ -629,7 +629,9 @@ class _STMIngestHandler:
         # writing (no double-clean).
         cleaned_texts = [self._clean_text(seg.text) for seg in parsed.segments]
 
-        use_batch, batch_embeddings = self._precompute_embeddings(cleaned_texts)
+        use_batch, batch_embeddings = await asyncio.to_thread(
+            self._precompute_embeddings, cleaned_texts
+        )
 
         # Bounded chunk-level concurrency. Default 1 (sequential): the
         # ENTITY(name_norm) index is UNIQUE, so concurrent MERGEs of a shared
@@ -679,7 +681,9 @@ class _STMIngestHandler:
         async def _process_chunk(idx: int) -> int:
             seg = parsed.segments[idx]
             clean = cleaned_texts[idx]
-            embedding: list[float] = batch_embeddings[idx] if use_batch else self._embed_fn(clean)
+            embedding: list[float] = (
+                batch_embeddings[idx] if use_batch else await self._aembed(clean)
+            )
             if not infer:
                 extraction = ExtractionResult()
             elif batch_extractions is not None:
@@ -802,7 +806,7 @@ class _STMIngestHandler:
         before = self._decode_failures
         extraction = await asyncio.to_thread(self._extract, text, None, None, speaker)
         failed = self._decode_failures > before
-        embedding = self._embed_fn(text)
+        embedding = await self._aembed(text)
         await self._write_extracted(
             session_id=session_id,
             # The CHUNK already carries its PART_OF edge; an empty file_id is
@@ -1104,7 +1108,7 @@ class _STMIngestHandler:
         windowed = self._window_chunks and verbatim != clean
         chunk_text = verbatim if windowed else clean
         chunk_surface = verbatim if windowed else surface
-        embedding = self._embed_fn(chunk_surface)
+        embedding = await self._aembed(chunk_surface)
         # Same ontology steering as the chunk path — the chunk's own embedding
         # selects the candidate entity labels, so no extra embedding call.
         ent_hints = self._label_hints([embedding])
@@ -1655,6 +1659,17 @@ class _STMIngestHandler:
         if self._ontology is not None:
             return True, [self._embed_fn(t) for t in texts]
         return False, []
+
+    async def _aembed(self, text: str) -> list[float]:
+        """Embed one text off the event loop.
+
+        ``_embed_fn`` blocks — an HTTP round-trip by default, a loaded model
+        under an override — and every caller here is a coroutine. The batch
+        sibling above stays synchronous and is handed to a thread whole, at its
+        one call site, so a file pays a single hop instead of one per chunk.
+        """
+        embedding: list[float] = await asyncio.to_thread(self._embed_fn, text)
+        return embedding
 
     # ------------------------------------------------------------------
     # Ontology injection (mode-independent; inert when no ontology is set)
