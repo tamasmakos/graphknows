@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from graphknows.exceptions import ConfigurationError
 from graphknows.settings import Env, GraphKnowsSettings
 
 
@@ -34,3 +35,13 @@ def test_env_value_is_a_lowercase_enum() -> None:
         ).graphknows_env
         is Env.production
     )
+
+
+def test_default_password_under_production_raises() -> None:
+    """The development password is refused once the env says production."""
+    with pytest.raises(ConfigurationError, match="GRAPHKNOWS_ARCADEDB_PASSWORD"):
+        GraphKnowsSettings(
+            _env_file=None,
+            GRAPHKNOWS_ENV="production",
+            GRAPHKNOWS_ARCADEDB_PASSWORD="changeme",
+        )
