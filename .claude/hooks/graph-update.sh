@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# post-commit: refresh graphify-out after every commit (AST only, no LLM), snapshot the
+# Claude Code PostToolUse(Bash) hook: refresh graphify-out after every commit (AST only, no LLM), snapshot the
 # previous graph, and append one growth line per commit. Silent no-op without a graph,
 # so worktrees (graphify-out is gitignored) and fresh clones skip it.
 set -u
+# fire only when the Bash command that just ran was a git commit
+grep -q '"command": *"[^"]*git commit' <&0 || exit 0
 cd "$(git rev-parse --show-toplevel)" || exit 0
 [ -f graphify-out/graph.json ] || exit 0
 sha=$(git rev-parse --short HEAD)
