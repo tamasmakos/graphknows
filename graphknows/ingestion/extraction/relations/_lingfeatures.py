@@ -24,9 +24,12 @@ missing from the graph.
 from __future__ import annotations
 
 import bisect
+import logging
 import re
 from functools import lru_cache
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 _FIRST_PERSON = {"i", "me", "my", "myself", "we", "us", "our"}
 _SECOND_PERSON = {"you", "your", "yourself"}
@@ -128,6 +131,7 @@ def noun_supersense(phrase: str) -> str:
 
         ss = wn.synsets(WordNetLemmatizer().lemmatize(head, "n"), pos=wn.NOUN)
     except LookupError:
+        log.warning("WordNet corpus unavailable; typing %r as untyped", phrase)
         return ""
     return ss[0].lexname() if ss else ""
 
