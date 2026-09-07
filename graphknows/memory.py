@@ -564,19 +564,29 @@ class Memory:
         )
 
     async def _flush_topics(self, store: Any) -> dict[str, Any]:
-        """The topic stage as invoked by a flush, using the configured defaults.
+        """The topic stage as invoked by a flush — opt-in only (FR-045).
 
         Returns ``{"topics_created": int, "modularity": float | None}``. The
         modularity is the topic stage's own Newman modularity over the entity
         graph (``TopicSet.metrics["newman_modularity"]``) — the real, trusted
         number, now that ArcadeDB's ``modularityScore``-derived reporting
         (``compute_community_quality``) has been retired.
+
+        Topics have exactly one reader, the browse tool (``ltm_topics``), so a
+        flush no longer pays clustering + description just because
+        ``GRAPHKNOWS_MODE=llm_assisted`` prefers ``TopicMode.llm`` as a
+        preset — that read ``self.settings.topic_mode``, the preset-resolved
+        value. Here it reads the raw ``topics`` field instead: unset means no
+        one asked, same as an explicit ``none``. A caller who wants topics
+        sets ``GRAPHKNOWS_TOPICS`` explicitly, or rebuilds on demand through
+        :meth:`build_topics` / the ``memory_topics`` tool, which do keep
+        following the preset — calling either one is itself the opt-in.
         """
         from graphknows.settings import TopicMode
         from graphknows.topics import TopicConfig, build_topics, persist_topics
 
-        mode = self.settings.topic_mode
-        if mode is TopicMode.none:
+        mode = self.settings.topics
+        if mode is None or mode is TopicMode.none:
             return {"topics_created": 0, "modularity": None}
         cfg = TopicConfig(mode=mode)
         topic_set = await build_topics(
