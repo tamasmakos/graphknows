@@ -252,6 +252,72 @@ def test_third_party_actions_are_pinned_to_a_commit_hash(workflow_path: Path) ->
     )
 
 
+def test_integration_job_runs_against_arcadedb_service() -> None:
+    """The eleven `integration`-marked tests currently never run in any
+    workflow — `gate`'s pytest step excludes them (`-m "not integration"`)
+    and nothing else invokes them, so a live-storage regression can merge
+    unseen. A dedicated `integration` job with a live ArcadeDB service
+    container, gated by `GRAPHKNOWS_REQUIRE_ARCADEDB=1` so a container that
+    never started fails instead of reporting a suite that skipped past every
+    test as green, is what FR-008/SC-005 require."""
+    assert re.search(r"^  integration:$", CI_TEXT, re.MULTILINE), (
+        f"{CI_WORKFLOW}: no top-level `integration:` job found"
+    )
+    integration_text = _job_text("integration")
+
+    assert re.search(r"^\s*services:\s*$", integration_text, re.MULTILINE), (
+        f"{CI_WORKFLOW}: `integration` job has no `services:` block — "
+        "no ArcadeDB service container is provisioned"
+    )
+    assert re.search(r"^\s*arcadedb:\s*$", integration_text, re.MULTILINE), (
+        f"{CI_WORKFLOW}: `integration` job's `services:` block has no `arcadedb:` entry"
+    )
+    assert "arcadedata/arcadedb" in integration_text, (
+        f"{CI_WORKFLOW}: `integration` job's arcadedb service does not use "
+        "the arcadedata/arcadedb image"
+    )
+    assert "--health-cmd" in integration_text, (
+        f"{CI_WORKFLOW}: `integration` job's arcadedb service has no health "
+        "check — GitHub Actions would start the job's own steps without "
+        "waiting for ArcadeDB to be ready"
+    )
+
+    run_match = re.search(r"^\s*run:.*pytest.*$", integration_text, re.MULTILINE)
+    assert run_match is not None, f"{CI_WORKFLOW}: `integration` job has no `pytest` invocation"
+    run_line = run_match.group(0)
+    assert re.search(r"-m\s+integration\b", run_line), (
+        f"{CI_WORKFLOW}: `integration` job's pytest step does not select "
+        f"`-m integration` — got: {run_line.strip()!r}"
+    )
+    assert "not integration" not in run_line, (
+        f"{CI_WORKFLOW}: `integration` job's pytest step still excludes "
+        f"integration tests — got: {run_line.strip()!r}"
+    )
+
+    assert re.search(r'GRAPHKNOWS_REQUIRE_ARCADEDB:\s*"?1"?', integration_text), (
+        f"{CI_WORKFLOW}: `integration` job does not set "
+        "GRAPHKNOWS_REQUIRE_ARCADEDB=1 — a container that never started "
+        "would skip instead of fail"
+    )
+
+    # The job must run on every pull request and every push to main. It
+    # carries no job-level `if:` of its own, so it inherits the workflow's
+    # `on:` block (`pull_request: branches: [main]` / `push: branches:
+    # [main]`) unmodified rather than narrowing it to a subset of events.
+    assert not re.search(r"^\s*if:", integration_text, re.MULTILINE), (
+        f"{CI_WORKFLOW}: `integration` job carries an `if:` guard that could "
+        "narrow it below every pull request and every push to main"
+    )
+    assert re.search(r"^  pull_request:$", CI_TEXT, re.MULTILINE), (
+        f"{CI_WORKFLOW}: no workflow-level `pull_request:` trigger — the "
+        "`integration` job would not run on pull requests"
+    )
+    assert re.search(r"^\s*branches:\s*\[main\]\s*$", CI_TEXT, re.MULTILINE), (
+        f"{CI_WORKFLOW}: no `branches: [main]` push trigger — the "
+        "`integration` job would not run on pushes to main"
+    )
+
+
 def test_smoke_job_declares_the_interpreters_the_classifiers_name() -> None:
     """`requires-python = ">=3.11"` and the classifier list advertise which
     interpreters this package supports; the `smoke` job is what actually

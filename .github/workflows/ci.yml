@@ -188,6 +188,88 @@ jobs:
           --compare-branch="origin/$BASE_REF"
           --fail-under="$DIFF_COVERAGE_MIN"
 
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    # The eleven `integration`-marked tests currently never run in any workflow —
+    # `gate`'s pytest step above excludes them (`-m "not integration"`) and nothing
+    # else invokes them, so a live-storage regression merges unseen (FR-008,
+    # SC-005). This job runs them against a real ArcadeDB service container on
+    # every pull request and every push to main, the same events `on:` above
+    # already fires this workflow for.
+    #
+    # Same model bake as `gate`: several of the eleven load the real GLiNER/relex
+    # and spaCy models (tests/extraction/test_blind_ner_fallback.py,
+    # tests/extraction/test_ontology_relation_labels.py) — live ArcadeDB is not
+    # the only infrastructure these need.
+    timeout-minutes: 60
+    services:
+      arcadedb:
+        # Same image and root password as docker-compose.yaml's dev stack;
+        # GraphKnowsSettings' default GRAPHKNOWS_ARCADEDB_PASSWORD is "changeme",
+        # so the pytest step below reaches it with no override.
+        image: arcadedata/arcadedb:26.5.1
+        ports:
+          - 2480:2480
+        env:
+          ARCADEDB_OPTS_MEMORY: "-Xms2G -Xmx4G"
+          JAVA_OPTS: "-XX:+UseZGC -XX:+ZGenerational -Darcadedb.server.rootPassword=changeme"
+        # The arcadedb image ships wget, not curl — same probe compose's
+        # healthcheck uses. Without a health check GitHub Actions starts the
+        # service and moves straight to `steps:`, so the first test to hit it
+        # would race the JVM's own startup instead of waiting behind it.
+        options: >-
+          --health-cmd "wget -q -O /dev/null http://localhost:2480/api/v1/ready"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # No authenticated git operation happens after checkout in this job.
+          persist-credentials: false
+
+      - name: free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          python-version: "3.13"
+
+      - name: install
+        run: uv sync --locked --extra ontology --group dev
+
+      - name: install spacy model
+        run: >-
+          uv pip install
+          "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
+
+      - name: cache models
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            .cache/huggingface
+            .cache/nltk_data
+            .cache/graphknows
+          key: models-${{ hashFiles('uv.lock', 'scripts/bake_models.py', 'graphknows/settings.py') }}
+          restore-keys: models-
+
+      - name: bake models
+        run: uv run python scripts/bake_models.py
+
+      - name: pytest -m integration against live ArcadeDB
+        env:
+          HF_HUB_OFFLINE: "1"
+          GRAPHKNOWS_CACHE_DIR: .cache/graphknows
+          # CI's promise that the service container above is up: a container
+          # that never started must fail the job, not report a suite that
+          # skipped past every test as green.
+          GRAPHKNOWS_REQUIRE_ARCADEDB: "1"
+        run: uv run python -m pytest -q -m integration
+
   audit:
     name: audit
     runs-on: ubuntu-latest
