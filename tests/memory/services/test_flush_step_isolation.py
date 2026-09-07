@@ -22,11 +22,6 @@ def _store() -> MagicMock:
     # in tests/memory/test_turn_buffer.py (integration, live ArcadeDB).
     store.list_turns = AsyncMock(return_value=[])
     store.mark_turns_consolidated = AsyncMock(return_value=0)
-    # flush_memory now also runs the settings-gated default channels
-    # (issue #142): WordNetChannel.populate() queries for this session's
-    # chunks before doing anything else, so an empty result is enough for it
-    # to no-op cleanly like every other channel here.
-    store.query = AsyncMock(return_value=[])
     store.compute_and_persist_pagerank = AsyncMock(return_value=3)
     store.compute_graph_embeddings = AsyncMock(return_value=4)
     store.compute_communities = AsyncMock(return_value=5)

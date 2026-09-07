@@ -42,7 +42,7 @@ class TestBuildChannels:
             GRAPHKNOWS_ONTOLOGY="",
             GRAPHKNOWS_MODE=MemoryMode.llm_free,
         )
-        assert [c.name for c in default_channels(s)] == ["wordnet"]
+        assert [c.name for c in default_channels(s)] == []
 
     def test_ontology_channel_is_opt_in(self):
         s = GraphKnowsSettings(
@@ -51,7 +51,7 @@ class TestBuildChannels:
             GRAPHKNOWS_ONTOLOGY="",
             GRAPHKNOWS_MODE=MemoryMode.llm_free,
         )
-        assert [c.name for c in default_channels(s)] == ["ontology", "wordnet"]
+        assert [c.name for c in default_channels(s)] == ["ontology"]
 
     def test_frames_channel_added_when_enabled(self):
         s = GraphKnowsSettings(
@@ -60,7 +60,7 @@ class TestBuildChannels:
             GRAPHKNOWS_ONTOLOGY="",
             GRAPHKNOWS_MODE=MemoryMode.llm_free,
         )
-        assert [c.name for c in default_channels(s)] == ["frame", "ontology", "wordnet"]
+        assert [c.name for c in default_channels(s)] == ["frame", "ontology"]
 
     def test_frame_channel_runs_in_both_modes(self):
         """The profile filter is gone; every channel declared both modes anyway."""
