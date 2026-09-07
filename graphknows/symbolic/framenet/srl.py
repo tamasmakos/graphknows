@@ -19,12 +19,14 @@ from __future__ import annotations
 import importlib.util
 import os
 import re
+import threading
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
 from graphknows.exceptions import MissingExtraError
 
+_lock = threading.Lock()
 _model: Any = None
 # Sentence text -> its parse, with SENTENCE-LOCAL offsets (see _parse_sentences).
 _sentence_cache: dict[str, tuple[tuple[str, int, tuple], ...]] = {}
@@ -86,7 +88,11 @@ class FrameHit:
 def _load() -> Any:
     """The parser, loaded once per process."""
     global _model
-    if _model is None:
+    if _model is not None:
+        return _model
+    with _lock:
+        if _model is not None:  # another thread won the race while we waited
+            return _model
         try:
             from frame_semantic_transformer import (  # type: ignore[import-untyped]
                 FrameSemanticTransformer,
@@ -108,7 +114,7 @@ def _load() -> Any:
             # batch is free throughput; lower it if VRAM is tight (6 GB fits 32).
             batch_size=int(os.environ.get("GRAPHKNOWS_FRAME_SRL_BATCH", "32")),
         )
-    return _model
+        return _model
 
 
 def _use_gpu() -> bool:

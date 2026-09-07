@@ -9,6 +9,8 @@ see each other's loaded model.
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any
 
 import pytest
@@ -115,4 +117,45 @@ def test_five_call_sites_share_at_most_two_pipelines(monkeypatch: pytest.MonkeyP
     )
     assert framenet_pipeline is not worth_pipeline, (
         "framenet._spacy() uses disable=['ner'] and must not share the plain pipeline"
+    )
+
+
+def test_concurrent_loads_build_one_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Threads racing a cold cache (e.g. ``asyncio.to_thread`` workers) must not
+    each load their own copy of a hundreds-of-MB model (FR-039)."""
+    import spacy
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def slow_fake(name: str, **options: Any) -> _FakePipeline:
+        # Widens the race window so two threads both observing a cache miss,
+        # without the lock, would both reach here before either writes back.
+        time.sleep(0.05)
+        calls.append((name, options))
+        return _FakePipeline()
+
+    monkeypatch.setattr(spacy, "load", slow_fake)
+
+    from graphknows.nlp import load_spacy_model
+
+    n_threads = 8
+    barrier = threading.Barrier(n_threads)
+    results: list[Any] = [None] * n_threads
+
+    def worker(i: int) -> None:
+        barrier.wait()  # release every thread at once, all racing a cold cache
+        results[i] = load_spacy_model("gk_fake_model")
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(calls) == 1, (
+        f"expected exactly 1 spacy.load call across {n_threads} racing threads, "
+        f"got {len(calls)}: {calls}"
+    )
+    assert all(r is results[0] for r in results), (
+        "every thread must receive the same pipeline instance"
     )
