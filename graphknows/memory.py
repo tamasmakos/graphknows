@@ -15,6 +15,14 @@ import uuid
 from collections import defaultdict
 from typing import Any
 
+from graphknows.bounds import (
+    bounded,
+    check_limit,
+    check_metadata_size,
+    check_scope_id,
+    check_text_length,
+    check_top_k,
+)
 from graphknows.exceptions import ConfigurationError
 from graphknows.ingestion.parsers.text import strip_content_heading
 from graphknows.models.hit import Hit
@@ -336,6 +344,7 @@ class Memory:
         finally:
             await service.close()
 
+    @bounded
     async def ingest_memory(
         self,
         messages: str | list[dict[str, Any]] | dict[str, Any] = "",
@@ -363,6 +372,14 @@ class Memory:
         """
         if text and not messages:
             messages = text
+
+        check_scope_id(session_id, "session_id")
+        check_scope_id(user_id, "user_id")
+        check_scope_id(agent_id, "agent_id")
+        check_scope_id(run_id, "run_id")
+        check_metadata_size(metadata)
+        if isinstance(messages, str):
+            check_text_length(messages, "text")
 
         from graphknows.models.message import normalize_messages
         from graphknows.models.scope import MemoryScope
@@ -449,6 +466,7 @@ class Memory:
         finally:
             await service.close()
 
+    @bounded
     async def recall_memory(
         self,
         query: str,
@@ -485,11 +503,16 @@ class Memory:
         to False so the MCP server and web UI keep today's session-scoped graph
         behaviour unless they opt in.
         """
-        # No ceiling. The caller decides how much memory it wants and pays the
-        # context for it. A cap here was measured discarding evidence the
-        # retriever had already ranked: a recall-vs-depth sweep on conv-30
-        # plateaued at 0.827 under the old cap of 100 and reads as gold chunks
-        # being UNREACHABLE, when lifting it reaches 1.000 at k=369.
+        # Bounded at the trust boundary (FR-030), not silently clamped: a
+        # top_k above MAX_TOP_K is rejected. It used to have no ceiling at all
+        # — measured discarding evidence the retriever had already ranked (a
+        # recall-vs-depth sweep on conv-30 plateaued at 0.827 under an old cap
+        # of 100 and read as gold chunks being UNREACHABLE) — but an unbounded
+        # top_k also multiplies straight into the retriever's pool_k and the
+        # store's k_pre = top_k * 20, so an oversized request is a resourcing
+        # problem before it is a ranking one.
+        check_scope_id(session_id, "session_id")
+        check_top_k(top_k)
         top_k = max(1, top_k)
         if scope not in {"stm", "ltm", "both"}:
             scope = "both"
@@ -1147,8 +1170,11 @@ class Memory:
             return {"error": f"Entity not found: {name}"}
         return {k: v for k, v in rows[0].items() if not k.startswith("@")}
 
+    @bounded
     async def ltm_entities(self, session_id: str = "", limit: int = 200) -> dict[str, Any]:
         """List ENTITY nodes from the golden graph, optionally scoped to one session."""
+        check_scope_id(session_id, "session_id")
+        check_limit(limit)
         from graphknows.storage import build_graph_store
 
         store = build_graph_store(self.settings, self.namespace)

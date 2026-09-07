@@ -27,8 +27,8 @@ async def memory_query(
     Args:
         query: Natural-language question or search phrase.
         session_id: Session to scope the search to.
-        top_k: Maximum hits to return. Uncapped: the caller decides how much
-            memory it wants and pays the context for it.
+        top_k: Maximum hits to return, up to 100 (FR-030); a higher value is
+            rejected rather than clamped.
         scope: Which memory tier to search — ``"stm"`` (this session's buffered,
             unflushed turns), ``"ltm"`` (the graph), or ``"both"`` (default).
 

@@ -21,6 +21,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on broke
 
     raise BrokenInstallError("The BM25 retrieval channel", "rank-bm25") from exc
 
+from graphknows.bounds import check_top_k
 from graphknows.channels.base import ChannelContext
 from graphknows.ranking.rrf import (
     FUSION_ALPHA,
@@ -180,6 +181,10 @@ class DETRetriever:
         scope: str = "both",
     ) -> RetrievalContext:
         """Run deterministic recall and return RRF-merged results."""
+        # Bounded here too (FR-030): a direct caller of DETRetriever bypasses
+        # the Memory facade's own check, and top_k multiplies straight into
+        # pool_k below and the store's k_pre = top_k * 20.
+        check_top_k(top_k)
         log.debug(
             "DET retrieve query=%r session=%s scope=%s top_k=%d",
             query,

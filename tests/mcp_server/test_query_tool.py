@@ -15,12 +15,18 @@ from unittest.mock import patch
 
 import pytest
 
+from graphknows.exceptions import ConfigurationError
 from graphknows.models.hit import Hit
 from graphknows.server.mcp.tools.query import memory_query
 
 
 class _FakeRuntime:
-    """Records the recall it was asked for; returns typed hits."""
+    """Records the recall it was asked for; returns typed hits.
+
+    Mirrors the facade's own FR-030 bound (top_k above 100 raises) so a test
+    here can assert the tool does not intercept or reinterpret that — only
+    forward it, the same way it forwards ``scope``.
+    """
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -43,6 +49,8 @@ class _FakeRuntime:
                 "cross_session": cross_session,
             }
         )
+        if top_k > 100:
+            raise ConfigurationError(f"top_k exceeds 100 (got {top_k})")
         return {
             "hits": [
                 Hit(
@@ -110,13 +118,22 @@ async def test_hits_carry_the_speaker_and_timestamp(runtime: _FakeRuntime) -> No
 
 
 @pytest.mark.asyncio
-async def test_top_k_is_not_capped(runtime: _FakeRuntime) -> None:
-    """The facade removed its ceiling on measurement; the tool kept one at 100.
+async def test_top_k_over_the_bound_is_rejected_not_capped(runtime: _FakeRuntime) -> None:
+    """FR-030 replaces the old "no ceiling" contract with a rejection, not a clamp.
 
-    A recall-vs-depth sweep plateaued at 0.827 under the cap and read as gold
-    chunks being unreachable; lifting it reached 1.000 at k=369.
+    This rewrites ``test_top_k_is_not_capped`` (the single C-001 exception in
+    launch-remediation): it used to assert that top_k=369 flowed through
+    unchanged, evidence for a recall-vs-depth sweep on conv-30 where an old
+    cap of 100 plateaued evidence_recall at 0.827 — read as gold chunks being
+    unreachable — and lifting it reached 1.000 at k=369. FR-030 reinstates a
+    ceiling at the trust boundary for resourcing reasons (top_k multiplies
+    into the retriever's pool_k and the store's k_pre = top_k * 20), but as a
+    rejection rather than the old silent clamp. The tool is a thin adapter:
+    it must not swallow or reinterpret that rejection, only forward top_k
+    untouched and let it propagate.
     """
-    await memory_query("cat", top_k=369)
+    with pytest.raises(ConfigurationError):
+        await memory_query("cat", top_k=369)
 
     assert runtime.calls[0]["top_k"] == 369
 
