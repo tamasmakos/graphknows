@@ -11,6 +11,7 @@ Authentication uses HTTP Basic Auth (root + server password).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -27,6 +28,17 @@ from graphknows.exceptions import StoreError
 # another's statements.
 SESSION_HEADER = "arcadedb-session-id"
 _session: ContextVar[str | None] = ContextVar("arcadedb_session", default=None)
+
+# _send's own retry budget (FR-034), on top of AsyncHTTPTransport(retries=3).
+# The transport's retries cover only a failed *connection attempt*; they do
+# not cover a response that arrived (a 5xx — ArcadeDB wraps every server-side
+# exception, lock contention included, as a 500 with no dedicated status) nor
+# a TransportError raised after the connection was already open (a read/write
+# timeout mid-request). Backoff is small and unjittered: this is a same-host
+# service call on the ingest hot path, not a multi-tenant provider API.
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF_BASE_S = 0.1
+_RETRY_BACKOFF_CAP_S = 2.0
 
 
 def _raise_for_status(r: httpx.Response) -> None:
@@ -104,18 +116,38 @@ class ArcadeDBClient:
         return self._client
 
     async def _send(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        """Issue one request, wrapping a transport failure as :class:`StoreError`.
+        """Issue one request, retrying transient failures (FR-034).
 
-        ``httpx.TransportError`` (connection refused, DNS failure, timeout) means
-        the request never reached ArcadeDB at all — the counterpart of
-        ``_raise_for_status`` for a response that did. Every request the client
-        makes routes through here, so no caller ever sees a raw ``httpx``
-        exception.
+        Retried, up to ``_RETRY_ATTEMPTS`` total tries: an HTTP 5xx response and
+        a ``httpx.TransportError`` raised after the connection was already open
+        (connection-*establishment* failures are the transport's own job, via
+        ``AsyncHTTPTransport(retries=3)``). Any response under 500 — including
+        one carrying an application error an idempotent caller matches on, such
+        as "already exists" — is returned on the first try, unretried.
+
+        Retrying a write this way trades a rare double-apply (the first attempt
+        actually reached ArcadeDB but the response was what timed out) for not
+        surfacing a transient 5xx/timeout as a hard failure; ``transaction()``
+        is how a caller that cannot accept that gets atomicity instead.
+
+        A final ``httpx.TransportError`` still becomes :class:`StoreError` —
+        the counterpart of ``_raise_for_status`` for a request that never got a
+        response at all — so no caller ever sees a raw ``httpx`` exception.
         """
-        try:
-            return await self._c().request(method, url, **kwargs)
-        except httpx.TransportError as exc:
-            raise StoreError(f"ArcadeDB request to {url} failed: {exc}") from exc
+        last_exc: httpx.TransportError | None = None
+        for attempt in range(1, _RETRY_ATTEMPTS + 1):
+            try:
+                response = await self._c().request(method, url, **kwargs)
+            except httpx.TransportError as exc:
+                last_exc = exc
+            else:
+                if response.status_code < 500 or attempt == _RETRY_ATTEMPTS:
+                    return response
+            if attempt < _RETRY_ATTEMPTS:
+                wait = min(_RETRY_BACKOFF_CAP_S, _RETRY_BACKOFF_BASE_S * 2 ** (attempt - 1))
+                await asyncio.sleep(wait)
+        assert last_exc is not None  # a 5xx response returns above on the last attempt
+        raise StoreError(f"ArcadeDB request to {url} failed: {last_exc}") from last_exc
 
     # ------------------------------------------------------------------
     # Database lifecycle
