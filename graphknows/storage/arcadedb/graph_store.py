@@ -905,24 +905,26 @@ class GraphStore(ArcadeStoreBase):
     async def _supersede_edge(self, predicate: str, src_norm: str, dst_norm: str, now: str) -> None:
         """Tombstone any current edge for (src, predicate) pointing elsewhere.
 
-        Called only for single-valued predicates. Sets ``invalid_at``/
-        ``is_current=false`` instead of deleting, preserving history.
+        Called only for single-valued predicates, and only from inside the
+        ``self.transaction()`` block ``write_relation`` opens around this call
+        and the MERGE that follows it. Raises rather than swallowing: silently
+        skipping a failed tombstone here used to let the MERGE go on to write a
+        second current edge beside the one this call failed to retire — the
+        exact double-current-edge state a single-valued predicate must never
+        reach. Left to propagate, the shared transaction rolls both writes back
+        instead. Sets ``invalid_at``/``is_current=false`` instead of deleting,
+        preserving history.
         """
-        try:
-            await self.command(
-                "MATCH (a:ENTITY {name_norm: $src})-[r:REL]->(b:ENTITY) "
-                "WHERE r.predicate = $predicate AND r.is_current = true "
-                "AND b.name_norm <> $dst "
-                "SET r.invalid_at = $now, r.is_current = false",
-                src=src_norm,
-                dst=dst_norm,
-                predicate=predicate,
-                now=now,
-            )
-        except Exception as exc:
-            logger.debug(
-                "_supersede_edge %s (%s -> !=%s) skipped: %s", predicate, src_norm, dst_norm, exc
-            )
+        await self.command(
+            "MATCH (a:ENTITY {name_norm: $src})-[r:REL]->(b:ENTITY) "
+            "WHERE r.predicate = $predicate AND r.is_current = true "
+            "AND b.name_norm <> $dst "
+            "SET r.invalid_at = $now, r.is_current = false",
+            src=src_norm,
+            dst=dst_norm,
+            predicate=predicate,
+            now=now,
+        )
 
     async def write_relation(self, write: RelationWrite) -> None:
         """MERGE a dynamic relation edge (type = taxonomy predicate).
@@ -1020,8 +1022,7 @@ class GraphStore(ArcadeStoreBase):
         now = datetime.now(UTC).isoformat()
 
         # A replayed dead edge must not tombstone the winner's live sibling.
-        if is_current and await self._is_functional(canon, predicate):
-            await self._supersede_edge(predicate, src_norm, dst_norm, now)
+        supersede = is_current and await self._is_functional(canon, predicate)
 
         evidence_set = _evidence_set(chunk_id)
         if not chunk_id:
@@ -1058,7 +1059,7 @@ class GraphStore(ArcadeStoreBase):
         # unreliable for MATCHING); the values stay bound parameters.
         key_sql = "".join(f", {column}: $key_{column}" for column in (merge_key or {}))
         key_params = {f"key_{column}": value for column, value in (merge_key or {}).items()}
-        await self.command(
+        merge_cypher = (
             f"MERGE (a:ENTITY {{name_norm: $src_nn}}) "
             f"SET a.name = coalesce(a.name, $src), a.state = coalesce(a.state, 'raw'), "
             f"    a.type = coalesce(a.type, $src_type) "
@@ -1093,27 +1094,42 @@ class GraphStore(ArcadeStoreBase):
             f"        WHEN coalesce(r.ontology_blocked, false) OR $ont_blocked THEN null "
             f"        ELSE coalesce(r.ontology_property, $ont_prop) END, "
             f"    {verifier_set}"
-            f"    r.created_at = coalesce(r.created_at, $now)",
-            src_nn=src_norm,
-            dst_nn=dst_norm,
-            src=src_name,
-            dst=dst_name,
-            predicate=predicate,
-            fact=fact,
-            conf=float(confidence),
-            valid_at=valid_at or None,
-            source=source,
-            src_type=src_type or None,
-            dst_type=dst_type or None,
-            ont_prop=ontology_property or None,
-            ont_blocked=bool(ontology_blocked),
-            vscore=None if verifier_score is None else float(verifier_score),
-            invalid_at=invalid_at or None,
-            canon=canon,
-            anchor=anchor,
-            now=now,
-            **key_params,
+            f"    r.created_at = coalesce(r.created_at, $now)"
         )
+        merge_params: dict[str, Any] = {
+            "src_nn": src_norm,
+            "dst_nn": dst_norm,
+            "src": src_name,
+            "dst": dst_name,
+            "predicate": predicate,
+            "fact": fact,
+            "conf": float(confidence),
+            "valid_at": valid_at or None,
+            "source": source,
+            "src_type": src_type or None,
+            "dst_type": dst_type or None,
+            "ont_prop": ontology_property or None,
+            "ont_blocked": bool(ontology_blocked),
+            "vscore": None if verifier_score is None else float(verifier_score),
+            "invalid_at": invalid_at or None,
+            "canon": canon,
+            "anchor": anchor,
+            "now": now,
+            **key_params,
+        }
+        # Single-valued predicates tombstone the old current edge and MERGE the
+        # new one as one ArcadeDB transaction (T013's context manager), not two
+        # independent HTTP calls: a failure between them must undo both, or the
+        # old edge survives as current beside a brand-new current edge —
+        # exactly the double-current-edge state a single-valued predicate must
+        # never reach. Multi-valued predicates never tombstone, so there is
+        # nothing to keep atomic with and the plain single call is unchanged.
+        if supersede:
+            async with self.transaction():
+                await self._supersede_edge(predicate, src_norm, dst_norm, now)
+                await self.command(merge_cypher, **merge_params)
+        else:
+            await self.command(merge_cypher, **merge_params)
 
         # Provenance for the endpoints this call just MERGEd. Without it an
         # entity that only ever appears as a relation argument has no edge back
