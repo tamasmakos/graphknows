@@ -54,7 +54,7 @@ class TestAsksForADate:
 
     def test_the_word_must_be_a_word_not_a_substring(self) -> None:
         """ "whenever" and "Glasgow" must not trip a \\bwhen\\b / \\bhow old\\b match."""
-        assert not asks_for_a_date("Whenever possible, what does Jon prefer?") or True
+        assert not asks_for_a_date("Whenever possible, what does Jon prefer?")
         assert not asks_for_a_date("What is the withering process?")
 
 
