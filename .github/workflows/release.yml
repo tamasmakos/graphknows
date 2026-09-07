@@ -22,8 +22,56 @@ jobs:
     # narrowing this to named secrets is tracked separately.
     secrets: inherit # zizmor: ignore[secrets-inherit] 2026-08-27
 
-  publish:
+  stack:
+    # The one proof nothing else here gives: that deploy/Dockerfile actually
+    # builds and the stack it starts actually answers a query. `publish`
+    # depends on this job, so a broken image or a failing acceptance.sh fails
+    # the release before any asset is attached (FR-004, SC-003).
     needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # deploy/compose.yaml runs the app with GRAPHKNOWS_ENV=production, where
+      # the settings refuse to boot on the default password (FR-005). Compose
+      # interpolates this into both the arcadedb root password and the app's
+      # credentials, so the stack under test is the production shape, not a
+      # relaxed one. A throwaway value: the stack lives for one job.
+      GRAPHKNOWS_ARCADEDB_PASSWORD: release-stack-check
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: download the distribution CI built
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: dist
+          path: dist/
+
+      - name: place the wheel where deploy/Dockerfile expects it
+        # The compose build context is the repo root (deploy/compose.yaml
+        # `context: ..`), and the Dockerfile COPYs the wheel by its exact
+        # filename, not a glob.
+        run: cp dist/*.whl .
+
+      - name: build the release image
+        run: docker compose -f deploy/compose.yaml build
+
+      - name: bring up the stack
+        # --wait honours arcadedb's healthcheck, so a database that never
+        # becomes ready fails here with a named service instead of timing out
+        # inside acceptance.sh.
+        run: docker compose -f deploy/compose.yaml up -d --wait
+
+      - name: run the acceptance script
+        run: sh deploy/acceptance.sh
+
+      - name: tear down the stack
+        if: always()
+        run: docker compose -f deploy/compose.yaml down -v
+
+  publish:
+    needs: [ci, stack]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
