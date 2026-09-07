@@ -788,8 +788,14 @@ class _SpacySchemaMiner:
         """The shared spaCy pipeline, memoized by :func:`graphknows.nlp.load_spacy_model`."""
         return load_spacy_model(self._model_name)
 
-    def build(self, text: str, speaker: str = "") -> _DynamicSchema:
-        return self._build_from_doc(self.nlp(text), speaker)
+    def build(self, text: str, speaker: str = "", doc: Any | None = None) -> _DynamicSchema:
+        """Mine the schema for *text*, parsing it unless the caller already has a ``doc``.
+
+        ``GLiNER2EntityExtractor.extract`` hands over the doc its own
+        :meth:`~GLiNER2EntityExtractor.parse` memo just produced, so the window
+        is parsed once per turn rather than once here and again there.
+        """
+        return self._build_from_doc(doc if doc is not None else self.nlp(text), speaker)
 
     def build_batch(self, texts: list[str], speakers: Sequence[str] = ()) -> list[_DynamicSchema]:
         """Mine schemas for many chunks via one batched ``nlp.pipe`` pass.
@@ -1060,7 +1066,11 @@ class GLiNER2EntityExtractor:
         self._ensure_model_loaded()
         assert self._gliner is not None
 
-        dynamic_schema = self._schema_miner.build(text, speaker)
+        # Schema mining used to re-parse text that self.parse() had already (or
+        # was about to) cache for lexical labelling / frame-candidate ranking /
+        # modality -- see its docstring. Parsing here instead of inside build()
+        # populates that same one-entry memo, so the window is parsed once.
+        dynamic_schema = self._schema_miner.build(text, speaker, doc=self.parse(text))
         if not text.strip():
             return ExtractionResult()
         # No early return on an empty entity_spec. The labels handed to relex are

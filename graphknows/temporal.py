@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
+from functools import lru_cache
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -134,6 +135,24 @@ def query_date_candidates(query: str) -> list[str]:
     return candidates
 
 
+@lru_cache(maxsize=128)
+def _parser_for(base: datetime | None) -> Any:
+    """The ``DateDataParser`` for one anchor, built once and reused.
+
+    Every chunk in a document shares the same anchor (the session/turn
+    timestamp), so building a fresh parser per chunk rebuilt the identical
+    thing on every one of them. ``base`` is the whole cache key: ``datetime``
+    is hashable, and a bounded cache keeps a long-running process from
+    accumulating one parser per anchor it has ever seen.
+    """
+    from dateparser.date import DateDataParser  # type: ignore[import-untyped]
+
+    settings: dict[str, Any] = {"PREFER_DATES_FROM": "past"}
+    if base is not None:
+        settings["RELATIVE_BASE"] = base
+    return DateDataParser(settings=settings)
+
+
 def _parse_one(parser: Any, text: str) -> Any:
     """Run one dateparser pass, swallowing locale errors."""
     if not text:
@@ -164,13 +183,8 @@ def resolve_temporal(
     if not spans:
         return []
 
-    from dateparser.date import DateDataParser  # type: ignore[import-untyped]
-
     base = _anchor_to_datetime(anchor)
-    settings: dict[str, Any] = {"PREFER_DATES_FROM": "past"}
-    if base is not None:
-        settings["RELATIVE_BASE"] = base
-    parser = DateDataParser(settings=settings)
+    parser = _parser_for(base)
 
     out: list[dict[str, str]] = []
     seen: set[str] = set()
