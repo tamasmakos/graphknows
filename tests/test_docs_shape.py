@@ -73,3 +73,39 @@ def test_docs_name_no_absent_symbols() -> None:
     assert "graph_embedding" not in topics_text, (
         "topics.md still names the removed graph_embedding topic source"
     )
+
+
+def test_torch_backend_guidance_is_consistent() -> None:
+    """`TORCH_BACKEND` guidance is one value, stated once, referenced everywhere (FR-044).
+
+    Also: the changelog must not describe PyPI Trusted Publisher OIDC publishing,
+    which `release.yml` does not do — it attaches the wheel to a GitHub Release.
+    """
+    dockerfile_text = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    compose_text = (REPO_ROOT / "docker-compose.yaml").read_text(encoding="utf-8")
+
+    pattern = re.compile(r"TORCH_BACKEND[=:]\s*(cu\d+)")
+    recommended = (
+        set(pattern.findall(dockerfile_text))
+        | set(pattern.findall(readme_text))
+        | set(pattern.findall(compose_text))
+    )
+    assert recommended == {"cu126"}, (
+        f"TORCH_BACKEND guidance disagrees across Dockerfile/README.md/docker-compose.yaml: "
+        f"{sorted(recommended)}"
+    )
+
+    changelog_text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    release_workflow_text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "pypi" not in release_workflow_text.lower(), (
+        "release.yml now publishes to PyPI — CHANGELOG.md's correction is stale"
+    )
+    assert "to pypi" not in changelog_text.lower(), (
+        "CHANGELOG.md still claims release.yml publishes to PyPI"
+    )
+    assert "trusted publisher oidc flow" not in changelog_text.lower(), (
+        "CHANGELOG.md still claims release.yml uses the Trusted Publisher OIDC flow"
+    )
