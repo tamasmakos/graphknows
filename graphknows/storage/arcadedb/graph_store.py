@@ -1830,106 +1830,9 @@ class GraphStore(ArcadeStoreBase):
         )
         return len(rows)
 
-    # Full provenance block a grounding row must carry — asserted complete at
-    # the single write choke point rather than trusted at each call site.
-    _GROUNDING_FIELDS = (
-        "name",
-        "uri",
-        "channel",
-        "version",
-        "matcher",
-        "score",
-        "rank",
-        "chunk_id",
-        "span",
-    )
-
-    async def write_groundings(self, rows: list[dict[str, Any]]) -> int:
-        """MERGE ENTITY-[:INSTANCE_OF {provenance}]->ONTOLOGY_CLASS edges.
-
-        The single place a grounding edge is written. Each row must carry the
-        full provenance block (``name, uri, channel, version, matcher, score,
-        rank, chunk_id, span``); a row missing any field raises immediately —
-        a provenance gap that only shows up as a missing property in the graph
-        months later is the silent failure this checks against.
-
-        ``score`` is *that entity's* confidence in being an instance of that
-        class — not the class's own match score. An entity may accumulate
-        several INSTANCE_OF edges — different chunks extract different types,
-        which is legitimate multi-classing. Repeated writes keep the strongest
-        mention rather than the latest, so the stored score does not depend on
-        chunk order.
-
-        ``version`` is part of the MERGE pattern, not just a SET property: a
-        resource upgrade (issue #145) writes new groundings under a new
-        version string, and without version in the key the second write
-        overwrites the first on the same (entity, class) pair — the old and
-        new versions could never coexist. Keying on it means two versions of
-        one grounding are two edges; :meth:`supersede_groundings` is how the
-        older one gets flagged, never overwritten.
-
-        Callers pass only the accepted candidate (``rank`` 0): nothing reads
-        INSTANCE_OF at retrieval today (the ENTITY route through it was
-        measured byte-identical to the direct CHUNK->MATCHES_CLASS route and
-        removed — see the comment in ``search_ontology_classes`` below), so
-        writing k-best sibling edges would triple a write-only layer for no
-        reader.
-        """
-        if not rows:
-            return 0
-        for row in rows:
-            missing = [f for f in self._GROUNDING_FIELDS if row.get(f) is None]
-            if missing:
-                raise ValueError(f"grounding row missing provenance field(s) {missing}: {row}")
-        merged = [
-            {
-                "nn": _name_norm(str(r["name"])),
-                "uri": r["uri"],
-                "channel": r["channel"],
-                "version": r["version"],
-                "matcher": r["matcher"],
-                "score": float(r["score"]),
-                "rank": int(r["rank"]),
-                "chunk_id": r["chunk_id"],
-                "span": r["span"],
-            }
-            for r in rows
-        ]
-        await self.command(
-            "UNWIND $rows AS r "
-            "MATCH (e:ENTITY {name_norm: r.nn}), (o:ONTOLOGY_CLASS {uri: r.uri}) "
-            "MERGE (e)-[i:INSTANCE_OF {version: r.version}]->(o) "
-            "SET i.score = CASE "
-            "    WHEN r.score > coalesce(i.score, 0) THEN r.score "
-            "    ELSE i.score "
-            "END, "
-            "i.channel = r.channel, i.matcher = r.matcher, "
-            "i.rank = r.rank, i.chunk_id = r.chunk_id, i.span = r.span",
-            rows=merged,
-        )
-        return len(merged)
-
-    async def supersede_groundings(self, channel: str, keep_version: str) -> int:
-        """Flag every ``channel`` grounding NOT on ``keep_version`` as superseded.
-
-        Never DELETEs: the point of keying INSTANCE_OF on version (see
-        :meth:`write_groundings`) is that a rebind is a dual-write, not data
-        loss — an evaluated graph keeps its old groundings, flagged, right
-        alongside the new ones. Returns how many edges were flagged.
-        """
-        rows = await self.command(
-            "MATCH (:ENTITY)-[i:INSTANCE_OF]->(:ONTOLOGY_CLASS) "
-            "WHERE i.channel = $channel AND i.version <> $keep_version "
-            "SET i.superseded = true "
-            "RETURN count(i) AS c",
-            channel=channel,
-            keep_version=keep_version,
-        )
-        return int(rows[0].get("c") or 0) if rows else 0
-
     # Full provenance block a WordNet grounding row must carry -- asserted
-    # complete at the single write choke point, same contract as
-    # ``_GROUNDING_FIELDS``.
+    # complete at the single write choke point rather than trusted at each
+    # call site.
     _SENSE_FIELDS = (
         "name",
         "synset_id",
@@ -1961,7 +1864,7 @@ class GraphStore(ArcadeStoreBase):
         span, channel, version, matcher, score, rank``); a row missing any
         field raises immediately -- a provenance gap that only surfaces
         months later as a missing property is exactly the silent failure
-        this guards against, same contract as :meth:`write_groundings`.
+        this guards against.
 
         ``chunk_id``, ``span`` and ``synset`` sit INSIDE the ``HAS_SENSE``
         pattern braces, not only in the SET clause: that is what makes the
@@ -2098,8 +2001,7 @@ class GraphStore(ArcadeStoreBase):
         """MERGE the SOURCE vertex for one (channel, version) import (issue #145).
 
         Keyed on ``"<channel>@<version>"`` so a channel upgrade MERGEs a new
-        vertex rather than overwriting the record of the version it replaces
-        — the same identity gap ``write_groundings`` closes for INSTANCE_OF.
+        vertex rather than overwriting the record of the version it replaces.
         ``imported_at`` defaults to now when the caller does not supply one;
         missing counts default to 0 rather than raising, since a channel that
         drops nothing has no reason to compute a zero itself. Returns the id.

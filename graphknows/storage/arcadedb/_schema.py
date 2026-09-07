@@ -337,17 +337,17 @@ _CORE_DDL: list[tuple[str, str]] = [
     # weak match stays distinguishable from a confident one downstream.
     ("sql", "CREATE EDGE TYPE INSTANCE_OF IF NOT EXISTS"),  # ENTITY -> ONTOLOGY_CLASS
     ("sql", "CREATE PROPERTY INSTANCE_OF.score IF NOT EXISTS DOUBLE"),
-    # Grounding provenance, written by write_groundings so a grounding edge is
-    # attributable to the chunk, resource version and matcher that produced it.
+    # Grounding provenance: attributes a grounding edge to the chunk, resource
+    # version and matcher that produced it.
     ("sql", "CREATE PROPERTY INSTANCE_OF.channel IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY INSTANCE_OF.version IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY INSTANCE_OF.matcher IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY INSTANCE_OF.rank IF NOT EXISTS INTEGER"),
     ("sql", "CREATE PROPERTY INSTANCE_OF.chunk_id IF NOT EXISTS STRING"),
     ("sql", "CREATE PROPERTY INSTANCE_OF.span IF NOT EXISTS STRING"),
-    # Set true by supersede_groundings when a rebind promotes a newer version;
-    # absent (not false) means "not superseded" for every edge written before
-    # this property existed, so an old namespace's groundings are not
+    # True when a rebind promotes a newer version over this edge; absent (not
+    # false) means "not superseded" for every edge written before this
+    # property existed, so an old namespace's groundings are not
     # retroactively flagged.
     ("sql", "CREATE PROPERTY INSTANCE_OF.superseded IF NOT EXISTS BOOLEAN"),
     ("sql", "CREATE EDGE TYPE MATCHES_CLASS IF NOT EXISTS"),  # CHUNK -> ONTOLOGY_CLASS

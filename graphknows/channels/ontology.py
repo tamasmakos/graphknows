@@ -14,8 +14,8 @@ A matched class reaches chunks by one path:
 A second route through ``CHUNK-[:MENTIONS]->ENTITY-[:INSTANCE_OF]->ONTOLOGY_CLASS``
 was measured byte-identical on conv-26 evidence_recall once the pool is
 cosine-reranked, and removed — see the comment in ``graph_store.py``'s
-``search_ontology_classes``. ``write_groundings`` still writes INSTANCE_OF
-edges, but nothing reads them at retrieval today.
+``search_ontology_classes``. The INSTANCE_OF writer that fed it was itself a
+write-only layer and has since been removed (FR-035).
 
 Where frames give abstract questions a route by the situation a chunk evokes,
 classes give them a route by the KIND of thing a chunk is about — "where did

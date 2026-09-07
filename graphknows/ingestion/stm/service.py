@@ -148,49 +148,6 @@ class STMService:
             )
         return self._ingest_handler
 
-    async def rebind(self, channel: str = "ontology") -> dict[str, Any]:
-        """Re-ground ``channel``'s stored mentions against the currently loaded index.
-
-        Dual-write, in this order: read the namespace's existing (not yet
-        superseded) INSTANCE_OF groundings for ``channel``, re-resolve each
-        through the handler's own :meth:`_map_to_class` against the index
-        this service was built with, write the results under the CURRENT
-        version, and only then flag the old version's edges superseded. New
-        groundings land first; old ones are retained and flagged, never
-        deleted — an evaluated graph is not silently rewritten (issue #145).
-        """
-        handler = self._handler()
-        version = getattr(self._ontology_index, "digest", "") or handler._ontology_source
-        rows = await self._store.query(
-            "MATCH (e:ENTITY)-[i:INSTANCE_OF]->(:ONTOLOGY_CLASS) "
-            "WHERE i.channel = $channel AND coalesce(i.superseded, false) = false "
-            "RETURN e.name AS name, e.type AS type, i.chunk_id AS chunk_id, "
-            "i.span AS span",
-            channel=channel,
-        )
-        mappings: list[dict[str, Any]] = []
-        for row in rows:
-            uri, _label, score, matcher = handler._map_to_class(str(row.get("type") or ""))
-            if not uri:
-                continue
-            mappings.append(
-                {
-                    "name": row.get("name"),
-                    "uri": uri,
-                    "channel": channel,
-                    "version": version,
-                    "matcher": matcher,
-                    "score": score,
-                    "rank": 0,
-                    "chunk_id": row.get("chunk_id"),
-                    "span": row.get("span"),
-                }
-            )
-        if mappings:
-            await self._store.write_groundings(mappings)
-        superseded = await self._store.supersede_groundings(channel, keep_version=version)
-        return {"rebound": len(mappings), "superseded": superseded, "version": version}
-
     # ------------------------------------------------------------------
     # Ingest
     # ------------------------------------------------------------------

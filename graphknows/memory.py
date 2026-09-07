@@ -320,22 +320,6 @@ class Memory:
         finally:
             await c.close()
 
-    async def rebind_memory(self, channel: str = "ontology") -> dict[str, Any]:
-        """Re-ground ``channel``'s stored mentions against the currently loaded index.
-
-        A dual-write: new groundings land under the index's current version
-        and the old version's edges are flagged superseded, never deleted —
-        see :meth:`STMService.rebind` (issue #145).
-        """
-        from graphknows.ingestion import build_stm_service
-
-        service = build_stm_service(self.settings, self.namespace)
-        try:
-            await service.connect()
-            return await service.rebind(channel)  # type: ignore[no-any-return]
-        finally:
-            await service.close()
-
     async def redecode(self, session_id: str) -> dict[str, Any]:
         """Re-run the decoder over this session's decode-failed chunks (FR-024).
 

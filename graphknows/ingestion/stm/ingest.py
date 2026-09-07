@@ -34,7 +34,6 @@ from graphknows.ingestion.parsers.text import (
 )
 from graphknows.models.ingest import IngestResult
 from graphknows.storage.arcadedb.graph_store import RelationWrite
-from graphknows.symbolic import match
 
 if TYPE_CHECKING:
     from graphknows.settings import GraphKnowsSettings
@@ -246,136 +245,6 @@ def _attributed(
     return kept
 
 
-def _curated_alias_candidate(
-    key: str, coarse_aliases: dict[str, str], classes: list[Any], label_index: dict[str, str]
-) -> tuple[dict[str, str] | None, bool]:
-    """The curated-alias resolution for ``_lexical_candidates`` rule 1.
-
-    Returns ``(result, abstain)``: ``result`` is the resolved ``{label: uri}``
-    candidate when the alias's target class exists, or ``None`` when there is
-    no alias for ``key`` or it did not resolve (caller falls through to the
-    normal lexical build in either ``None`` case). ``abstain`` is ``True``
-    only for a deliberate empty-string mapping, telling the caller to return
-    ``{}`` outright rather than fall through.
-    """
-    if key not in coarse_aliases:
-        return None, False
-    mapped = coarse_aliases[key]
-    if not mapped:
-        return None, True
-    uri = label_index.get(mapped.casefold())
-    if not uri:
-        uri = next((t.uri for t in classes if t.label.casefold() == mapped.casefold()), "")
-    return ({mapped: uri} if uri else None), False
-
-
-def _lexical_candidates(
-    entity_type: str,
-    classes: list[Any],
-    label_index: dict[str, str],
-    lex_index: dict[str, set[str]] | None,
-    scheme: dict[str, Any] | None,
-    coarse_aliases: dict[str, str],
-) -> dict[str, str]:
-    """``{label: uri}`` candidates for ``entity_type``, from lexical evidence only.
-
-    The anchor law: a grounding candidate may come ONLY from a lexical hit — the
-    exact-label index (``label_index``) or, when built, the SKOS altLabel index
-    (``lex_index``, prefLabel resolved back to a uri via ``scheme`` / ``classes``).
-    Cosine is never consulted here; it may only RANK what this returns.
-
-    Two rules on top of that, in order:
-
-    1. A CURATED alias wins when its target class exists in the loaded
-       ontology. The overlay's ``coarseAliases`` block already says what each
-       of the extractor's guaranteed coarse types (``labels.COARSE``) MEANS in
-       CCO terms — a human curated this, so it is the answer and nothing else
-       is even looked up. A mapped empty string is a deliberate abstention
-       (e.g. ``entity``: untypeable), not a miss. But the alias block is
-       CCO-authored and independent of which base ontology ``GRAPHKNOWS_ONTOLOGY``
-       loads; when the mapped label names no class here, that is not an
-       abstention — fall through to the normal lexical build below so a
-       non-CCO ontology keeps its own exact-label typing.
-    2. A FRAGMENT may not anchor. ``skos.lexicalize`` turns every content word
-       of a class label into a standalone altLabel, so ``lex_index`` can offer
-       a class whose label merely CONTAINS ``entity_type`` as one word among
-       several ("product" -> "Product Transport Facility"). Kept only when
-       every content word of the candidate label is also a content word of
-       ``entity_type`` — the same STRONG-match rule ``lexical.evoked`` applies,
-       for the same reason: one word of a multi-word label is not the
-       ontology's term, it is one of its words. The exact-label branch is
-       exempt: an exact match already names the whole class.
-    """
-    key = entity_type.casefold()
-    alias_result, abstain = _curated_alias_candidate(key, coarse_aliases, classes, label_index)
-    if abstain:
-        return {}
-    if alias_result is not None:
-        return alias_result
-    candidates: dict[str, str] = {}
-    if uri := label_index.get(key):
-        label = next((t.label for t in classes if t.uri == uri), entity_type)
-        candidates[label] = uri
-    if lex_index is not None:
-        from graphknows.symbolic.ontology.skos import content_tokens
-
-        wanted = set(content_tokens(entity_type))
-        for pref in lex_index.get(key, ()):
-            concept = scheme.get(pref) if scheme is not None else None
-            pref_tokens = set(concept.tokens) if concept is not None else set(content_tokens(pref))
-            if not pref_tokens <= wanted:
-                continue
-            uri2 = concept.uri if concept is not None else ""
-            if not uri2:
-                uri2 = next((t.uri for t in classes if t.label.casefold() == pref.casefold()), "")
-            if uri2:
-                candidates.setdefault(pref, uri2)
-    return candidates
-
-
-def _resolve_candidate(
-    entity_type: str, candidates: dict[str, str], index: Any
-) -> tuple[str, str, float, str]:
-    """``(uri, label, score, matcher)`` for an already-anchored candidate set.
-
-    One candidate is the answer at score 1.0 (``"lexical"``): the existing
-    exact-label behaviour, and ``index`` (an ``OntologyIndex``-shaped object)
-    is not touched at all in that case — its embedding matrix may not even
-    exist yet, and a single-candidate lookup has no cosine step to need it.
-    Several candidates are ranked by embedding ``entity_type`` once and reading
-    each candidate's own definition embedding straight off ``index`` — never a
-    full-vocabulary cosine pass, since the candidate set is already anchored
-    and cannot gain a uri the lexical stage did not already offer — then
-    resolved by :func:`graphknows.symbolic.match.accept` (``"lexical+cosine"``).
-    An empty set is the abstention: ``("", "", 0.0, "")``.
-    """
-    if not candidates:
-        return "", "", 0.0, ""
-    if len(candidates) == 1:
-        ((label, uri),) = candidates.items()
-        return uri, label, 1.0, "lexical"
-    from graphknows.storage.embedder import embed_one
-
-    v = np.asarray(embed_one(entity_type), dtype=np.float32).ravel()
-    norm = float(np.linalg.norm(v))
-    if norm == 0.0:
-        return "", "", 0.0, ""
-    v = v / norm
-    sim_of = {
-        uri: float(np.dot(v, term_vec))
-        for uri in candidates.values()
-        if (term_vec := index.term_embedding(uri))
-    }
-    order = sorted(sim_of, key=lambda u: sim_of[u], reverse=True)
-    matched_uri, score = match.accept(
-        order, sim_of, floor=_ONT_CLASS_MIN_SIM, floor_single=_ONT_CLASS_MIN_SIM, margin=0.0
-    )
-    if not matched_uri:
-        return "", "", 0.0, ""
-    label = next(lbl for lbl, u in candidates.items() if u == matched_uri)
-    return matched_uri, label, score, "lexical+cosine"
-
-
 def _decoded_instances(frames: list[dict[str, Any]]) -> list[Any]:
     """``ExtractionResult.frames`` as frame instances, filled, with no model run.
 
@@ -473,19 +342,9 @@ class _STMIngestHandler:
         # returns nonsense (LOCATION -> Organization, ANIMAL -> Goal), so types
         # are matched against the class DEFINITIONS by embedding instead.
         self._property_mapper: Any = None
-        self._uri_by_label: dict[str, str] = {}
-        self._type_cache: dict[str, tuple[str, str, float, str]] = {}
-        # The grounding provenance block's "version" field falls back to this
-        # configured string only when the loaded index has no digest, so a
-        # grounding edge is never written with an empty version. The primary
-        # value is ``self._ontology.digest`` — a content hash over every
-        # term's uri/label/definition — not this file path: two loads of the
-        # same path can carry different content after an ontology upgrade,
-        # and the digest is what makes that visible.
-        self._ontology_source: str = ""
-        # Entity type -> RELATION-profile class, memoised the same way and kept
-        # separate: the two vocabularies are the same file by default but need
-        # not be, and a type resolves against each independently.
+        # Entity type -> RELATION-profile class, memoised per type string:
+        # types repeat across every chunk, so this costs one embedding per
+        # DISTINCT ambiguous type in the corpus.
         self._profile_class_cache: dict[str, tuple[str, float]] = {}
         # Built on first use from the loaded ontology, then reused: the schema is
         # the same for every chunk, and rebuilding it per chunk would re-scan the
@@ -554,11 +413,10 @@ class _STMIngestHandler:
         self._corpus_seen: list[str] = []
         self._lex_frozen: bool = False
         # Corpus size the lexical index was last built at. `_ensure_scheme` is
-        # now called both once per chunk (`_lexical_labels`) and once per
-        # distinct-type cache miss (`_map_to_class`); without this guard every
-        # one of those calls would re-run `build_index` — a full spaCy
-        # re-parse of the corpus — even though the corpus has not grown since
-        # the last build this same chunk.
+        # called from both `_lexical_labels` and `_match_classes` per chunk;
+        # without this guard every one of those calls would re-run
+        # `build_index` — a full spaCy re-parse of the corpus — even though
+        # the corpus has not grown since the last build this same chunk.
         self._lex_built_at: int = -1
         # rdfs:domain / rdfs:range per property label (both multi-valued), and
         # each class's parent chain. These are the ingredients of BOTH halves of
@@ -582,8 +440,6 @@ class _STMIngestHandler:
         if ontology_index is not None:
             settings = self._settings
             self._hint_min_sim = settings.ontology_hint_min_sim
-            self._ontology_source = settings.ontology_source
-            self._uri_by_label = {t.label.casefold(): t.uri for t in ontology_index.classes}
             if self._relations is None:
                 from graphknows.symbolic.ontology import load_ontology_index
 
@@ -1398,9 +1254,8 @@ class _STMIngestHandler:
         decode_state = chunk.decode_state
         filtered = graph_entities(extraction.entities)
         # Definition-described typing (default off). Runs BEFORE the entity write
-        # so a surface only this pass saw is a first-class ENTITY rather than a
-        # dangling INSTANCE_OF, and its result is carried into _link_ontology so
-        # the class it named wins over the embedding guess for that surface.
+        # so a surface only this pass saw is written as a first-class ENTITY
+        # rather than dropped.
         typed = await self._definition_typing(text)
         if typed:
             known = {str(e.get("name", "")).casefold() for e in filtered}
@@ -1442,10 +1297,8 @@ class _STMIngestHandler:
             if filtered:
                 await self._store.write_entities_bulk(session_id, chunk_id, filtered)
 
-            # Ontology layer — tag the chunk with the classes it evokes and link each
-            # entity to its class. Both are additive: an entity that maps to nothing
-            # keeps its extracted type and is written exactly as before.
-            await self._link_ontology(chunk_id, filtered, ontology_classes or [], typed)
+            # Ontology layer — tag the chunk with the classes it evokes.
+            await self._link_ontology(chunk_id, ontology_classes or [])
             await self._link_senses(chunk_id, filtered)
 
             # FRAME layer — match the chunk's embedding against FrameNet definitions
@@ -1752,8 +1605,8 @@ class _STMIngestHandler:
         """Ontology classes this chunk evokes, as ``[(uri, sim)]`` for tagging.
 
         These become persisted MATCHES_CLASS edges, which retrieval trusts, so
-        they obey the same anchor law as entity typing (``_lexical_candidates``):
-        the candidate set comes from lexical evidence, cosine only RANKS it.
+        they obey the anchor law: the candidate set comes from lexical
+        evidence, cosine only RANKS it.
         Absolute cosine over CCO's 1437 class definitions is uncalibrated (see
         the docstring of ``catalog.py``: median 0.409, p95 0.493 on real
         conversation) -- on conv-30 every unanchored tag landed in a 0.557-0.590
@@ -2003,8 +1856,8 @@ class _STMIngestHandler:
     def _map_to_profile_class(self, entity_type: str) -> tuple[str, float]:
         """Map an extracted entity type onto a RELATION-profile class: ``(label, score)``.
 
-        Same two stages as :meth:`_map_to_class` — exact label first ("PERSON" ->
-        ``Person``), then the type string embedded against the class definitions
+        Exact label first ("PERSON" -> ``Person``), then the type string
+        embedded against the class definitions
         — but over the RELATION vocabulary's classes, which is where the
         properties' declared domain and range are written. The anchor law does
         not apply here: this class is only ever read for the domain/range
@@ -2037,107 +1890,13 @@ class _STMIngestHandler:
         self._profile_class_cache[entity_type] = result
         return result
 
-    def _map_to_class(self, entity_type: str) -> tuple[str, str, float, str]:
-        """Map a free-text entity type onto an ontology class: ``(uri, label, score, matcher)``.
-
-        The candidate set is built ONLY from lexical evidence — the exact-label
-        index and, once built, the SKOS altLabel index — never from cosine over
-        the whole vocabulary (the anchor law). A single candidate scores 1.0
-        (``matcher="lexical"``, the common case, because the ontology's own
-        labels were injected into the extractor's vocabulary); several are
-        ranked by embedding the type string once and resolved by
-        :func:`graphknows.symbolic.match.accept` (``matcher="lexical+cosine"``).
-        Results are memoised per type string: types repeat across every chunk,
-        so this costs one embedding per DISTINCT ambiguous type in the corpus.
-
-        ``("", "", 0.0, "")`` means unmapped (no lexical candidate at all, the
-        anchor abstention) — and an unmapped entity is still written with its
-        extracted type: this is enrichment, not a filter.
-        """
-        if self._ontology is None or not entity_type:
-            return "", "", 0.0, ""
-        if (hit := self._type_cache.get(entity_type)) is not None:
-            return hit
-        self._ensure_scheme()
-        candidates = _lexical_candidates(
-            entity_type,
-            self._ontology.classes,
-            self._uri_by_label,
-            self._lex_index,
-            self._scheme,
-            self._coarse_aliases,
-        )
-        if not candidates:
-            self._abstentions["unanchored_type"] += 1
-        result = _resolve_candidate(entity_type, candidates, self._ontology)
-        self._type_cache[entity_type] = result
-        return result
-
     async def _link_ontology(
-        self,
-        chunk_id: str,
-        entities: list[dict[str, Any]],
-        ontology_classes: list[tuple[str, float]],
-        typed: dict[str, tuple[str, float]] | None = None,
+        self, chunk_id: str, ontology_classes: list[tuple[str, float]]
     ) -> None:
-        """Write the chunk's MATCHES_CLASS tags and its entities' INSTANCE_OF edges.
-
-        The edge score is THIS entity's confidence in being an instance of THAT
-        class: the extractor's own confidence for the entity times the
-        type->class mapping confidence. The mapping score alone is a property of
-        the (type, class) pair and identical for every entity sharing the type,
-        so on its own it can rank nothing; with the per-entity factor two
-        entities of one class carry different scores.
-        ``typed`` is the definition-described pass's verdict, keyed by casefolded
-        surface. Where it has one it wins, because it read the class DEFINITION
-        against the sentence, while :meth:`_map_to_class` only ever sees the
-        extracted TYPE STRING in isolation — that is the difference that moved
-        ``research`` off OCCUPATION and onto Act. Surfaces it did not type fall
-        through to the existing path unchanged.
-        """
-        if self._ontology is None:
+        """Write the chunk's MATCHES_CLASS tags for the ontology classes it evokes."""
+        if self._ontology is None or not ontology_classes:
             return
-        if ontology_classes:
-            await self._store.write_class_matches(chunk_id, ontology_classes)
-        version = getattr(self._ontology, "digest", "") or self._ontology_source
-        by_norm = {s.casefold(): v for s, v in (typed or {}).items()}
-        mappings: list[dict[str, Any]] = []
-        for ent in entities:
-            name = str(ent.get("name", ""))
-            hit = by_norm.get(name.casefold())
-            if hit and (uri := self._uri_by_label.get(hit[0].casefold())):
-                mappings.append(
-                    {
-                        "name": name,
-                        "uri": uri,
-                        "channel": "ontology",
-                        "version": version,
-                        "matcher": "definition_typing",
-                        "score": hit[1],
-                        "rank": 0,
-                        "chunk_id": chunk_id,
-                        "span": name,
-                    }
-                )
-                continue
-            uri, _label, score, matcher = self._map_to_class(str(ent.get("type", "")))
-            if uri:
-                confidence = float(ent.get("confidence", ent.get("score", 1.0)) or 0.0)
-                mappings.append(
-                    {
-                        "name": name,
-                        "uri": uri,
-                        "channel": "ontology",
-                        "version": version,
-                        "matcher": matcher,
-                        "score": confidence * score,
-                        "rank": 0,
-                        "chunk_id": chunk_id,
-                        "span": name,
-                    }
-                )
-        if mappings:
-            await self._store.write_groundings(mappings)
+        await self._store.write_class_matches(chunk_id, ontology_classes)
 
     async def _link_senses(self, chunk_id: str, entities: list[dict[str, Any]]) -> None:
         """Ground each entity to its WordNet most-frequent-sense (MFS), lazily.
@@ -2169,10 +1928,9 @@ class _STMIngestHandler:
                         "score": score,
                         "rank": 0,
                         "chunk_id": chunk_id,
-                        # ponytail: surface name as span, same convention
-                        # _link_ontology uses; a character offset is the
-                        # upgrade path if two occurrences of one surface in
-                        # a single chunk ever need distinguishing.
+                        # ponytail: surface name as span; a character offset
+                        # is the upgrade path if two occurrences of one
+                        # surface in a single chunk ever need distinguishing.
                         "span": name,
                     }
                 )
