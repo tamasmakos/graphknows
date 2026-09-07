@@ -345,6 +345,77 @@ def _drop_subsumed_siblings(
     return absorbed_by
 
 
+def _frame_co_role_rel_rows(
+    ordered: list[tuple[str, str, str]], frame: str, fid: str, inst: dict[str, Any]
+) -> tuple[list[dict[str, Any]], int]:
+    """Entity adjacency for one instance: every cross-role ordered filler pair.
+
+    Capped — a 7-role instance would otherwise be 21 edges, and the tail of
+    that list is co-role trivia, not fact.
+
+    ``a[0] != b[0]`` is the load-bearing half. Two fillers of the SAME role
+    are co-participants, not a relation: emitting them produced `(Gina)
+    -Residence[Co_resident->Co_resident]-> (Jon)` and `(banker)
+    -Avoiding[Agent->Agent]-> (Gina)`, which read as facts and assert nothing
+    true. Measured on conv-30 before this filter: **829 of 2590 reified
+    edges — 32% of the fact layer — related a role to itself.**
+    Co-participation is already expressed correctly, by both fillers hanging
+    off the same FRAME_INSTANCE via PLAYS_ROLE; the projection only ever
+    needed to add the cross-role adjacency that walking entity-to-entity
+    cannot otherwise reach.
+
+    Returns the REL rows plus the count of same-role pairs refused (for the
+    caller's ``co_role_dropped`` diagnostic).
+    """
+    same_role = sum(
+        1 for i, a in enumerate(ordered) for b in ordered[i + 1 :] if a[1] != b[1] and a[0] == b[0]
+    )
+    pairs = [
+        (a, b)
+        for i, a in enumerate(ordered)
+        for b in ordered[i + 1 :]
+        if a[1] != b[1] and a[0] != b[0]
+    ][:_MAX_FRAME_REL_PAIRS]
+    rel_rows = [
+        {
+            "h": hnn,
+            "t": tnn,
+            "p": f"fn:{frame}",
+            "f": frame,
+            "hr": hr,
+            "tr": tr,
+            # Tier 1 of the stability ladder: a frame + its two role
+            # names is the same identifier however the surface
+            # varies, which is what makes it safe to dedup on.
+            "cp": f"fn:{frame}:{hr}->{tr}",
+            "fid": fid,
+            "pol": str(inst.get("polarity") or "pos"),
+            "mod": str(inst.get("modality") or "none"),
+            "epi": str(inst.get("epistemic") or "asserted"),
+            "hed": bool(inst.get("hedged") or False),
+        }
+        for (hr, hnn, _), (tr, tnn, _) in pairs
+    ]
+    return rel_rows, same_role
+
+
+@dataclass(frozen=True)
+class _FrameInstanceRows:
+    """Rows :meth:`GraphStore.write_frame_instances` batches into its UNWINDs.
+
+    Built by :meth:`GraphStore._build_frame_instance_rows`; the three drop
+    counters feed :meth:`GraphStore._log_frame_instance_diagnostics`.
+    """
+
+    inst_rows: list[dict[str, Any]]
+    role_rows: list[dict[str, Any]]
+    rel_rows: list[dict[str, Any]]
+    fid_at: dict[int, str]
+    gated_dropped: int
+    co_role_dropped: int
+    collapsed: int
+
+
 @dataclass(frozen=True)
 class RelationWrite:
     """One :meth:`GraphStore.write_relation` call's fields, bundled.
@@ -2119,6 +2190,366 @@ class GraphStore(ArcadeStoreBase):
                 )
         return out
 
+    async def _known_frame_fillers(self, instances: list[dict[str, Any]]) -> set[str] | None:
+        """Which role fillers already exist as ENTITY vertices, by name_norm.
+
+        Identity is computed over these alone, so the lookup precedes the
+        hash (see write_frame_instances). One batched query. Returns
+        ``None`` — not an empty set — when the lookup itself failed, so the
+        caller can tell "nothing survived" from "could not check".
+        """
+        wanted = {
+            _name_norm(str(f))
+            for inst in instances
+            for fs in (inst.get("roles") or {}).values()
+            for f in (fs or [])
+            if str(f).strip()
+        }
+        if not wanted:
+            return set()
+        try:
+            rows = await self.query(
+                f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(sorted(wanted))} "
+                f"RETURN e.name_norm AS nn"
+            )
+            return {str(r["nn"]) for r in rows if r.get("nn")}
+        except Exception as exc:
+            logger.warning("frame-instance filler lookup failed: %s", exc)
+            return None
+
+    def _build_frame_instance_rows(
+        self,
+        instances: list[dict[str, Any]],
+        known: set[str],
+        session_id: str,
+        chunk_id: str,
+    ) -> _FrameInstanceRows:
+        """Derive each instance's content-hash id and its batched write rows.
+
+        Applies the two write-time gates described in write_frame_instances
+        (the surviving-edge floor and sibling collapse) and builds the
+        FRAME_INSTANCE, PLAYS_ROLE and co-role REL rows in one pass. Pure
+        computation, no I/O — the caller does the writing.
+        """
+        inst_rows: list[dict[str, Any]] = []
+        role_rows: list[dict[str, Any]] = []
+        rel_rows: list[dict[str, Any]] = []
+        # Same-role filler pairs refused by the projection (see below).
+        co_role_dropped = 0
+        # Instances dropped for having fewer than _MIN_SURVIVING_ROLE_EDGES
+        # surviving PLAYS_ROLE edges (issue #161, "13% under-connected").
+        gated_dropped = 0
+        # Position in `instances` -> the id it was written under, so a nesting
+        # pair given by index survives the drops below (no fills, no frame).
+        fid_at: dict[int, str] = {}
+
+        derived = [
+            (index, *parts)
+            for index, inst in enumerate(instances)
+            if (parts := _derive_frame_instance(inst, known)) is not None
+        ]
+        # Same (frame, assertion) siblings whose surviving fills are a strict
+        # subset of another's are the same fact stated less completely — one
+        # extraction pass finding two candidate spans for the same event
+        # (issue #161, "duplicates inside one chunk").
+        absorbed_by = _drop_subsumed_siblings(
+            [
+                (index, frame, assertion, frozenset(persistable))
+                for index, frame, _, assertion, persistable in derived
+            ]
+        )
+        collapsed = len(absorbed_by)
+
+        for index, frame, _roles, assertion, persistable in derived:
+            if index in absorbed_by:
+                continue  # written under the surviving sibling's fid, below
+            inst = instances[index]
+            sig = [*sorted(f"{r}={nn}" for r, nn, _ in persistable), f"@{assertion}"]
+            # Nothing that can be written is nothing to identify the fact BY, so
+            # the instance is dropped rather than written as a bare frame label.
+            # Tested on `persistable`, not `sig`: sig now always carries the
+            # assertion suffix and is therefore never empty.
+            #
+            # Gate on EDGE COUNT, not distinct role names — two surviving
+            # fills sharing one role still clear the floor.
+            if len(persistable) < _MIN_SURVIVING_ROLE_EDGES:
+                gated_dropped += 1
+                continue
+            # Content hash for a stable frame-instance id — not a security digest.
+            digest = hashlib.sha1("|".join(sig).encode(), usedforsecurity=False).hexdigest()
+            fid = f"{frame}:{digest[:16]}"
+            fid_at[index] = fid
+            role_conf = float(inst.get("role_confidence") or 0.0)
+            inst_rows.append(
+                {
+                    "fid": fid,
+                    "frame": frame,
+                    "cid": chunk_id,
+                    "sid": session_id,
+                    "ms": float(inst.get("match_sim") or 0.0),
+                    "rc": role_conf,
+                    "pol": str(inst.get("polarity") or "pos"),
+                    "mod": str(inst.get("modality") or "none"),
+                    "epi": str(inst.get("epistemic") or "asserted"),
+                    "hed": bool(inst.get("hedged") or False),
+                    "voi": str(inst.get("voice") or "active"),
+                    "ten": str(inst.get("tense") or ""),
+                    "att": str(inst.get("attributed_to") or ""),
+                    "mru": str(inst.get("modality_rules") or ""),
+                    # Provenance about HOW the trigger was found (a light-verb
+                    # construction's noun object vs. the frame's own LU) — not
+                    # part of the fact's identity, so it plays no role in `sig`
+                    # / the content hash above, and never gates or projects.
+                    "lvc": bool(inst.get("lvc") or False),
+                }
+            )
+            ordered = sorted(persistable)
+            for role, nn, name in ordered:
+                role_rows.append({"fid": fid, "nn": nn, "name": name, "role": role})
+            pair_rows, same_role = _frame_co_role_rel_rows(ordered, frame, fid, inst)
+            rel_rows.extend(pair_rows)
+            if same_role:
+                co_role_dropped += same_role
+        # A subsumed sibling maps to the id it was ABSORBED into (so a nesting
+        # pair naming it still resolves), never to nothing — that only happens
+        # to an instance the gate above dropped outright.
+        for dropped_index, survivor_index in absorbed_by.items():
+            if survivor_index in fid_at:
+                fid_at[dropped_index] = fid_at[survivor_index]
+        return _FrameInstanceRows(
+            inst_rows=inst_rows,
+            role_rows=role_rows,
+            rel_rows=rel_rows,
+            fid_at=fid_at,
+            gated_dropped=gated_dropped,
+            co_role_dropped=co_role_dropped,
+            collapsed=collapsed,
+        )
+
+    def _log_frame_instance_diagnostics(
+        self,
+        instances: list[dict[str, Any]],
+        known: set[str],
+        rows: _FrameInstanceRows,
+        chunk_id: str,
+    ) -> None:
+        """Log the silent-loss counts write_frame_instances promises not to hide.
+
+        B19 / R13: PLAYS_ROLE MATCHes ENTITY by name_norm and never MERGEs —
+        correct policy (a filler the extractor never minted must not be
+        invented here), but it means a filler with no ENTITY produces no edge
+        and nothing recorded it. That is the "4% of objects reach a chunk"
+        family of silent hole. Do not change the MATCH; make the miss visible.
+        """
+        unbound = sum(
+            1
+            for inst in instances
+            for fs in (inst.get("roles") or {}).values()
+            for f in (fs or [])
+            if str(f).strip() and _name_norm(str(f)) not in known
+        )
+        if unbound or rows.gated_dropped:
+            logger.info(
+                "frame role fillers unbound: %d (no ENTITY was minted for them, so they "
+                "get no PLAYS_ROLE edge); %d instance(s) consequently dropped for surviving "
+                "fewer than %d role edge(s), in chunk %s",
+                unbound,
+                rows.gated_dropped,
+                _MIN_SURVIVING_ROLE_EDGES,
+                chunk_id,
+            )
+        if rows.collapsed:
+            logger.info(
+                "frame instances collapsed: %d in chunk %s (a less completely filled "
+                "sibling of the same fact — same frame and assertion, its surviving "
+                "fills a subset of another instance's)",
+                rows.collapsed,
+                chunk_id,
+            )
+        if rows.co_role_dropped:
+            logger.debug(
+                "frame projection: %d same-role filler pair(s) not written as REL in chunk %s "
+                "(co-participation, not a relation — they remain joined by their instance)",
+                rows.co_role_dropped,
+                chunk_id,
+            )
+
+    async def _write_frame_instance_vertices(
+        self, inst_rows: list[dict[str, Any]], chunk_id: str
+    ) -> None:
+        """Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).
+
+        RETURNs its count because the leading MATCH is SILENT when the CHUNK is
+        absent: this batch then writes nothing at all while batch 2b still
+        writes REL edges carrying a frame_instance_id that was never created.
+        """
+        written = await self.command(
+            "UNWIND $rows AS row "
+            "MATCH (c:CHUNK {chunk_id: row.cid}) "
+            "MERGE (fi:FRAME_INSTANCE {id: row.fid}) "
+            "SET fi.frame = row.frame, fi.session_id = row.sid, "
+            "    fi.chunk_id = coalesce(fi.chunk_id, row.cid), "
+            "    fi.match_sim = CASE WHEN row.ms > coalesce(fi.match_sim, 0) "
+            "                        THEN row.ms ELSE fi.match_sim END, "
+            "    fi.role_confidence = CASE WHEN row.rc > coalesce(fi.role_confidence, 0) "
+            "                              THEN row.rc ELSE fi.role_confidence END, "
+            "    fi.polarity = row.pol, fi.modality = row.mod, fi.epistemic = row.epi, "
+            "    fi.hedged = row.hed, fi.voice = row.voi, fi.tense = row.ten, "
+            "    fi.attributed_to = row.att, fi.modality_rules = row.mru, "
+            "    fi.lvc = row.lvc "
+            "MERGE (fi)-[:FRAME_EVOKED_IN]->(c) "
+            "RETURN count(fi) AS n",
+            rows=inst_rows,
+        )
+        # Only a count we actually read can say "nothing was written" — no result
+        # row at all is an unknown, not a zero, and must not raise a false alarm.
+        # (ArcadeDB returns [{'n': 0}] for the miss; verified against a live db.)
+        if chunk_id and written and not int(written[0].get("n") or 0):
+            logger.warning(
+                "frame instances dropped: chunk %s has no CHUNK vertex, so %d "
+                "FRAME_INSTANCE(s) were not written — the co-role REL edges below "
+                "still carry their frame_instance_id and it resolves to nothing",
+                chunk_id,
+                len(inst_rows),
+            )
+
+    async def _link_frame_instances_to_frames(
+        self, inst_rows: list[dict[str, Any]], chunk_id: str
+    ) -> None:
+        """Batch 1b: link each instance to its canonical FRAME vertex.
+
+        Own command, not folded into batch 1 — batch 1's leading MATCH is
+        already silent when the CHUNK is missing, and adding a second MATCH
+        there would drop the whole instance write whenever the FRAME vertex is
+        absent. Never MERGE the FRAME here: a FRAME minted without its
+        definition, embedding and BROADER parents is a stub, and an edge into
+        a stub buys nothing (that is the ingest-path FRAME writer's job).
+        """
+        linked = await self.command(
+            "UNWIND $rows AS row "
+            "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
+            "MATCH (f:FRAME {id: row.frame}) "
+            "MERGE (fi)-[:EVOKES]->(f) "
+            "RETURN count(*) AS n",
+            rows=inst_rows,
+        )
+        if linked and int(linked[0].get("n") or 0) < len(inst_rows):
+            logger.info(
+                "frame instances under-linked: chunk %s has %d FRAME_INSTANCE(s) "
+                "but only %d EVOKES edge(s) to a FRAME vertex — the missing FRAME "
+                "vertices mean those instances cannot generalise through the "
+                "BROADER taxonomy",
+                chunk_id,
+                len(inst_rows),
+                int(linked[0].get("n") or 0),
+            )
+
+    async def _write_frame_role_edges(self, role_rows: list[dict[str, Any]]) -> None:
+        """Batch 2a: MERGE the distinct filler ENTITIES first, on their own.
+
+        role_rows is keyed (fid, nn, role), so ONE entity filling TWO roles of a
+        frame repeats its name_norm — and MERGEing the entity inside the same
+        UNWIND as the edge creates it twice before the ENTITY[name_norm] UNIQUE
+        index settles, raising DuplicatedKeyException and failing the caller's
+        whole document. ("Being_named" with Entity=X and Name=X is exactly this.)
+        Collapsing on the merge key first makes the edge pass a pure MATCH.
+        """
+        if not role_rows:
+            return
+        # A role edge attaches to an entity the EXTRACTION path already
+        # minted — it never creates one. This used to MERGE, and a MERGE here
+        # invents a node with no type, no confidence and no MENTIONS edge to
+        # any chunk: 624 of 2105 nodes on LoCoMo conv-30 (30%) existed only
+        # because a frame pointed at a span. They are unreachable by any
+        # entity query, they cannot be resolved or merged with anything, and
+        # they reached the generator's fact-sheet as role fillers.
+        #
+        # A span worth a graph node is one the extractor recognised on its
+        # own evidence. If it did not, the frame layer citing it is not extra
+        # knowledge — it is an assertion with no provenance, so the role is
+        # dropped. MATCH, never MERGE.
+        await self.command(
+            "UNWIND $rows AS row "
+            "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
+            "MATCH (e:ENTITY {name_norm: row.nn}) "
+            "MERGE (fi)-[:PLAYS_ROLE {role: row.role}]->(e)",
+            rows=role_rows,
+        )
+
+    async def _write_frame_co_role_edges(
+        self, rel_rows: list[dict[str, Any]], chunk_id: str
+    ) -> None:
+        """Batch 2b: co-role entity adjacency (see write_frame_instances).
+
+        MATCH, never MERGE, on the endpoints — same rule as the role edges: a
+        filler the extractor never minted does not get invented here.
+        """
+        if not rel_rows:
+            return
+        # Same evidence append as write_relation (see the contract in both
+        # docstrings). chunk_id is constant across rel_rows, so one
+        # interpolated literal covers the whole UNWIND.
+        # ponytail: forward-only, and the residue is counted at write time,
+        # not surveyed. Namespaces ingested before this keep their empty
+        # `evidence` until re-ingest (backfill is one Cypher pass:
+        # MATCH (fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c), (a)-[r:REL]->(b)
+        # WHERE r.frame_instance_id = fi.id SET r.evidence = collect(c.chunk_id)),
+        # and a graph-wide "unsourced by either route" census belongs in the
+        # flush return dict, which lives outside this package.
+        frame_key_sql = ", ".join(f"{column}: {field}" for column, field in _FRAME_REL_KEY.items())
+        await self.command(
+            "UNWIND $rows AS row "
+            "MATCH (a:ENTITY {name_norm: row.h}) "
+            "MATCH (b:ENTITY {name_norm: row.t}) "
+            # polarity/modality are part of the MERGE key for the same reason
+            # they are part of the instance's content hash: without them a
+            # fact and its denial are one edge, and the later write silently
+            # wins. This is the §6.6 dedup key minus the temporal bucket.
+            # Built from _FRAME_REL_KEY so the entity-merge repair replays a
+            # projected edge under the very key written here.
+            f"MERGE (a)-[r:REL {{predicate: row.p, {frame_key_sql}}}]->(b) "
+            "SET r.source = 'frame', r.is_current = true, "
+            "    r.canonical_predicate = row.cp, r.frame = row.f, "
+            f"    {_evidence_set(chunk_id)}"
+            "    r.frame_instance_id = row.fid, r.reified = true, r.anchor = 'frame', "
+            "    r.epistemic = row.epi, r.hedged = row.hed",
+            rows=rel_rows,
+        )
+        if not chunk_id:
+            # Residue: no chunk to cite, and batch 1's `MATCH (c:CHUNK ...)`
+            # matched nothing either, so the FRAME_INSTANCE these edges point
+            # at was never written. Unsourced by BOTH routes — count it.
+            logger.warning(
+                "frame co-role REL edges with no recoverable provenance: %d "
+                "(no chunk_id, so neither r.evidence nor FRAME_EVOKED_IN)",
+                len(rel_rows),
+            )
+
+    async def _write_frame_nesting_edges(
+        self, nesting: list[tuple[int, str, int]] | None, fid_at: dict[int, str]
+    ) -> None:
+        """Batch 3: frame-to-frame nesting, which a flat role list cannot hold.
+
+        ("...because my laptop died" as Explanation -> Causation -> Death.)
+
+        Both endpoints must have been written; a pair naming a dropped instance
+        is dropped with it rather than pointing at nothing.
+        """
+        nest_rows = [
+            {"p": fid_at[p], "role": role, "c": fid_at[c]}
+            for p, role, c in (nesting or [])
+            if p in fid_at and c in fid_at and fid_at[p] != fid_at[c]
+        ]
+        if not nest_rows:
+            return
+        await self.command(
+            "UNWIND $rows AS row "
+            "MATCH (p:FRAME_INSTANCE {id: row.p}) "
+            "MATCH (c:FRAME_INSTANCE {id: row.c}) "
+            "MERGE (p)-[:FRAME_NESTS {role: row.role}]->(c)",
+            rows=nest_rows,
+        )
+
     async def write_frame_instances(
         self,
         session_id: str,
@@ -2212,346 +2643,27 @@ class GraphStore(ArcadeStoreBase):
           and ``entity_fact_context`` excludes them from its REL read, because
           its frame facts already state the same content in a better format.
 
+        The phases below are batched, private helpers, split out so each stays
+        readable on its own: filler lookup, row derivation, diagnostics, then
+        one write per batch the comments above already name.
+
         Idempotent (all MERGE). Returns the number of instances processed.
         """
         if not instances:
             return 0
-        # Which fillers actually exist as entities? Identity is computed over
-        # these alone, so the lookup precedes the hash. One batched query.
-        wanted = {
-            _name_norm(str(f))
-            for inst in instances
-            for fs in (inst.get("roles") or {}).values()
-            for f in (fs or [])
-            if str(f).strip()
-        }
-        known: set[str] = set()
-        if wanted:
-            try:
-                rows = await self.query(
-                    f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(sorted(wanted))} "
-                    f"RETURN e.name_norm AS nn"
-                )
-                known = {str(r["nn"]) for r in rows if r.get("nn")}
-            except Exception as exc:
-                logger.warning("frame-instance filler lookup failed: %s", exc)
-                return 0
-
-        inst_rows: list[dict[str, Any]] = []
-        role_rows: list[dict[str, Any]] = []
-        rel_rows: list[dict[str, Any]] = []
-        # Same-role filler pairs refused by the projection (see below).
-        co_role_dropped = 0
-        # Instances dropped for having fewer than _MIN_SURVIVING_ROLE_EDGES
-        # surviving PLAYS_ROLE edges (issue #161, "13% under-connected").
-        gated_dropped = 0
-        # Position in `instances` -> the id it was written under, so a nesting
-        # pair given by index survives the drops below (no fills, no frame).
-        fid_at: dict[int, str] = {}
-
-        derived = [
-            (index, *parts)
-            for index, inst in enumerate(instances)
-            if (parts := _derive_frame_instance(inst, known)) is not None
-        ]
-        # Same (frame, assertion) siblings whose surviving fills are a strict
-        # subset of another's are the same fact stated less completely — one
-        # extraction pass finding two candidate spans for the same event
-        # (issue #161, "duplicates inside one chunk").
-        absorbed_by = _drop_subsumed_siblings(
-            [
-                (index, frame, assertion, frozenset(persistable))
-                for index, frame, _, assertion, persistable in derived
-            ]
-        )
-        collapsed = len(absorbed_by)
-
-        for index, frame, _roles, assertion, persistable in derived:
-            if index in absorbed_by:
-                continue  # written under the surviving sibling's fid, below
-            inst = instances[index]
-            sig = [*sorted(f"{r}={nn}" for r, nn, _ in persistable), f"@{assertion}"]
-            # Nothing that can be written is nothing to identify the fact BY, so
-            # the instance is dropped rather than written as a bare frame label.
-            # Tested on `persistable`, not `sig`: sig now always carries the
-            # assertion suffix and is therefore never empty.
-            #
-            # Gate on EDGE COUNT, not distinct role names — two surviving
-            # fills sharing one role still clear the floor.
-            if len(persistable) < _MIN_SURVIVING_ROLE_EDGES:
-                gated_dropped += 1
-                continue
-            # Content hash for a stable frame-instance id — not a security digest.
-            digest = hashlib.sha1("|".join(sig).encode(), usedforsecurity=False).hexdigest()
-            fid = f"{frame}:{digest[:16]}"
-            fid_at[index] = fid
-            role_conf = float(inst.get("role_confidence") or 0.0)
-            inst_rows.append(
-                {
-                    "fid": fid,
-                    "frame": frame,
-                    "cid": chunk_id,
-                    "sid": session_id,
-                    "ms": float(inst.get("match_sim") or 0.0),
-                    "rc": role_conf,
-                    "pol": str(inst.get("polarity") or "pos"),
-                    "mod": str(inst.get("modality") or "none"),
-                    "epi": str(inst.get("epistemic") or "asserted"),
-                    "hed": bool(inst.get("hedged") or False),
-                    "voi": str(inst.get("voice") or "active"),
-                    "ten": str(inst.get("tense") or ""),
-                    "att": str(inst.get("attributed_to") or ""),
-                    "mru": str(inst.get("modality_rules") or ""),
-                    # Provenance about HOW the trigger was found (a light-verb
-                    # construction's noun object vs. the frame's own LU) — not
-                    # part of the fact's identity, so it plays no role in `sig`
-                    # / the content hash above, and never gates or projects.
-                    "lvc": bool(inst.get("lvc") or False),
-                }
-            )
-            ordered = sorted(persistable)
-            for role, nn, name in ordered:
-                role_rows.append({"fid": fid, "nn": nn, "name": name, "role": role})
-            # Entity adjacency for this fact: every ordered pair of fillers of
-            # DIFFERENT roles. Capped — a 7-role instance would otherwise be 21
-            # edges, and the tail of that list is co-role trivia, not fact.
-            #
-            # ``a[0] != b[0]`` is the load-bearing half. Two fillers of the SAME
-            # role are co-participants, not a relation: emitting them produced
-            # `(Gina) -Residence[Co_resident->Co_resident]-> (Jon)` and
-            # `(banker) -Avoiding[Agent->Agent]-> (Gina)`, which read as facts and
-            # assert nothing true. Measured on conv-30 before this filter: **829
-            # of 2590 reified edges — 32% of the fact layer — related a role to
-            # itself.** Co-participation is already expressed correctly, by both
-            # fillers hanging off the same FRAME_INSTANCE via PLAYS_ROLE; the
-            # projection only ever needed to add the cross-role adjacency that
-            # walking entity-to-entity cannot otherwise reach.
-            same_role = sum(
-                1
-                for i, a in enumerate(ordered)
-                for b in ordered[i + 1 :]
-                if a[1] != b[1] and a[0] == b[0]
-            )
-            if same_role:
-                co_role_dropped += same_role
-            pairs = [
-                (a, b)
-                for i, a in enumerate(ordered)
-                for b in ordered[i + 1 :]
-                if a[1] != b[1] and a[0] != b[0]
-            ][:_MAX_FRAME_REL_PAIRS]
-            for (hr, hnn, _), (tr, tnn, _) in pairs:
-                rel_rows.append(
-                    {
-                        "h": hnn,
-                        "t": tnn,
-                        "p": f"fn:{frame}",
-                        "f": frame,
-                        "hr": hr,
-                        "tr": tr,
-                        # Tier 1 of the stability ladder: a frame + its two role
-                        # names is the same identifier however the surface
-                        # varies, which is what makes it safe to dedup on.
-                        "cp": f"fn:{frame}:{hr}->{tr}",
-                        "fid": fid,
-                        "pol": str(inst.get("polarity") or "pos"),
-                        "mod": str(inst.get("modality") or "none"),
-                        "epi": str(inst.get("epistemic") or "asserted"),
-                        "hed": bool(inst.get("hedged") or False),
-                    }
-                )
-        # A subsumed sibling maps to the id it was ABSORBED into (so a nesting
-        # pair naming it still resolves), never to nothing — that only happens
-        # to an instance the gate above dropped outright.
-        for dropped_index, survivor_index in absorbed_by.items():
-            if survivor_index in fid_at:
-                fid_at[dropped_index] = fid_at[survivor_index]
-        # B19 / R13: PLAYS_ROLE MATCHes ENTITY by name_norm and never MERGEs —
-        # correct policy (a filler the extractor never minted must not be
-        # invented here), but it means a filler with no ENTITY produces no edge
-        # and nothing recorded it. That is the "4% of objects reach a chunk"
-        # family of silent hole. Do not change the MATCH; make the miss visible.
-        unbound = sum(
-            1
-            for inst in instances
-            for fs in (inst.get("roles") or {}).values()
-            for f in (fs or [])
-            if str(f).strip() and _name_norm(str(f)) not in known
-        )
-        if unbound or gated_dropped:
-            logger.info(
-                "frame role fillers unbound: %d (no ENTITY was minted for them, so they "
-                "get no PLAYS_ROLE edge); %d instance(s) consequently dropped for surviving "
-                "fewer than %d role edge(s), in chunk %s",
-                unbound,
-                gated_dropped,
-                _MIN_SURVIVING_ROLE_EDGES,
-                chunk_id,
-            )
-        if collapsed:
-            logger.info(
-                "frame instances collapsed: %d in chunk %s (a less completely filled "
-                "sibling of the same fact — same frame and assertion, its surviving "
-                "fills a subset of another instance's)",
-                collapsed,
-                chunk_id,
-            )
-        if co_role_dropped:
-            logger.debug(
-                "frame projection: %d same-role filler pair(s) not written as REL in chunk %s "
-                "(co-participation, not a relation — they remain joined by their instance)",
-                co_role_dropped,
-                chunk_id,
-            )
-        if not inst_rows:
+        known = await self._known_frame_fillers(instances)
+        if known is None:
             return 0
-        # Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).
-        # RETURNs its count because the leading MATCH is SILENT when the CHUNK is
-        # absent: this batch then writes nothing at all while batch 2b still
-        # writes REL edges carrying a frame_instance_id that was never created.
-        written = await self.command(
-            "UNWIND $rows AS row "
-            "MATCH (c:CHUNK {chunk_id: row.cid}) "
-            "MERGE (fi:FRAME_INSTANCE {id: row.fid}) "
-            "SET fi.frame = row.frame, fi.session_id = row.sid, "
-            "    fi.chunk_id = coalesce(fi.chunk_id, row.cid), "
-            "    fi.match_sim = CASE WHEN row.ms > coalesce(fi.match_sim, 0) "
-            "                        THEN row.ms ELSE fi.match_sim END, "
-            "    fi.role_confidence = CASE WHEN row.rc > coalesce(fi.role_confidence, 0) "
-            "                              THEN row.rc ELSE fi.role_confidence END, "
-            "    fi.polarity = row.pol, fi.modality = row.mod, fi.epistemic = row.epi, "
-            "    fi.hedged = row.hed, fi.voice = row.voi, fi.tense = row.ten, "
-            "    fi.attributed_to = row.att, fi.modality_rules = row.mru, "
-            "    fi.lvc = row.lvc "
-            "MERGE (fi)-[:FRAME_EVOKED_IN]->(c) "
-            "RETURN count(fi) AS n",
-            rows=inst_rows,
-        )
-        # Only a count we actually read can say "nothing was written" — no result
-        # row at all is an unknown, not a zero, and must not raise a false alarm.
-        # (ArcadeDB returns [{'n': 0}] for the miss; verified against a live db.)
-        if chunk_id and written and not int(written[0].get("n") or 0):
-            logger.warning(
-                "frame instances dropped: chunk %s has no CHUNK vertex, so %d "
-                "FRAME_INSTANCE(s) were not written — the co-role REL edges below "
-                "still carry their frame_instance_id and it resolves to nothing",
-                chunk_id,
-                len(inst_rows),
-            )
-        # Batch 1b: link each instance to its canonical FRAME vertex. Own
-        # command, not folded into batch 1 — batch 1's leading MATCH is already
-        # silent when the CHUNK is missing, and adding a second MATCH there
-        # would drop the whole instance write whenever the FRAME vertex is
-        # absent. Never MERGE the FRAME here: a FRAME minted without its
-        # definition, embedding and BROADER parents is a stub, and an edge into
-        # a stub buys nothing (that is the ingest-path FRAME writer's job).
-        linked = await self.command(
-            "UNWIND $rows AS row "
-            "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
-            "MATCH (f:FRAME {id: row.frame}) "
-            "MERGE (fi)-[:EVOKES]->(f) "
-            "RETURN count(*) AS n",
-            rows=inst_rows,
-        )
-        if linked and int(linked[0].get("n") or 0) < len(inst_rows):
-            logger.info(
-                "frame instances under-linked: chunk %s has %d FRAME_INSTANCE(s) "
-                "but only %d EVOKES edge(s) to a FRAME vertex — the missing FRAME "
-                "vertices mean those instances cannot generalise through the "
-                "BROADER taxonomy",
-                chunk_id,
-                len(inst_rows),
-                int(linked[0].get("n") or 0),
-            )
-        # Batch 2a: MERGE the distinct filler ENTITIES first, on their own.
-        # role_rows is keyed (fid, nn, role), so ONE entity filling TWO roles of a
-        # frame repeats its name_norm — and MERGEing the entity inside the same
-        # UNWIND as the edge creates it twice before the ENTITY[name_norm] UNIQUE
-        # index settles, raising DuplicatedKeyException and failing the caller's
-        # whole document. ("Being_named" with Entity=X and Name=X is exactly this.)
-        # Collapsing on the merge key first makes the edge pass a pure MATCH.
-        if role_rows:
-            # A role edge attaches to an entity the EXTRACTION path already
-            # minted — it never creates one. This used to MERGE, and a MERGE here
-            # invents a node with no type, no confidence and no MENTIONS edge to
-            # any chunk: 624 of 2105 nodes on LoCoMo conv-30 (30%) existed only
-            # because a frame pointed at a span. They are unreachable by any
-            # entity query, they cannot be resolved or merged with anything, and
-            # they reached the generator's fact-sheet as role fillers.
-            #
-            # A span worth a graph node is one the extractor recognised on its
-            # own evidence. If it did not, the frame layer citing it is not extra
-            # knowledge — it is an assertion with no provenance, so the role is
-            # dropped. MATCH, never MERGE.
-            await self.command(
-                "UNWIND $rows AS row "
-                "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
-                "MATCH (e:ENTITY {name_norm: row.nn}) "
-                "MERGE (fi)-[:PLAYS_ROLE {role: row.role}]->(e)",
-                rows=role_rows,
-            )
-        # Batch 2b: co-role entity adjacency (see the docstring). MATCH, never
-        # MERGE, on the endpoints — same rule as the role edges: a filler the
-        # extractor never minted does not get invented here.
-        if rel_rows:
-            # Same evidence append as write_relation (see the contract in both
-            # docstrings). chunk_id is constant across rel_rows, so one
-            # interpolated literal covers the whole UNWIND.
-            # ponytail: forward-only, and the residue is counted at write time,
-            # not surveyed. Namespaces ingested before this keep their empty
-            # `evidence` until re-ingest (backfill is one Cypher pass:
-            # MATCH (fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c), (a)-[r:REL]->(b)
-            # WHERE r.frame_instance_id = fi.id SET r.evidence = collect(c.chunk_id)),
-            # and a graph-wide "unsourced by either route" census belongs in the
-            # flush return dict, which lives outside this package.
-            frame_key_sql = ", ".join(
-                f"{column}: {field}" for column, field in _FRAME_REL_KEY.items()
-            )
-            await self.command(
-                "UNWIND $rows AS row "
-                "MATCH (a:ENTITY {name_norm: row.h}) "
-                "MATCH (b:ENTITY {name_norm: row.t}) "
-                # polarity/modality are part of the MERGE key for the same reason
-                # they are part of the instance's content hash: without them a
-                # fact and its denial are one edge, and the later write silently
-                # wins. This is the §6.6 dedup key minus the temporal bucket.
-                # Built from _FRAME_REL_KEY so the entity-merge repair replays a
-                # projected edge under the very key written here.
-                f"MERGE (a)-[r:REL {{predicate: row.p, {frame_key_sql}}}]->(b) "
-                "SET r.source = 'frame', r.is_current = true, "
-                "    r.canonical_predicate = row.cp, r.frame = row.f, "
-                f"    {_evidence_set(chunk_id)}"
-                "    r.frame_instance_id = row.fid, r.reified = true, r.anchor = 'frame', "
-                "    r.epistemic = row.epi, r.hedged = row.hed",
-                rows=rel_rows,
-            )
-            if not chunk_id:
-                # Residue: no chunk to cite, and batch 1's `MATCH (c:CHUNK ...)`
-                # matched nothing either, so the FRAME_INSTANCE these edges point
-                # at was never written. Unsourced by BOTH routes — count it.
-                logger.warning(
-                    "frame co-role REL edges with no recoverable provenance: %d "
-                    "(no chunk_id, so neither r.evidence nor FRAME_EVOKED_IN)",
-                    len(rel_rows),
-                )
-        # Batch 3: frame-to-frame nesting, the structure a flat role list cannot
-        # hold ("...because my laptop died" as Explanation -> Causation -> Death).
-        # Both endpoints must have been written; a pair naming a dropped instance
-        # is dropped with it rather than pointing at nothing.
-        nest_rows = [
-            {"p": fid_at[p], "role": role, "c": fid_at[c]}
-            for p, role, c in (nesting or [])
-            if p in fid_at and c in fid_at and fid_at[p] != fid_at[c]
-        ]
-        if nest_rows:
-            await self.command(
-                "UNWIND $rows AS row "
-                "MATCH (p:FRAME_INSTANCE {id: row.p}) "
-                "MATCH (c:FRAME_INSTANCE {id: row.c}) "
-                "MERGE (p)-[:FRAME_NESTS {role: row.role}]->(c)",
-                rows=nest_rows,
-            )
-        return len(inst_rows)
+        rows = self._build_frame_instance_rows(instances, known, session_id, chunk_id)
+        self._log_frame_instance_diagnostics(instances, known, rows, chunk_id)
+        if not rows.inst_rows:
+            return 0
+        await self._write_frame_instance_vertices(rows.inst_rows, chunk_id)
+        await self._link_frame_instances_to_frames(rows.inst_rows, chunk_id)
+        await self._write_frame_role_edges(rows.role_rows)
+        await self._write_frame_co_role_edges(rows.rel_rows, chunk_id)
+        await self._write_frame_nesting_edges(nesting, rows.fid_at)
+        return len(rows.inst_rows)
 
     async def write_topics(self, topics: list[dict[str, Any]]) -> int:
         """Upsert TOPIC vertices + IN_TOPIC membership edges.
