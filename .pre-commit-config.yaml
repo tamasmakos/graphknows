@@ -67,10 +67,3 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-push]
-      - id: graph-update
-        name: graphify update (scripts/graph-update.sh)
-        entry: bash scripts/graph-update.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [post-commit]
