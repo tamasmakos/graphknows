@@ -57,6 +57,21 @@ def _require_decoder_key(settings: GraphKnowsSettings) -> None:
         )
 
 
+def _redact_store_error(exc: Exception, *, where: str) -> str:
+    """Log ``exc`` in full and return a caller-safe summary with a correlation id.
+
+    ArcadeDB failures carry the request host and the raw server response body
+    (see ``ArcadeDBClient._raise_for_status``), and ``doctor``, ``purge_memory``
+    and ``flush_memory`` hand their errors straight to an MCP caller — that
+    detail must not cross the boundary verbatim (FR-031). The correlation id
+    ties the redacted message back to the full one in the log, so redacting
+    for the caller does not blind the operator (Constitution V).
+    """
+    correlation_id = uuid.uuid4().hex
+    logger.error("%s failed [correlation_id=%s]: %s", where, correlation_id, exc)
+    return f"correlation_id={correlation_id}; see server logs for details"
+
+
 def _format_fused_hits(fused_results: list[dict[str, Any]], session_id: str) -> list[Hit]:
     return [
         Hit(
@@ -222,7 +237,7 @@ class Memory:
             result["arcadedb"] = await c.database_exists(db)
             await c.close()
         except Exception as exc:
-            result["arcadedb"] = str(exc)
+            result["arcadedb"] = _redact_store_error(exc, where="doctor")
         result["pid"] = os.getpid()
         return result
 
@@ -781,8 +796,7 @@ class Memory:
             try:
                 return await coro
             except Exception as exc:
-                logger.warning("flush_memory: %s failed: %s", name, exc)
-                errors.append(f"{name}: {exc}")
+                errors.append(f"{name}: {_redact_store_error(exc, where=f'flush_memory:{name}')}")
                 return default
             finally:
                 stage_s[name] = round(time.monotonic() - started, 2)
@@ -792,7 +806,7 @@ class Memory:
             store = self._store
         except Exception as exc:
             # Without a connected store no step below can run.
-            errors.append(f"connect: {exc}")
+            errors.append(f"connect: {_redact_store_error(exc, where='flush_memory:connect')}")
             store = None
 
         if store is not None:
@@ -1026,7 +1040,7 @@ class Memory:
             finally:
                 await store.close()
         except Exception as exc:
-            errors.append(f"arcadedb: {exc}")
+            errors.append(f"arcadedb: {_redact_store_error(exc, where='arcadedb')}")
         return {
             "session_id": session_id or "(all)",
             "deleted": deleted,
