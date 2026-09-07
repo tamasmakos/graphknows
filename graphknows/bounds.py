@@ -9,11 +9,8 @@ getting a quietly truncated answer.
 
 from __future__ import annotations
 
-import asyncio
-import functools
 import json
-from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any
 
 from graphknows.exceptions import ConfigurationError
 
@@ -27,10 +24,11 @@ MAX_METADATA_BYTES = 16 * 1024
 MAX_TOP_K = 100
 #: ``ltm_entities`` limit.
 MAX_LIMIT = 1_000
-#: Server-side wall-clock budget for one call.
+#: Default server-side wall-clock budget for one call. Overridable per
+#: deployment via ``GRAPHKNOWS_MCP_CALL_TIMEOUT_S``: nothing preloads the
+#: extraction models, so the first request after a cold start pays their load
+#: time and a fixed ceiling would fail it (observed in CI, 2026-09-07).
 CALL_TIMEOUT_S = 120.0
-
-_AsyncFunc = TypeVar("_AsyncFunc", bound=Callable[..., Awaitable[Any]])
 
 
 def check_text_length(value: str, field: str) -> None:
@@ -68,22 +66,3 @@ def check_limit(limit: int) -> None:
     """Reject a ``limit`` over :data:`MAX_LIMIT`."""
     if limit > MAX_LIMIT:
         raise ConfigurationError(f"limit exceeds {MAX_LIMIT} (got {limit})")
-
-
-def bounded(func: _AsyncFunc) -> _AsyncFunc:
-    """Enforce the :data:`CALL_TIMEOUT_S` server-side per-call timeout.
-
-    Wraps a public async method so a caller that hangs the store or the
-    decoder gets a clear error instead of an open-ended wait.
-    """
-
-    @functools.wraps(func)
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return await asyncio.wait_for(func(*args, **kwargs), timeout=CALL_TIMEOUT_S)
-        except TimeoutError as exc:
-            raise ConfigurationError(
-                f"request exceeded the {CALL_TIMEOUT_S:.0f}s server-side timeout"
-            ) from exc
-
-    return wrapper  # type: ignore[return-value]

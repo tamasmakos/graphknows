@@ -16,7 +16,6 @@ from collections import defaultdict
 from typing import Any
 
 from graphknows.bounds import (
-    bounded,
     check_limit,
     check_metadata_size,
     check_scope_id,
@@ -343,7 +342,6 @@ class Memory:
         finally:
             await service.close()
 
-    @bounded
     async def ingest_memory(
         self,
         messages: str | list[dict[str, Any]] | dict[str, Any] = "",
@@ -465,7 +463,6 @@ class Memory:
         finally:
             await service.close()
 
-    @bounded
     async def recall_memory(
         self,
         query: str,
@@ -1178,7 +1175,6 @@ class Memory:
             return {"error": f"Entity not found: {name}"}
         return {k: v for k, v in rows[0].items() if not k.startswith("@")}
 
-    @bounded
     async def ltm_entities(self, session_id: str = "", limit: int = 200) -> dict[str, Any]:
         """List ENTITY nodes from the golden graph, optionally scoped to one session."""
         check_scope_id(session_id, "session_id")

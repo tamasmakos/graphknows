@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from graphknows.server.mcp._app import app
+from graphknows.server.mcp._bounded import bounded
 from graphknows.server.mcp._state import get_runtime
 
 
@@ -23,6 +24,7 @@ async def ltm_entity(name: str) -> dict[str, Any]:
 
 
 @app.tool()
+@bounded
 async def ltm_entities(session_id: str = "", limit: int = 200) -> dict[str, Any]:
     """List ENTITY nodes from the LTM graph, optionally filtered to one session.
 

@@ -25,6 +25,7 @@ from typing import Any
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from graphknows.bounds import CALL_TIMEOUT_S
 from graphknows.exceptions import ConfigurationError
 
 # The always-on default ontology, resolved off this file rather than imported
@@ -196,6 +197,15 @@ class GraphKnowsSettings(BaseSettings):
     enable_dspy_relations: bool | None = Field(default=None, alias="GRAPHKNOWS_DSPY_RELATIONS")
 
     # ArcadeDB
+    mcp_call_timeout_s: float = Field(
+        default=CALL_TIMEOUT_S,
+        alias="GRAPHKNOWS_MCP_CALL_TIMEOUT_S",
+        description=(
+            "Wall-clock budget for one MCP tool call. The first call after a cold "
+            "start pays the extraction models' load time; raise this if a "
+            "deployment does not warm them."
+        ),
+    )
     arcadedb_url: str = Field(default="http://localhost:2480", alias="GRAPHKNOWS_ARCADEDB_URL")
     arcadedb_user: str = Field(default="root", alias="GRAPHKNOWS_ARCADEDB_USER")
     arcadedb_password: SecretStr = Field(

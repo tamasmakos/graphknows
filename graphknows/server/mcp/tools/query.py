@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from graphknows.server.mcp._app import app
+from graphknows.server.mcp._bounded import bounded
 from graphknows.server.mcp._state import get_runtime
 
 
 @app.tool()
+@bounded
 async def memory_query(
     query: str,
     session_id: str = "",
