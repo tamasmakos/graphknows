@@ -2795,6 +2795,12 @@ class GraphStore(ArcadeStoreBase):
 
         Short tokens (< 5 chars) use exact match to avoid substring false
         positives ("war" matching "edward"); longer tokens use CONTAINS.
+
+        Ordered by ``chunk_id`` (FR-032): this collector feeds RRF rank
+        straight from row position, so an unordered ``LIMIT`` let ArcadeDB's
+        storage order — not the query — decide which chunks even reach
+        fusion, and in which order. ``chunk_id`` is the cheapest deterministic
+        key available: already unique, no extra column to compute.
         """
         if not entity_names:
             return []
@@ -2811,7 +2817,8 @@ class GraphStore(ArcadeStoreBase):
         rows = await self.query(
             f"MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
             f"WHERE ({where_entity}){filters} "
-            f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text LIMIT $k",
+            f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text "
+            f"ORDER BY chunk_id LIMIT $k",
             k=top_k,
         )
         return [{"chunk_id": r["chunk_id"], "text": r.get("text", "")} for r in rows]
@@ -2841,6 +2848,11 @@ class GraphStore(ArcadeStoreBase):
         dance studio" is about Gina and says so nowhere). ``text`` stays in the
         predicate as a fallback: chunks written before ``search_text`` existed
         have it unset, and matching a null would silently drop them.
+
+        Ordered by ``chunk_id`` (FR-032): this is the OR-pool the BM25 channel
+        re-ranks in Python, but an unordered ``LIMIT`` decided which chunks made
+        the pool at all before the re-rank ever saw them, off ArcadeDB's storage
+        order rather than the query.
         """
         if not terms:
             return []
@@ -2854,7 +2866,8 @@ class GraphStore(ArcadeStoreBase):
         filters = self._chunk_filters(session_id, state, alias="")
         rows = await self._c.query(
             self._db,
-            f"SELECT chunk_id, text FROM CHUNK WHERE ({text_where}){filters} LIMIT {int(top_k)}",  # nosec B608
+            f"SELECT chunk_id, text FROM CHUNK WHERE ({text_where}){filters} "  # nosec B608
+            f"ORDER BY chunk_id LIMIT {int(top_k)}",
             language="sql",
         )
         return [{"chunk_id": r["chunk_id"], "text": r.get("text", "")} for r in rows]
@@ -2869,6 +2882,10 @@ class GraphStore(ArcadeStoreBase):
         """CHUNKs linked to TEMPORAL nodes matching the given ISO dates.
 
         Exact match per date; 4-digit years also prefix-match ``YYYY-``.
+
+        Ordered by ``chunk_id`` (FR-032): same deterministic-``LIMIT`` reasoning
+        as ``query_entity_chunks`` — this collector's rank feeds RRF straight
+        from row position.
         """
         dates = [sanitize(str(d).strip()) for d in iso_dates if str(d).strip()]
         if not dates:
@@ -2884,7 +2901,7 @@ class GraphStore(ArcadeStoreBase):
             f"MATCH (c:CHUNK)-[:MENTIONS_DATE]->(d:TEMPORAL) "
             f"WHERE ({where_iso}){filters} "
             f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text, d.date AS date "
-            f"LIMIT $k",
+            f"ORDER BY chunk_id LIMIT $k",
             k=top_k,
         )
         return [
@@ -2908,8 +2925,10 @@ class GraphStore(ArcadeStoreBase):
         what we are looking for — chunks that mention the subject AND carry a
         TEMPORAL edge are exactly the dated evidence about it.
 
-        Ordered by how many of the query's entities a chunk mentions, so a chunk
-        naming both subjects of a question outranks one naming either.
+        Ordered by ``chunk_id`` (FR-032), not by how many of the query's
+        entities a chunk mentions — the query returns no such count, and this
+        collector's rank feeds RRF straight from row position, so an
+        unordered ``LIMIT`` let ArcadeDB's storage order pick the winners.
         """
         safe = [sanitize(n) for n in entity_names if n]
         if not safe:
@@ -2929,7 +2948,7 @@ class GraphStore(ArcadeStoreBase):
             f"WITH c "
             f"MATCH (c)-[:MENTIONS_DATE]->(d:TEMPORAL) "
             f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text, d.date AS date "
-            f"LIMIT $k",
+            f"ORDER BY chunk_id LIMIT $k",
             k=top_k,
         )
         return [
