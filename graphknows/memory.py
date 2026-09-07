@@ -559,7 +559,7 @@ class Memory:
         s = self.settings
         return TopicSummarizer(
             model=s.summarization_model or s.llm_model,
-            api_key=s.llm_api_key,
+            api_key=s.llm_api_key.get_secret_value(),
             api_base=s.llm_api_base,
         )
 

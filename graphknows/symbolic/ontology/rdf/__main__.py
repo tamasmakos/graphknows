@@ -62,7 +62,9 @@ async def _run(source: Path, ns: str, digest_out: Path | None, reset: bool) -> N
     db = db_name(ns)
     settings = get_settings()
     client = ArcadeDBClient(
-        settings.arcadedb_url, settings.arcadedb_user, settings.arcadedb_password
+        settings.arcadedb_url,
+        settings.arcadedb_user,
+        settings.arcadedb_password.get_secret_value(),
     )
     await client.connect()
     try:

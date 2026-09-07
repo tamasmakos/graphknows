@@ -26,7 +26,7 @@ def build_arcadedb_client(settings: GraphKnowsSettings) -> ArcadeDBClient:
     return ArcadeDBClient(
         base_url=settings.arcadedb_url,
         user=settings.arcadedb_user,
-        password=settings.arcadedb_password,
+        password=settings.arcadedb_password.get_secret_value(),
     )
 
 

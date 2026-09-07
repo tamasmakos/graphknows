@@ -57,7 +57,7 @@ def _explain(settings: GraphKnowsSettings, db: str, sql: str) -> str:
     response = httpx.post(
         f"{settings.arcadedb_url}/api/v1/query/{db}",
         json={"language": "sql", "command": f"EXPLAIN {sql}"},
-        auth=(settings.arcadedb_user, settings.arcadedb_password),
+        auth=(settings.arcadedb_user, settings.arcadedb_password.get_secret_value()),
         timeout=30,
     )
     response.raise_for_status()

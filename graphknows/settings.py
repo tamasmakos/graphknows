@@ -22,7 +22,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from graphknows.exceptions import ConfigurationError
@@ -198,7 +198,9 @@ class GraphKnowsSettings(BaseSettings):
     # ArcadeDB
     arcadedb_url: str = Field(default="http://localhost:2480", alias="GRAPHKNOWS_ARCADEDB_URL")
     arcadedb_user: str = Field(default="root", alias="GRAPHKNOWS_ARCADEDB_USER")
-    arcadedb_password: str = Field(default="changeme", alias="GRAPHKNOWS_ARCADEDB_PASSWORD")
+    arcadedb_password: SecretStr = Field(
+        default=SecretStr("changeme"), alias="GRAPHKNOWS_ARCADEDB_PASSWORD"
+    )
 
     # Multi-tenant isolation boundary. Each namespace maps to ONE physical
     # ArcadeDB database (``mem_<ns>``; "" -> ``mem``) — see storage/namespace.py.
@@ -216,7 +218,7 @@ class GraphKnowsSettings(BaseSettings):
     llm_model: str = Field(
         default="openrouter/deepseek/deepseek-v4-flash", alias="GRAPHKNOWS_LLM_MODEL"
     )
-    llm_api_key: str = Field(default="", alias="GRAPHKNOWS_LLM_API_KEY")
+    llm_api_key: SecretStr = Field(default=SecretStr(""), alias="GRAPHKNOWS_LLM_API_KEY")
     llm_api_base: str = Field(default="", alias="GRAPHKNOWS_LLM_API_BASE")
     llm_temperature: float = Field(default=0.0, alias="GRAPHKNOWS_LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=2048, alias="GRAPHKNOWS_LLM_MAX_TOKENS")
@@ -235,7 +237,7 @@ class GraphKnowsSettings(BaseSettings):
     # re-index.
     embed_model: str = Field(default="BAAI/bge-small-en-v1.5", alias="GRAPHKNOWS_EMBED_MODEL")
     embed_api_base: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_BASE")
-    embed_api_key: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_KEY")
+    embed_api_key: SecretStr = Field(default=SecretStr(""), alias="GRAPHKNOWS_EMBED_API_KEY")
     # Local-embedding device: "auto" (CUDA if present, else CPU), "cuda", or "cpu".
     embed_device: str = Field(default="auto", alias="GRAPHKNOWS_EMBED_DEVICE")
     # Local-embedding weight quantization (bitsandbytes, CUDA only): "", "8bit",
@@ -585,7 +587,7 @@ class GraphKnowsSettings(BaseSettings):
         """
         if self.graphknows_env is not Env.production:
             return
-        if self.arcadedb_password == "changeme":
+        if self.arcadedb_password.get_secret_value() == "changeme":
             raise ConfigurationError(
                 "GRAPHKNOWS_ARCADEDB_PASSWORD is still the development default."
             )

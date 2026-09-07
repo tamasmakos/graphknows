@@ -4,11 +4,14 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+from pydantic import SecretStr
 
 
 def _settings(*, embed_api_base="", embed_model="BAAI/bge-small-en-v1.5", embed_api_key=""):
     return SimpleNamespace(
-        embed_api_base=embed_api_base, embed_model=embed_model, embed_api_key=embed_api_key
+        embed_api_base=embed_api_base,
+        embed_model=embed_model,
+        embed_api_key=SecretStr(embed_api_key),
     )
 
 

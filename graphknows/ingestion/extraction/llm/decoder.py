@@ -288,7 +288,7 @@ class LLMDecoder:
         model = settings.extraction_model or settings.llm_model
         return build_lm(
             model,
-            api_key=settings.llm_api_key,
+            api_key=settings.llm_api_key.get_secret_value(),
             api_base=settings.llm_api_base,
             temperature=settings.llm_temperature,
             max_tokens=max(settings.llm_max_tokens, 4096),

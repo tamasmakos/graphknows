@@ -221,7 +221,9 @@ async def _sample(args: argparse.Namespace) -> int:
     settings = GraphKnowsSettings()
     database = args.database or db_name(args.namespace)
     client = ArcadeDBClient(
-        settings.arcadedb_url, settings.arcadedb_user, settings.arcadedb_password
+        settings.arcadedb_url,
+        settings.arcadedb_user,
+        settings.arcadedb_password.get_secret_value(),
     )
     await client.connect()
     try:

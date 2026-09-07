@@ -203,7 +203,7 @@ def embed(texts: list[str], model_name: str = "") -> np.ndarray:
             texts,
             model,
             s.embed_api_base,
-            s.embed_api_key,
+            s.embed_api_key.get_secret_value(),
             dimensions=getattr(s, "embed_dimensions", 0),
         )
     return _embed_local(texts, model)

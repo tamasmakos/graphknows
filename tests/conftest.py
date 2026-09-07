@@ -63,7 +63,7 @@ def _arcadedb_reachable() -> bool:
         s = GraphKnowsSettings()
         r = httpx.get(
             f"{s.arcadedb_url}/api/v1/exists/mem",
-            auth=(s.arcadedb_user, s.arcadedb_password),
+            auth=(s.arcadedb_user, s.arcadedb_password.get_secret_value()),
             timeout=3,
         )
     except Exception:
