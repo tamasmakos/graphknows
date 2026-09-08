@@ -328,18 +328,18 @@ _NLP_UNAVAILABLE = False
 def _parser() -> Any:
     """The shared spaCy pipeline.
 
-    Reuses ``worth._nlp``'s singleton instead of loading a second ~600MB copy
-    of the same model into the process. Soft-fails: a missing model logs once
-    at WARNING and returns ``None`` rather than raising, so this gate degrades
-    to "admit" instead of emptying the graph.
+    Reuses ``worth.shared_nlp``'s singleton instead of loading a second ~600MB
+    copy of the same model into the process. Soft-fails: a missing model logs
+    once at WARNING and returns ``None`` rather than raising, so this gate
+    degrades to "admit" instead of emptying the graph.
     """
     global _NLP_UNAVAILABLE
     if _NLP_UNAVAILABLE:
         return None
     try:
-        from graphknows.worth import _nlp
+        from graphknows.worth import shared_nlp
 
-        return _nlp()
+        return shared_nlp()
     except Exception as exc:  # a missing model must not take ingest down
         _NLP_UNAVAILABLE = True
         log.warning("Verb-head entity gate skipped: spaCy unavailable (%s)", exc)

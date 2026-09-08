@@ -15,6 +15,7 @@ from typing import Any
 from dateparser import parse as _parse_date
 
 from evaluation.common.datamodels import EvalCase, EvalDocument, IngestUnit
+from evaluation.common.dataset import clip, reference_date
 from evaluation.locomo.config import LocomoConfig
 
 _CASE_ID_KEYS = ("id", "question_id", "case_id")
@@ -57,13 +58,6 @@ def dialogue_id(case_id: str) -> str:
     if idx > 0 and case_id[idx + 2 :].isdigit():
         return case_id[:idx]
     return case_id
-
-
-def _clip(text: str, max_chars: int) -> str:
-    clean = text.strip()
-    if len(clean) <= max_chars:
-        return clean
-    return clean[: max(0, max_chars - 3)].rstrip() + "..."
 
 
 def _message_text(message: Any) -> str:
@@ -176,7 +170,7 @@ def build_documents(
             continue
         title = first_string(session, ("title", "id", "session_id"), f"session-{index}")
         text = "\n".join(filter(None, (_message_text(msg) for msg in session.get("messages", []))))
-        text = _clip(text, max_chars)
+        text = clip(text, max_chars)
         turns = _session_turns(session) if turn_fed else []
         if text or turns:
             documents.append(
@@ -188,14 +182,6 @@ def build_documents(
                 )
             )
     return documents
-
-
-def _reference_date(documents: list[EvalDocument]) -> str:
-    """Human-readable date of the newest session (anchors relative time)."""
-    parsed = [dt for doc in documents if doc.anchor_date and (dt := _parse_date(doc.anchor_date))]
-    if not parsed:
-        return ""
-    return max(parsed).strftime("%d %B %Y")
 
 
 def load_units(config: LocomoConfig, *, limit: int, offset: int) -> list[IngestUnit]:
@@ -240,7 +226,7 @@ def load_units(config: LocomoConfig, *, limit: int, offset: int) -> list[IngestU
                 group_id=dlg_id,
                 documents=documents,
                 cases=cases,
-                reference_date=_reference_date(documents),
+                reference_date=reference_date(documents),
             )
         )
     return units

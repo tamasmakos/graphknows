@@ -16,6 +16,7 @@ from typing import Any
 from dateparser import parse as _parse_date
 
 from evaluation.common.datamodels import EvalCase, EvalDocument, IngestUnit
+from evaluation.common.dataset import clip, reference_date
 from evaluation.longmem.config import LongMemConfig
 
 # LongMemEval dates look like "2023/05/30 (Tue) 23:40"; strip the weekday
@@ -39,13 +40,6 @@ def _parse_iso(raw: str) -> str:
         return ""
     dt = _parse_date(cleaned)
     return dt.isoformat() if dt else ""
-
-
-def _clip(text: str, max_chars: int) -> str:
-    clean = text.strip()
-    if len(clean) <= max_chars:
-        return clean
-    return clean[: max(0, max_chars - 3)].rstrip() + "..."
 
 
 def _session_text(session: list[dict[str, Any]]) -> str:
@@ -98,19 +92,13 @@ def build_documents(
     for index, session in enumerate(sessions[:max_documents]):
         if not isinstance(session, list):
             continue
-        text = _clip(_session_text(session), max_chars)
+        text = clip(_session_text(session), max_chars)
         if not text:
             continue
         title = str(ids[index]) if index < len(ids) else f"session-{index}"
         anchor = _parse_iso(dates[index]) if index < len(dates) else ""
         documents.append(EvalDocument(title=title, text=text, anchor_date=anchor))
     return documents
-
-
-def _reference_date(documents: list[EvalDocument]) -> str:
-    """Human-readable date of the newest session (anchors relative time)."""
-    parsed = [dt for doc in documents if doc.anchor_date and (dt := _parse_date(doc.anchor_date))]
-    return max(parsed).strftime("%d %B %Y") if parsed else ""
 
 
 def load_units(config: LongMemConfig, *, limit: int, offset: int) -> list[IngestUnit]:
@@ -145,7 +133,7 @@ def load_units(config: LongMemConfig, *, limit: int, offset: int) -> list[Ingest
                 group_id=qid,
                 documents=documents,
                 cases=[case],
-                reference_date=_reference_date(documents),
+                reference_date=reference_date(documents),
             )
         )
     return units

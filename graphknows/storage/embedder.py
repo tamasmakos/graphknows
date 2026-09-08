@@ -141,6 +141,9 @@ def _model_suffix(model_name: str) -> str:
     return str(declared) if declared else ""
 
 
+model_suffix = _model_suffix
+
+
 def _embed_local(texts: list[str], model_name: str) -> np.ndarray:
     model = _local_model(model_name)
     # Applied here rather than at the call sites so every embedding — ingest,

@@ -45,9 +45,9 @@ def frame_ontology(name: str) -> dict[str, Any]:
     lexical_units: [(word, pos)], parents: [frame names]}``. Empty dict on lookup
     failure (unknown frame).
     """
-    from graphknows.symbolic.framenet.framenet import _framenet, _ontology_up
+    from graphknows.symbolic.framenet.framenet import framenet, ontology_up
 
-    fn = _framenet()
+    fn = framenet()
     try:
         f = fn.frame(name)
     except Exception:
@@ -71,7 +71,7 @@ def frame_ontology(name: str) -> dict[str, Any]:
         "core_fes": core,
         "peripheral_fes": peripheral,
         "lexical_units": lus,
-        "parents": sorted(_ontology_up().get(f.name, set())),
+        "parents": sorted(ontology_up().get(f.name, set())),
     }
 
 
@@ -264,12 +264,12 @@ def lu_triggers(
     vector and shared parse so this never re-embeds or re-parses what a caller
     already computed.
     """
-    from graphknows.symbolic.framenet.framenet import _lus
+    from graphknows.symbolic.framenet.framenet import lus
     from graphknows.symbolic.framenet.index import match_frames, match_frames_text
 
     if doc is None:
         doc = nlp(text)
-    lui = _lus()
+    lui = lus()
 
     lvc_triggers, lvc_verb_toks, lvc_noun_toks = _lvc_targets(doc, lui)  # type: ignore[arg-type]
     nominal_triggers = _nominalisation_targets(doc, lui, lvc_noun_toks)  # type: ignore[arg-type]

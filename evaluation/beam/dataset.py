@@ -17,6 +17,7 @@ from dateparser import parse as _parse_date
 
 from evaluation.beam.config import BeamConfig
 from evaluation.common.datamodels import EvalCase, EvalDocument, IngestUnit
+from evaluation.common.dataset import clip, reference_date
 
 # Category → the field holding its gold answer.
 _GOLD_FIELD = {
@@ -49,13 +50,6 @@ def _parse_iso(raw: str) -> str:
         return ""
     dt = _parse_date(text) or _parse_date(text.replace("-", " "))
     return dt.isoformat() if dt else ""
-
-
-def _clip(text: str, max_chars: int) -> str:
-    clean = text.strip()
-    if len(clean) <= max_chars:
-        return clean
-    return clean[: max(0, max_chars - 3)].rstrip() + "..."
 
 
 def _message_line(msg: Any) -> str:
@@ -118,7 +112,7 @@ def build_documents(
         parts = [f"{k}: {v}" for k, v in profile.items() if v]
         if parts:
             documents.append(
-                EvalDocument(title="user-profile", text=_clip("\n".join(parts), max_chars))
+                EvalDocument(title="user-profile", text=clip("\n".join(parts), max_chars))
             )
 
     chat = record.get("chat") or []
@@ -133,11 +127,6 @@ def build_documents(
             title = f"session-{index}" if len(blocks) == 1 else f"session-{index}-part{part}"
             documents.append(EvalDocument(title=title, text=block, anchor_date=anchor))
     return documents
-
-
-def _reference_date(documents: list[EvalDocument]) -> str:
-    parsed = [dt for doc in documents if doc.anchor_date and (dt := _parse_date(doc.anchor_date))]
-    return max(parsed).strftime("%d %B %Y") if parsed else ""
 
 
 def _message_id_map(record: dict[str, Any]) -> dict[int, str]:
@@ -263,7 +252,7 @@ def load_units(config: BeamConfig, *, limit: int, offset: int) -> list[IngestUni
                 group_id=conv_id,
                 documents=documents,
                 cases=cases,
-                reference_date=_reference_date(documents),
+                reference_date=reference_date(documents),
             )
         )
     return units

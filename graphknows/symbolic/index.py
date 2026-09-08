@@ -45,15 +45,15 @@ def cache_key(prefix: str, *parts: str) -> str:
     The encoding component is not redundant with the model name. The key must
     change when the *way* text is encoded changes, not only when the model does
     — otherwise a matrix built under the old encoding is silently reused against
-    vectors produced by the new one. See ``storage.embedder._model_suffix``.
+    vectors produced by the new one. See ``storage.embedder.model_suffix``.
     """
     from graphknows.settings import get_settings
-    from graphknows.storage.embedder import _model_suffix, embed_dim
+    from graphknows.storage.embedder import embed_dim, model_suffix
 
     s = get_settings()
     model = re.sub(r"[^A-Za-z0-9._-]", "_", s.embed_model or "local")
     dim = s.embed_dimensions or embed_dim()
-    suffix = _model_suffix(s.embed_model or "")
+    suffix = model_suffix(s.embed_model or "")
     enc = hashlib.sha256(suffix.encode("utf-8")).hexdigest()[:8] if suffix else "plain"
     return "_".join([prefix, model, str(dim), enc, *parts])
 

@@ -413,10 +413,10 @@ _CORE_DDL: list[tuple[str, str]] = [
     ("sql", "CREATE PROPERTY BROADER.transitive IF NOT EXISTS BOOLEAN"),
     ("sql", "CREATE EDGE TYPE IN_SYNSET IF NOT EXISTS"),  # SENSE -> SYNSET
     # Sense-level relations (antonym, derivationally_related_form, pertainym,
-    # participle) live ONLY here, never on BROADER: the writer
-    # (write_sense_relations) MATCHes `:SENSE` on both endpoints, so a
-    # sense-level relation landing on a synset node is structurally
-    # impossible rather than merely undocumented.
+    # participle) live ONLY here, never on BROADER: any writer for this edge
+    # type MATCHes `:SENSE` on both endpoints, so a sense-level relation
+    # landing on a synset node is structurally impossible rather than merely
+    # undocumented.
     ("sql", "CREATE EDGE TYPE SENSE_REL IF NOT EXISTS"),  # SENSE -> SENSE
     ("sql", "CREATE PROPERTY SENSE_REL.rel IF NOT EXISTS STRING"),
     # One WordNet grounding, in full provenance. The merge key is (entity,

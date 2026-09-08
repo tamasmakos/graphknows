@@ -130,6 +130,9 @@ def _name_norm(name: str) -> str:
     return " ".join(name.split()).casefold()
 
 
+name_norm = _name_norm
+
+
 def verifier_coverage_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Fold ``{source, verifier_score}`` REL rows into per-tier coverage.
 
@@ -1948,55 +1951,6 @@ class GraphStore(ArcadeStoreBase):
         )
         return len(rows)
 
-    async def write_sense_relations(self, rows: list[dict[str, Any]]) -> int:
-        """MERGE SENSE-[:SENSE_REL {rel}]->SENSE edges.
-
-        Rows: ``{"src", "dst", "rel"}``. Matching ``:SENSE`` on BOTH endpoints
-        is the enforcement, not a convention: a sense-level relation
-        (antonym, derivationally_related_form, pertainym, participle) simply
-        cannot land on a SYNSET vertex through this writer.
-        """
-        if not rows:
-            return 0
-        await self.command(
-            "UNWIND $rows AS r MATCH (a:SENSE {id: r.src}), (b:SENSE {id: r.dst}) "
-            "MERGE (a)-[x:SENSE_REL {rel: r.rel}]->(b)",
-            rows=rows,
-        )
-        return len(rows)
-
-    async def synsets_missing_parents(
-        self, synset_ids: list[str] | None = None
-    ) -> list[dict[str, str]]:
-        """``{"id", "name"}`` of SYNSET vertices with no outgoing BROADER edge.
-
-        What the flush-time ancestor backfill (``WordNetChannel.populate()``)
-        consumes: a synset minted by :meth:`write_senses` has no hypernym
-        chain yet until :meth:`write_synset_hypernyms` runs for it.
-
-        ``synset_ids`` scopes the scan to one flushed session's synsets
-        instead of the whole namespace: passing ``None`` checks every SYNSET
-        vertex, which a per-session caller should not do once the namespace
-        has accumulated many sessions. Passing ``[]`` short-circuits to no
-        rows rather than issuing a query that would (via ``IN []``) also
-        match none, since an empty scope means the session grounded nothing.
-        """
-        if synset_ids is not None:
-            if not synset_ids:
-                return []
-            rows = await self.query(
-                "MATCH (y:SYNSET) WHERE y.id IN $ids "
-                "OPTIONAL MATCH (y)-[b:BROADER]->() "
-                "WITH y, b WHERE b IS NULL RETURN y.id AS id, y.name AS name",
-                ids=synset_ids,
-            )
-        else:
-            rows = await self.query(
-                "MATCH (y:SYNSET) OPTIONAL MATCH (y)-[b:BROADER]->() "
-                "WITH y, b WHERE b IS NULL RETURN y.id AS id, y.name AS name"
-            )
-        return [{"id": str(r["id"]), "name": str(r["name"])} for r in rows]
-
     async def write_source(self, row: dict[str, Any]) -> str:
         """MERGE the SOURCE vertex for one (channel, version) import (issue #145).
 
@@ -3780,42 +3734,6 @@ class GraphStore(ArcadeStoreBase):
             "RETURN DISTINCT c.speaker AS speaker"
         )
         return [str(r["speaker"]).casefold() for r in rows if r.get("speaker")]
-
-    async def rename_entity(self, old_norm: str, new_name: str) -> bool:
-        """Rename an ENTITY in place, keeping its edges. Returns True on success.
-
-        Refuses when an entity already holds the target ``name_norm`` — the
-        caller should ``merge_entities`` into it instead, since two nodes cannot
-        share the UNIQUE key. The old surface is kept as an alias.
-        """
-        new_norm = _name_norm(new_name)
-        if not old_norm or not new_norm or old_norm == new_norm:
-            return False
-        clash = await self.query(
-            "MATCH (e:ENTITY {name_norm: $nn}) RETURN e.name AS n LIMIT 1", nn=new_norm
-        )
-        if clash:
-            return False
-        rows = await self.query(
-            "MATCH (e:ENTITY {name_norm: $nn}) RETURN e.name AS name, e.aliases AS aliases LIMIT 1",
-            nn=old_norm,
-        )
-        if not rows:
-            return False
-        old_name = rows[0].get("name") or old_norm
-        aliases = list(rows[0].get("aliases") or [])
-        if old_name and old_name != new_name and old_name not in aliases:
-            aliases.append(old_name)
-        await self.command(
-            "MATCH (e:ENTITY {name_norm: $old}) "
-            "SET e.name = $name, e.name_norm = $new, e.aliases = $aliases",
-            old=old_norm,
-            name=new_name,
-            new=new_norm,
-            aliases=aliases,
-        )
-        logger.info("rename_entity: %s -> %s", old_norm, new_norm)
-        return True
 
     async def drop_entities(self, name_norms: list[str]) -> int:
         """DETACH DELETE the given ENTITY nodes (removes MENTIONS/RELATION edges).

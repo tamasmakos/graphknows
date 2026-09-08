@@ -26,6 +26,9 @@ def _nlp() -> Any:
     return load_spacy_model(get_settings().spacy_model)
 
 
+shared_nlp = _nlp
+
+
 def worth_extracting(text: str) -> bool:
     """True when *text* predicates something about something.
 

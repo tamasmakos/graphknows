@@ -26,7 +26,7 @@ this codebase gets right; :func:`broader_pairs` is the half that was wrong.
 
 **Expansion is a different question from taxonomy.** Widening a query to
 ``Using`` and ``Perspective_on`` neighbours is legitimate and is what
-``framenet._ontology_up`` does. Only the persisted ``BROADER`` hierarchy is
+``framenet.ontology_up`` does. Only the persisted ``BROADER`` hierarchy is
 restricted here, because a stored edge is read as a claim about the world.
 """
 
@@ -83,14 +83,12 @@ def _relations(fn: Any) -> list[tuple[str, str, str]]:
 
 
 @lru_cache(maxsize=1)
-def _split(fn_id: int) -> tuple[dict[str, set[str]], tuple[tuple[str, str, str], ...], set[str]]:
+def _split(fn: Any) -> tuple[dict[str, set[str]], tuple[tuple[str, str, str], ...], set[str]]:
     """Partition the corpus relations into (taxonomic map, non-taxonomic, unknown types)."""
-    from graphknows.symbolic.framenet.framenet import _framenet
-
     up: dict[str, set[str]] = defaultdict(set)
     other: list[tuple[str, str, str]] = []
     unknown: set[str] = set()
-    for sub, rel, sup in _relations(_framenet()):
+    for sub, rel, sup in _relations(fn):
         if rel in TAXONOMIC:
             up[sub].add(sup)
         elif rel in NON_TAXONOMIC:
@@ -100,27 +98,27 @@ def _split(fn_id: int) -> tuple[dict[str, set[str]], tuple[tuple[str, str, str],
     return dict(up), tuple(other), unknown
 
 
-def broader_pairs() -> dict[str, set[str]]:
+def broader_pairs(fn: Any) -> dict[str, set[str]]:
     """Frame -> strictly more general frames. ``Inheritance`` only.
 
     This is what gets persisted as ``BROADER`` and closed over at query time.
     """
-    return _split(0)[0]
+    return _split(fn)[0]
 
 
-def sym_rel_triples() -> tuple[tuple[str, str, str], ...]:
+def sym_rel_triples(fn: Any) -> tuple[tuple[str, str, str], ...]:
     """``(sub, relation_type, super)`` for every non-taxonomic frame relation.
 
     Persisted as ``SYM_REL {rel}`` — navigable, never closed over.
     """
-    return _split(0)[1]
+    return _split(fn)[1]
 
 
-def unknown_relation_types() -> set[str]:
+def unknown_relation_types(fn: Any) -> set[str]:
     """Relation types the shipped corpus declares that this table does not name.
 
     Non-empty means FrameNet added a relation type: decide whether it is
     subsumption and add it to one of the two sets above. Reported at install
     rather than swallowed, because the silent default would be to drop it.
     """
-    return _split(0)[2]
+    return _split(fn)[2]

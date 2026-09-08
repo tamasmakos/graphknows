@@ -2211,14 +2211,14 @@ class _STMIngestHandler:
         """Write FRAME chunk tags for ``matches`` (name, confidence) pairs."""
         if not matches:
             return
-        from graphknows.symbolic.framenet.framenet import _broader_up
+        from graphknows.symbolic.framenet.framenet import broader_up
         from graphknows.symbolic.framenet.index import frame_embedding, frame_summary
 
         # FrameNet's own hierarchy rides along, so the frames evoked here
         # land as a traversable taxonomy rather than isolated tags: a
         # query matching a general frame can then walk DOWN to the
         # specific one a chunk actually evoked. Cached in-process.
-        up = _broader_up()
+        up = broader_up()
         await self._store.write_frames(
             [
                 {

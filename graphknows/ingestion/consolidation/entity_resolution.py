@@ -36,7 +36,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from graphknows.storage.arcadedb.graph_store import _name_norm
+from graphknows.storage.arcadedb.graph_store import name_norm
 
 log = logging.getLogger(__name__)
 
@@ -113,14 +113,14 @@ def _singularize(word: str) -> str:
 def _standard_key(name: str) -> str:
     """Standardized merge key for entity de-duplication.
 
-    Casefold + whitespace-collapse (``_name_norm``), strip a leading
+    Casefold + whitespace-collapse (``name_norm``), strip a leading
     determiner/possessive, singularize the head (last) token.
     """
-    toks = _name_norm(name).split()
+    toks = name_norm(name).split()
     while len(toks) > 1 and toks[0] in _LEADING_DET:
         toks = toks[1:]
     if not toks:
-        return _name_norm(name)
+        return name_norm(name)
     toks[-1] = _singularize(toks[-1])
     return " ".join(toks)
 

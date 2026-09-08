@@ -101,11 +101,3 @@ def build_index(
     if namespace:
         _indexes[namespace] = index
     return index
-
-
-def reset_schemes() -> None:
-    """Drop the process-wide caches (tests)."""
-    with _lock:
-        _schemes.clear()
-        _indexes.clear()
-    load_coarse_aliases.cache_clear()

@@ -98,7 +98,11 @@ def _framenet() -> Any:
     return fn
 
 
-def _lus() -> dict[tuple[str, str], set[str]]:
+framenet = _framenet
+
+
+def lus() -> dict[tuple[str, str], set[str]]:
+    """Lexical-unit index: ``(lemma, pos)`` -> candidate FrameNet frame names."""
     global _lu_index
     if _lu_index is not None:
         return _lu_index
@@ -114,7 +118,7 @@ def _lus() -> dict[tuple[str, str], set[str]]:
         return _lu_index
 
 
-def _broader_up() -> dict[str, set[str]]:
+def broader_up() -> dict[str, set[str]]:
     """Frame -> strictly more general frames, persisted as SKOS ``BROADER``.
 
     ``Inheritance`` only. See :mod:`graphknows.symbolic.framenet.relations` for
@@ -124,19 +128,19 @@ def _broader_up() -> dict[str, set[str]]:
     non-subsumption, and the narrower-expansion walk handed those back as if
     they were specialisations.
 
-    Distinct from :func:`_ontology_up`, which is a query-side EXPANSION map.
+    Distinct from :func:`ontology_up`, which is a query-side EXPANSION map.
     Widening a search to ``Using``/``Perspective_on`` neighbours is legitimate;
     storing them as a taxonomy is not.
     """
     from graphknows.symbolic.framenet.relations import broader_pairs
 
-    return broader_pairs()
+    return broader_pairs(_framenet())
 
 
-def _ontology_up() -> dict[str, set[str]]:
+def ontology_up() -> dict[str, set[str]]:
     """Child -> parent EXPANSION map (Inheritance/Using upward; Perspective_on both).
 
-    Deliberately wider than :func:`_broader_up`: widening a query to frames a
+    Deliberately wider than :func:`broader_up`: widening a query to frames a
     target presupposes or perspectivises finds relevant chunks, and nothing here
     is stored as a claim. Do not reuse this for the persisted hierarchy.
     """
@@ -172,7 +176,7 @@ def _core_fes(name: str) -> tuple[str, ...]:
 
 def expand_frames(frames: set[str], hops: int = 1) -> set[str]:
     """Expand a frame set upward through the ontology by *hops* generations."""
-    up = _ontology_up()
+    up = ontology_up()
     out, frontier = set(frames), set(frames)
     for _ in range(hops):
         nxt: set[str] = set()
@@ -323,7 +327,7 @@ def extract_frames(text: str, speaker: str, speakers: list[str]) -> list[dict[st
     """
     out: list[dict[str, Any]] = []
     for sent in _spacy()(text).sents:
-        targets = _sentence_targets(sent, _lus())
+        targets = _sentence_targets(sent, lus())
         if not targets:
             continue
         sim_of = _disambiguate(targets, sent.text.strip())

@@ -14,9 +14,6 @@ never download" contract for an unprovisioned corpus.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
-
 from graphknows.symbolic.ontology.senses import _wordnet
 
 # WordNet synset OFFSETS are not stable across releases (they can shift when
@@ -56,14 +53,6 @@ SYNSET_RELATIONS: frozenset[str] = frozenset(
         "cause",
         "verb_group",
     }
-)
-
-# Relations that hold between SENSES (lemmas), never between synsets. Disjoint
-# from SYNSET_RELATIONS by construction: that split is what makes "a
-# sense-level relation on a synset node" a structural impossibility rather
-# than a convention a writer could violate.
-SENSE_RELATIONS: frozenset[str] = frozenset(
-    {"antonym", "derivationally_related_form", "pertainym", "participle"}
 )
 
 # The only relation a closure query may transitively close over.
@@ -195,50 +184,3 @@ def ancestors(synset_name: str) -> tuple[list[dict], bool]:
         )
         child = parent
     return rows, truncated
-
-
-def sense_relations(sense_ids: set[str]) -> list[dict]:
-    """Rows ``{"src", "dst", "rel"}`` for SENSE_RELATIONS already-minted senses.
-
-    Both endpoints must already be present in *sense_ids*: materialisation is
-    lazy, so this never mints a sense just to hang a relation off it — it
-    only reports edges between senses the caller has already grounded.
-
-    Each id is resolved back to its lemma via the sense key it was minted
-    from (:func:`sense_id`); an id whose key nltk cannot resolve is skipped
-    rather than raising, since a stale or foreign id must degrade quietly.
-    """
-    wn = _wordnet()
-    if wn is None:
-        return []
-
-    from nltk.corpus.reader.wordnet import WordNetError  # type: ignore[import-untyped]
-
-    lemmas_by_id: dict[str, object] = {}
-    for sid in sense_ids:
-        key = sid[len(ID_PREFIX) :] if sid.startswith(ID_PREFIX) else sid
-        try:
-            lemmas_by_id[sid] = wn.lemma_from_key(key)
-        except (WordNetError, KeyError):
-            continue
-
-    # nltk's Lemma exposes most lexical relations as plural-named public
-    # methods; "participle" has no public accessor at all (only the generic,
-    # private ``_related`` keyed by WordNet's raw pointer symbol "<" for
-    # "participle of verb"), so it is special-cased here rather than renamed
-    # away from the WordNet-standard relation name this module's contract uses.
-    _accessors: dict[str, Callable[[Any], list[Any]]] = {
-        "antonym": lambda lm: lm.antonyms(),
-        "derivationally_related_form": lambda lm: lm.derivationally_related_forms(),
-        "pertainym": lambda lm: lm.pertainyms(),
-        "participle": lambda lm: lm._related("<"),
-    }
-
-    rows: list[dict] = []
-    for sid, lemma in lemmas_by_id.items():
-        for rel in SENSE_RELATIONS:
-            for related in _accessors[rel](lemma):
-                dst = sense_id(related)
-                if dst in sense_ids:
-                    rows.append({"src": sid, "dst": dst, "rel": rel})
-    return rows
