@@ -366,6 +366,10 @@ class _STMIngestHandler:
         # chunking a turn does not get its own chunk; it joins the next window,
         # which is emitted every ``_chunk_stride`` turns.
         self._since_emit: dict[str, int] = {}
+        # Whether any turn folded into the pending window asked to be extracted.
+        # The emitted chunk carries those turns' text, so it must carry their
+        # extract/skip decision too -- not just the emitting turn's.
+        self._pending_infer: dict[str, bool] = {}
         # Chunks actually written, so the service can report the real count
         # instead of assuming one per message.
         self._chunks_written: int = 0
@@ -897,6 +901,28 @@ class _STMIngestHandler:
             merged[idx] = result
         return merged
 
+    def _window_decision(
+        self, session_id: str, infer: bool, last_in_batch: bool
+    ) -> tuple[bool, bool]:
+        """Whether this turn emits the pending window, and under which flag.
+
+        With window chunking a turn does not get its own chunk: it is folded
+        into the window a later turn emits. The emitted chunk carries the folded
+        turns' text, so it carries their extract/skip decision too -- extract
+        when ANY of them asked for it. Taking only the emitting turn's flag is
+        how one trailing ``infer=False`` turn (tool output, a greeting) silenced
+        extraction for everything said before it.
+
+        Returns ``(emit_now, infer_for_the_window)``.
+        """
+        pending = self._since_emit.get(session_id, 0) + 1
+        if pending < self._chunk_stride and not last_in_batch:
+            self._since_emit[session_id] = pending
+            self._pending_infer[session_id] = self._pending_infer.get(session_id, False) or infer
+            return False, infer
+        self._since_emit[session_id] = 0
+        return True, infer or self._pending_infer.pop(session_id, False)
+
     async def ingest_turn(
         self,
         session_id: str,
@@ -981,11 +1007,9 @@ class _STMIngestHandler:
         # extractor runs once per window instead of once per turn over
         # substantially the same text.
         if self._window_chunks:
-            pending = self._since_emit.get(session_id, 0) + 1
-            if pending < self._chunk_stride and not last_in_batch:
-                self._since_emit[session_id] = pending
+            emit, infer = self._window_decision(session_id, infer, last_in_batch)
+            if not emit:
                 return 0
-            self._since_emit[session_id] = 0
 
         # What is stored, embedded and retrieved. A multi-turn window carries
         # the turns around this one, so a question about a fact stated two turns
