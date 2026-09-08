@@ -12,6 +12,7 @@ Authentication uses HTTP Basic Auth (root + server password).
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -64,6 +65,9 @@ def _raise_for_status(r: httpx.Response) -> None:
         response=r,
     )
     raise StoreError(str(cause)) from cause
+
+
+logger = logging.getLogger(__name__)
 
 
 class ArcadeDBClient:
@@ -265,7 +269,14 @@ class ArcadeDBClient:
         try:
             yield
         except BaseException:
-            await self._end_transaction(db, "rollback", session)
+            # A rollback that fails must not replace the failure that caused it:
+            # ArcadeDB answers 500 for a transaction it has already expired, and
+            # that error surfacing instead of the real one is how an expired
+            # transaction reads as a mysterious commit error (CI, 2026-09-07).
+            try:
+                await self._end_transaction(db, "rollback", session)
+            except Exception:
+                logger.warning("rollback of %s failed; re-raising the original error", db)
             raise
         else:
             await self._end_transaction(db, "commit", session)

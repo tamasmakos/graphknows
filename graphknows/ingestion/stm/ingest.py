@@ -1222,6 +1222,53 @@ class _STMIngestHandler:
         await self._store.ensure_session(session_id, started_at=str(t0))
         await self._store.ensure_file(file_id=parsed.source_id, session_id=session_id)
 
+    async def _frame_payload(
+        self, chunk: ExtractedChunk, filtered: list[dict[str, Any]]
+    ) -> tuple[list[tuple[str, float]], list[dict[str, Any]], Any]:
+        """Everything the frame layers need, computed before any write opens.
+
+        Split out of :meth:`_write_extracted` so the model inference runs
+        OUTSIDE the per-chunk transaction: an ArcadeDB HTTP transaction held
+        open across SRL and frame-instance inference expires server-side, and
+        the write that follows dies with a rollback that cannot find its own
+        transaction.
+
+        Returns the chunk's frame tags, its frame instances and their nesting.
+        """
+        # One parse serves both frame layers when SRL identification is on -- it
+        # is the expensive step, and running it twice per chunk would double it.
+        srl_hits = await self._srl_hits(chunk.text) if chunk.srl_hits is None else chunk.srl_hits
+        if not self._enable_frames:
+            return [], [], None
+
+        from graphknows.symbolic.framenet.index import match_frames
+
+        # Parsed triggers name the frames this chunk actually evokes; the
+        # embedding match only ranks candidates by definition similarity. The
+        # confidence is 1.0 because a trigger is an observation, not a guess --
+        # EVOKED_BY.confidence weights the chunk at query time, so a parsed tag
+        # should outweigh a cosine one.
+        matches = (
+            [(f, 1.0) for f in dict.fromkeys(h.frame for h in srl_hits)]
+            if srl_hits
+            else match_frames(chunk.embedding, top_k=_FRAME_TOP_K, min_sim=_FRAME_MIN_SIM)
+        )
+        # {name.casefold(): type} from this chunk's own already-typed entities --
+        # the type veto's filler type comes from the graph's OWN entity typing,
+        # not a second WordNet lookup.
+        entity_types = {str(e["name"]).casefold(): str(e.get("type", "")) for e in filtered}
+        instances, nesting = await asyncio.to_thread(
+            self._frame_instances,
+            chunk.text,
+            chunk.chunk_id,
+            chunk.speaker,
+            chunk.embedding,
+            srl_hits,
+            entity_types,
+            chunk.extraction.frames,
+        )
+        return matches, instances, nesting
+
     async def _write_extracted(self, chunk: ExtractedChunk) -> int:
         """Write one chunk's CHUNK + ENTITY/MENTIONS + RELATION + TEMPORAL. Returns entity count.
 
@@ -1250,7 +1297,6 @@ class _STMIngestHandler:
         temporal = chunk.temporal
         memory_class = chunk.memory_class
         ontology_classes = chunk.ontology_classes
-        srl_hits = chunk.srl_hits
         decode_state = chunk.decode_state
         filtered = graph_entities(extraction.entities)
         # Definition-described typing (default off). Runs BEFORE the entity write
@@ -1274,6 +1320,11 @@ class _STMIngestHandler:
         self._abstentions["untyped_entities"] += sum(
             1 for e in filtered if str(e.get("type") or "").upper() in _UNTYPED_ENTITY_TYPES
         )
+        # Everything the writes need is computed FIRST, outside the transaction:
+        # model inference held inside an open ArcadeDB HTTP transaction expires it
+        # server-side on a slow or cold machine (observed in CI, 2026-09-07).
+        matches, instances, nesting = await self._frame_payload(chunk, filtered)
+
         # Every write this chunk makes is one unit of work: a failure anywhere
         # below must not leave a visible CHUNK with no relations, frames or
         # temporal facts for a reader to mistake for a chunk that had none.
@@ -1301,77 +1352,34 @@ class _STMIngestHandler:
             await self._link_ontology(chunk_id, ontology_classes or [])
             await self._link_senses(chunk_id, filtered)
 
-            # FRAME layer — match the chunk's embedding against FrameNet definitions
-            # (top-k + min-sim floor, reusing the embedding already computed above; no
-            # re-embed) so abstract/general questions can reach this chunk by the frame
-            # it evokes. Each FRAME node carries the frame's summary + definition
-            # embedding (copied from the catalog, not recomputed) so the query side can
-            # vector-search the frames evoked in this namespace.
-            # One parse serves both frame layers when SRL identification is on — it is
-            # the expensive step, and running it twice per chunk would double it.
-            srl_hits = await self._srl_hits(text) if srl_hits is None else srl_hits
-
+            # FRAME layer — the chunk's evoked frames, matched above.
             tagged_frames: set[str] = set()
-            if self._enable_frames:
-                from graphknows.symbolic.framenet.index import match_frames
-
-                # Parsed triggers name the frames this chunk actually evokes; the
-                # embedding match only ranks candidates by definition similarity. The
-                # confidence is 1.0 because a trigger is an observation, not a guess —
-                # EVOKED_BY.confidence weights the chunk at query time, so a parsed
-                # tag should outweigh a cosine one.
-                matches = (
-                    [(f, 1.0) for f in dict.fromkeys(h.frame for h in srl_hits)]
-                    if srl_hits
-                    else match_frames(embedding, top_k=_FRAME_TOP_K, min_sim=_FRAME_MIN_SIM)
-                )
+            if self._enable_frames and matches:
                 await self._write_frame_tags(chunk_id, matches)
                 tagged_frames = {name for name, _ in matches}
 
-            # FRAME_INSTANCE layer — frame-guided semantic role labeling. Each
-            # trigger in the chunk (a verb group, a nominalisation, or a light-verb
-            # construction) gets its own ranked FrameNet frames (LU lookup,
-            # embedding-ranked) as a GLiNER2 core-FE schema; the role-fillability
-            # gate keeps 0-1 filled instances per trigger. Reuses the extractor's
-            # spaCy + GLiNER2 (no second load); a second GLiNER2 schema pass per
-            # trigger, so only on fact-bearing chunks. Distinct from the FRAME
-            # chunk-tag layer above.
-            if self._enable_frames:
-                # {name.casefold(): type} from this chunk's own already-typed
-                # entities — the type veto's filler type comes from the graph's
-                # OWN entity typing, not a second WordNet lookup.
-                entity_types = {str(e["name"]).casefold(): str(e.get("type", "")) for e in filtered}
-                instances, nesting = await asyncio.to_thread(
-                    self._frame_instances,
-                    text,
-                    chunk_id,
-                    speaker,
-                    embedding,
-                    srl_hits,
-                    entity_types,
-                    extraction.frames,
+            # FRAME_INSTANCE layer — frame-guided semantic role labeling, run above.
+            if self._enable_frames and instances:
+                # An instance whose FRAME vertex does not exist gets no EVOKES
+                # edge, so the fact cannot generalise through the taxonomy.
+                # write_frames is idempotent (MERGE) and skips per-frame
+                # embedding work for frames already materialised this process,
+                # so re-tagging an already-tagged frame is cheap.
+                # Unlike the SRL trigger above, these frames come from
+                # lu_triggers and can rank below _FRAME_MIN_SIM — use
+                # the instance's own match_sim as the tag confidence rather
+                # than the trigger's 1.0, so the embedding guess the tag layer
+                # already rejected doesn't outrank a real cosine match.
+                frame_sims: dict[str, float] = {}
+                for i in instances:
+                    frame = str(i["frame"])
+                    sim = float(i.get("match_sim") or 0.0)
+                    frame_sims[frame] = max(sim, frame_sims.get(frame, 0.0))
+                untagged = [(f, sim) for f, sim in frame_sims.items() if f not in tagged_frames]
+                await self._write_frame_tags(chunk_id, untagged)
+                await self._store.write_frame_instances(
+                    session_id, chunk_id, instances, nesting=nesting
                 )
-                if instances:
-                    # An instance whose FRAME vertex does not exist gets no EVOKES
-                    # edge, so the fact cannot generalise through the taxonomy.
-                    # write_frames is idempotent (MERGE) and skips per-frame
-                    # embedding work for frames already materialised this process,
-                    # so re-tagging an already-tagged frame is cheap.
-                    # Unlike the SRL trigger above, these frames come from
-                    # lu_triggers and can rank below _FRAME_MIN_SIM — use
-                    # the instance's own match_sim as the tag confidence rather
-                    # than the trigger's 1.0, so the embedding guess the tag layer
-                    # already rejected doesn't outrank a real cosine match.
-                    frame_sims: dict[str, float] = {}
-                    for i in instances:
-                        frame = str(i["frame"])
-                        sim = float(i.get("match_sim") or 0.0)
-                        frame_sims[frame] = max(sim, frame_sims.get(frame, 0.0))
-                    untagged = [(f, sim) for f, sim in frame_sims.items() if f not in tagged_frames]
-                    await self._write_frame_tags(chunk_id, untagged)
-                    await self._store.write_frame_instances(
-                        session_id, chunk_id, instances, nesting=nesting
-                    )
 
             relation_report = await self._write_relations(extraction, chunk_id, text, speaker)
             for gate in ("blocked_domain", "blocked_range", "unsupported", "pruned_endpoint"):
