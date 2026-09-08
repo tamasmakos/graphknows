@@ -1,9 +1,9 @@
 """Where the typing pass joins the write path, and what it is allowed to change.
 
-Three boundaries, all of which the ontology_kg prototype crossed and should not
-have: the pass may ADD an entity and may sharpen an entity's INSTANCE_OF, but it
-may never delete a relex entity or overwrite the ``type`` relex extracted. And
-with the flag off the write path must be byte-identical to what it was.
+Two boundaries, both of which the ontology_kg prototype crossed and should not
+have: the pass may ADD an entity, but it may never delete a relex entity or
+overwrite the ``type`` relex extracted. And with the flag off the write path
+must be byte-identical to what it was.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from graphknows.ingestion.extraction.entities import typing_model
-from graphknows.ingestion.stm.ingest import _STMIngestHandler
+from graphknows.ingestion.stm.ingest import ExtractedChunk, _STMIngestHandler
 from graphknows.symbolic.ontology.loader import OntologyTerm
 
 
@@ -38,7 +38,6 @@ def _handler() -> tuple[_STMIngestHandler, MagicMock]:
         "write_chunk",
         "write_entities_bulk",
         "write_class_matches",
-        "write_groundings",
         "write_temporal",
         "write_frames",
         "write_frame_instances",
@@ -56,18 +55,20 @@ class _Extraction:
 
 async def _write(handler: _STMIngestHandler, text: str, entities: list[dict[str, Any]]) -> None:
     await handler._write_extracted(
-        session_id="s1",
-        file_id="f1",
-        chunk_id="c1",
-        text=text,
-        seq=0,
-        kind="window",
-        speaker="Mel",
-        ts="",
-        embedding=[0.1],
-        extraction=_Extraction(entities),
-        temporal=[],
-        memory_class="ltm",
+        ExtractedChunk(
+            session_id="s1",
+            file_id="f1",
+            chunk_id="c1",
+            text=text,
+            seq=0,
+            kind="window",
+            speaker="Mel",
+            ts="",
+            embedding=[0.1],
+            extraction=_Extraction(entities),
+            temporal=[],
+            memory_class="ltm",
+        )
     )
 
 
@@ -116,14 +117,3 @@ async def test_the_typing_pass_never_drops_a_relex_entity(typed) -> None:
     await _write(handler, TEXT, list(RELEX_ENTITIES))
 
     assert "Mel" in {e["name"] for e in store.write_entities_bulk.await_args.args[2]}
-
-
-@pytest.mark.asyncio
-async def test_instance_of_carries_the_models_confidence_not_a_flat_one(typed) -> None:
-    """The prototype wrote 1.0 for everything, which erases the hedge."""
-    handler, store = _handler()
-    await _write(handler, TEXT, list(RELEX_ENTITIES))
-
-    rows = {m["name"]: m for m in store.write_groundings.await_args.args[0]}
-    assert rows["research"]["uri"] == "u:Act"
-    assert rows["research"]["score"] == pytest.approx(0.83)

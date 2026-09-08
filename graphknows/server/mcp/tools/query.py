@@ -5,16 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 from graphknows.server.mcp._app import app
+from graphknows.server.mcp._bounded import bounded
 from graphknows.server.mcp._state import get_runtime
 
 
 @app.tool()
+@bounded
 async def memory_query(
     query: str,
     session_id: str = "",
     top_k: int = 10,
     scope: str = "both",
-    namespace: str = "",
 ) -> dict[str, Any]:
     """Retrieve the most relevant memories for a query.
 
@@ -28,12 +29,10 @@ async def memory_query(
     Args:
         query: Natural-language question or search phrase.
         session_id: Session to scope the search to.
-        top_k: Maximum hits to return. Uncapped: the caller decides how much
-            memory it wants and pays the context for it.
+        top_k: Maximum hits to return, up to 100 (FR-030); a higher value is
+            rejected rather than clamped.
         scope: Which memory tier to search — ``"stm"`` (this session's buffered,
             unflushed turns), ``"ltm"`` (the graph), or ``"both"`` (default).
-        namespace: Tenant isolation boundary (default: the server's
-            ``GRAPHKNOWS_NAMESPACE``).
 
     Returns:
         Dict with a ``hits`` list — each hit the wire form of
@@ -42,7 +41,7 @@ async def memory_query(
         ``entities``, ``metadata``) — plus ``total``, ``query``, ``scope`` and
         the structured ``facts`` sheet.
     """
-    runtime = await get_runtime(namespace)
+    runtime = await get_runtime()
     result = await runtime.recall_memory(query, session_id=session_id, top_k=top_k, scope=scope)
     hits = result.get("hits", [])
     return {

@@ -5,7 +5,10 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
+
+from graphknows.bounds import MAX_TEXT_CHARS
+from graphknows.exceptions import ConfigurationError
 
 
 class Role(StrEnum):
@@ -32,10 +35,20 @@ class Message(BaseModel, frozen=True):
     """
 
     role: Role
-    content: str
+    content: str = Field(max_length=MAX_TEXT_CHARS)
     name: str | None = None
     tool_call_id: str | None = None
     timestamp: str | None = None
+
+    def __init__(self, **data: Any) -> None:
+        # pydantic wraps the content-length bound (FR-030) into a
+        # ValidationError; this is the public constructor path, so callers
+        # never have to catch pydantic directly — only GraphKnowsError,
+        # matching MemoryScope.__init__.
+        try:
+            super().__init__(**data)
+        except ValidationError as exc:
+            raise ConfigurationError(str(exc)) from exc
 
     @model_validator(mode="before")
     @classmethod

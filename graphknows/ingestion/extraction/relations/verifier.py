@@ -43,6 +43,26 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _claim_span(text: str, surface: str, cursors: dict[str, int]) -> tuple[int, int] | None:
+    """Locate *surface* in *text*, claiming successive occurrences per call.
+
+    A repeated surface advances past the occurrence claimed for it last time,
+    so two relations that mention the same text at two different points don't
+    both anchor to the first one. Once every occurrence is claimed, later
+    calls wrap back to the first — so two relations that share the text's
+    only mention of *surface* (e.g. one's tail is the other's head) both
+    resolve to it instead of one going unlocatable.
+    """
+    start = cursors.get(surface, 0)
+    idx = text.find(surface, start)
+    if idx < 0 and start:
+        idx = text.find(surface)
+    if idx < 0:
+        return None
+    cursors[surface] = idx + 1
+    return idx, idx + len(surface)
+
+
 class NullRelationVerifier:
     """No-op gate — passes every relation through unchanged."""
 
@@ -101,9 +121,11 @@ class RelationVerifierGate:
         """Return only relations that verify at or above ``threshold``.
 
         Head/tail char offsets (which the extractor strips during cleaning) are
-        recovered by locating each surface in *text*. A relation whose surface
-        cannot be located is kept — it is unverifiable, not disproven, so we do
-        not silently delete a fact we merely failed to offset.
+        recovered by claiming each surface's occurrence in *text* (see
+        :func:`_claim_span`) rather than always anchoring to its first match. A
+        relation whose surface cannot be located at all is kept — it is
+        unverifiable, not disproven, so we do not silently delete a fact we
+        merely failed to offset.
         """
         if not relations or not self._ensure_loaded():
             return relations
@@ -111,16 +133,20 @@ class RelationVerifierGate:
 
         grouped: dict[str, list[dict[str, Any]]] = {}
         passthrough: list[dict[str, Any]] = []
+        cursors: dict[str, int] = {}
         for rel in relations:
             head, tail = rel["head"], rel["tail"]
-            hs, ts = text.find(head), text.find(tail)
-            if hs < 0 or ts < 0:
+            head_span = _claim_span(text, head, cursors)
+            tail_span = _claim_span(text, tail, cursors)
+            if head_span is None or tail_span is None:
                 passthrough.append(rel)
                 continue
+            hs, he = head_span
+            ts, te = tail_span
             grouped.setdefault(rel["relation"], []).append(
                 {
-                    "head": {"text": head, "start": hs, "end": hs + len(head)},
-                    "tail": {"text": tail, "start": ts, "end": ts + len(tail)},
+                    "head": {"text": head, "start": hs, "end": he},
+                    "tail": {"text": tail, "start": ts, "end": te},
                     "_ref": rel,
                 }
             )

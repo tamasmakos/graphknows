@@ -7,15 +7,9 @@ import os
 import threading
 from typing import Any
 
-log = logging.getLogger(__name__)
+from graphknows.settings import get_settings
 
-# knowledgator/gliner-relex-large-v1.0: joint entity+relation extraction in one
-# forward pass (~467M params). Unlike GLiNER2 — which only ever *corroborated* an
-# SVO triple under a supplied predicate label — this returns typed head/tail spans
-# with the relation and a score, so the extraction itself IS the fact. Relation
-# labels are still supplied per chunk (the SVO-mined predicate vocabulary), which
-# is the part of the old design that carried its weight.
-_RELEX_MODEL = os.environ.get("GRAPHKNOWS_RELEX_MODEL", "knowledgator/gliner-relex-large-v1.0")
+log = logging.getLogger(__name__)
 
 
 class _SerialInference:
@@ -73,7 +67,14 @@ def load_gliner2_model() -> Any:
     """Load the graphgen relation-extraction model behind the adapter boundary."""
     from gliner import GLiNER
 
-    model = GLiNER.from_pretrained(_RELEX_MODEL)
+    # knowledgator/gliner-relex-large-v1.0: joint entity+relation extraction in
+    # one forward pass (~467M params). Unlike GLiNER2 — which only ever
+    # *corroborated* an SVO triple under a supplied predicate label — this returns
+    # typed head/tail spans with the relation and a score, so the extraction itself
+    # IS the fact. Relation labels are still supplied per chunk (the SVO-mined
+    # predicate vocabulary), which is the part of the old design that carried its
+    # weight.
+    model = GLiNER.from_pretrained(get_settings().relex_model)
     device = _resolve_device()
     if device != "cpu":
         try:

@@ -6,11 +6,15 @@ using a lightweight MLP trained on relation extraction datasets.
 Vendored verbatim from oneryalcin/GLiNER2 (branch feature/relation-verifier),
 Apache-2.0, because the ``gliner2.verifiers`` module ships in no PyPI release
 (1.3.x lacks it). Paired with the ``oneryalcin/gliner2-relation-verifier``
-weights. Local change: ``_bucket_distance`` clamps its return to
+weights. Local changes: ``_bucket_distance`` clamps its return to
 ``len(buckets) - 1`` — upstream returns ``len(buckets)``, which overflows the
 ``nn.Embedding(len(buckets), 32)`` and crashes ``verify()`` for any head/tail
-pair more than ``max(buckets)`` tokens apart. Type annotations were also added to
-satisfy ``mypy --strict``; they change no behaviour.
+pair more than ``max(buckets)`` tokens apart. ``_char_to_token_idx`` returns
+``None`` instead of falling back to token 1 / the last token when a span lies
+past the encoder's 512-token truncation — upstream's fallback silently scored
+a bogus token position; ``_build_features``/``verify`` now skip such a
+relation instead. Type annotations were also added to satisfy
+``mypy --strict``; they change no behaviour.
 """
 
 from __future__ import annotations
@@ -190,8 +194,15 @@ class RelationVerifier:
 
     def _char_to_token_idx(
         self, char_start: int, char_end: int, offset_mapping: torch.Tensor
-    ) -> tuple[int, int]:
-        """Convert character offsets to token indices."""
+    ) -> tuple[int, int] | None:
+        """Convert character offsets to token indices, or ``None`` if unmapped.
+
+        ``offset_mapping`` only covers the (up to 512-token) truncated
+        encoding, so a span whose characters lie past that window has no
+        token to map to — that is reported as ``None`` rather than guessed at,
+        since a fallback token position would feed the classifier a feature
+        vector for the wrong text.
+        """
         token_start, token_end = None, None
 
         for idx, (start, end) in enumerate(offset_mapping.tolist()):
@@ -203,11 +214,8 @@ class RelationVerifier:
                 token_end = idx + 1
                 break
 
-        # Fallback
-        if token_start is None:
-            token_start = 1
-        if token_end is None:
-            token_end = len(offset_mapping) - 1
+        if token_start is None or token_end is None:
+            return None
 
         return token_start, token_end
 
@@ -237,11 +245,19 @@ class RelationVerifier:
         embeddings: torch.Tensor,
         offset_mapping: torch.Tensor,
         rel_emb: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Build feature vector for verification."""
+    ) -> torch.Tensor | None:
+        """Build feature vector for verification, or ``None`` if a span is unmapped.
+
+        A span past the 512-token truncation window has no token index (see
+        :meth:`_char_to_token_idx`); such a relation is reported unbuildable
+        rather than scored against a substituted, unrelated token position.
+        """
         # Get token indices (first token of span, matching training)
-        head_tok = self._char_to_token_idx(head_span["start"], head_span["end"], offset_mapping)[0]
-        tail_tok = self._char_to_token_idx(tail_span["start"], tail_span["end"], offset_mapping)[0]
+        head_idx = self._char_to_token_idx(head_span["start"], head_span["end"], offset_mapping)
+        tail_idx = self._char_to_token_idx(tail_span["start"], tail_span["end"], offset_mapping)
+        if head_idx is None or tail_idx is None:
+            return None
+        head_tok, tail_tok = head_idx[0], tail_idx[0]
 
         # Use first token of each entity (matching training approach)
         head_emb = embeddings[head_tok]
@@ -317,6 +333,10 @@ class RelationVerifier:
                 features = self._build_features(
                     text, head, tail, rel_type, embeddings, offset_mapping, rel_emb=rel_emb
                 )
+                # Skip a relation whose span lies past the truncation window
+                # rather than scoring a substituted, unrelated token position.
+                if features is None:
+                    continue
 
                 with torch.no_grad():
                     logit = self.model(features.unsqueeze(0))

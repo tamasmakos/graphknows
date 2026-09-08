@@ -35,9 +35,57 @@ for _offline_switch in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_O
 
 @pytest.fixture(autouse=True)
 def _reset_settings_singletons():
-    """Reset module-level _settings singletons so env-patching tests stay isolated."""
+    """Drop the process settings around each test, so env-patching stays isolated.
+
+    ``get_settings`` is an ``lru_cache``; without this a cached instance built
+    under one environment would leak into the next test, and tests would go back
+    to poking module globals to get a fresh one.
+    """
+    from graphknows.settings import get_settings
+
+    get_settings.cache_clear()
     yield
-    for mod_name in ("graphknows.server.mcp.stdio_server",):
-        mod = sys.modules.get(mod_name)
-        if mod is not None and hasattr(mod, "_settings"):
-            mod._settings = None
+    get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Live-ArcadeDB guard, shared by every integration module
+# ---------------------------------------------------------------------------
+
+
+def _arcadedb_reachable() -> bool:
+    """Return True when ArcadeDB answers at the configured URL."""
+    import httpx
+
+    from graphknows.settings import GraphKnowsSettings
+
+    try:
+        s = GraphKnowsSettings()
+        r = httpx.get(
+            f"{s.arcadedb_url}/api/v1/exists/mem",
+            auth=(s.arcadedb_user, s.arcadedb_password.get_secret_value()),
+            timeout=3,
+        )
+    except Exception:
+        return False
+    else:
+        return r.status_code == 200
+
+
+def require_arcadedb() -> None:
+    """Skip the caller when ArcadeDB is down — fail when the run demands it.
+
+    ``GRAPHKNOWS_REQUIRE_ARCADEDB=1`` is CI's promise that a service container
+    is up; a skip there would report a suite that never ran as green.
+    """
+    if _arcadedb_reachable():
+        return
+    if os.environ.get("GRAPHKNOWS_REQUIRE_ARCADEDB") == "1":
+        pytest.fail("ArcadeDB not reachable and GRAPHKNOWS_REQUIRE_ARCADEDB=1")
+    pytest.skip("ArcadeDB not reachable")
+
+
+@pytest.fixture
+def arcadedb_required() -> None:
+    """Fixture form of :func:`require_arcadedb`."""
+    require_arcadedb()

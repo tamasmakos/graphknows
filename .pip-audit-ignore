@@ -8,8 +8,6 @@
 # One advisory id per line, first token on the line. Remove a line once the
 # bump lands - a stale entry silences a vulnerability you already fixed.
 
-PYSEC-2026-2132       # click             8.3.2   -> 8.3.3
-GHSA-537c-gmf6-5ccf   # cryptography     46.0.7   -> 48.0.1
 PYSEC-2026-3481       # mcp               1.27.0  -> 1.28.1
 PYSEC-2026-3482       # mcp
 PYSEC-2026-3483       # mcp
@@ -26,6 +24,9 @@ PYSEC-2026-249        # starlette
 # and marks 3.10.3 as already fixed). The path traversal is in TransitionParser,
 # AveragedPerceptron, PerceptronTagger and the maxent parameter APIs - none of
 # which graphknows imports (corpus readers, PorterStemmer, WordNetLemmatizer only).
+# 7 Sep 2026: restored after T043 removed it by reading OSV alone - pip-audit
+# resolves against PyPI, so it still reports this one. Check both records before
+# deleting this line again.
 PYSEC-2026-3740       # nltk              3.10.3  -> none released
 
 # 5 Sep 2026: no fixed diskcache release exists — the advisory's affected range
@@ -37,10 +38,6 @@ PYSEC-2026-3740       # nltk              3.10.3  -> none released
 # own filesystem, so it is not a remote-input path. Revisit when a release lands.
 PYSEC-2026-2447       # diskcache         5.6.3   -> none released
 
-# The two below need an image rebuild and an eval re-run, so they are deferred
-# rather than bundled into a gate change.
+# torch needs an image rebuild and an eval re-run, so it is deferred rather
+# than bundled into a gate change.
 PYSEC-2025-194        # torch             2.12.0  -> 2.13.0
-PYSEC-2025-217        # transformers      4.57.6  -> 5.x / none
-PYSEC-2026-2288       # transformers
-PYSEC-2026-2289       # transformers
-PYSEC-2026-2290       # transformers

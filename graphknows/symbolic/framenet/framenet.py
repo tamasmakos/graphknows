@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 from collections import defaultdict
 from functools import lru_cache
 from typing import Any
@@ -56,6 +57,7 @@ JUNK_FILLERS = frozenset(
 )
 _POS = {"VERB": "v", "NOUN": "n", "ADJ": "a"}
 
+_lock = threading.Lock()
 _lu_index: dict[tuple[str, str], set[str]] | None = None
 _onto_up: dict[str, set[str]] | None = None
 
@@ -98,15 +100,18 @@ def _framenet() -> Any:
 
 def _lus() -> dict[tuple[str, str], set[str]]:
     global _lu_index
-    if _lu_index is None:
-        fn = _framenet()
-        idx: dict[tuple[str, str], set[str]] = defaultdict(set)
-        for lu in fn.lus():
-            m = re.match(r"^(.*)\.([a-z]+)$", lu.name)
-            if m:
-                idx[(m.group(1).lower(), m.group(2))].add(lu.frame.name)
-        _lu_index = idx
-    return _lu_index
+    if _lu_index is not None:
+        return _lu_index
+    with _lock:
+        if _lu_index is None:  # another thread won the race while we waited
+            fn = _framenet()
+            idx: dict[tuple[str, str], set[str]] = defaultdict(set)
+            for lu in fn.lus():
+                m = re.match(r"^(.*)\.([a-z]+)$", lu.name)
+                if m:
+                    idx[(m.group(1).lower(), m.group(2))].add(lu.frame.name)
+            _lu_index = idx
+        return _lu_index
 
 
 def _broader_up() -> dict[str, set[str]]:
@@ -136,20 +141,23 @@ def _ontology_up() -> dict[str, set[str]]:
     is stored as a claim. Do not reuse this for the persisted hierarchy.
     """
     global _onto_up
-    if _onto_up is None:
-        fn = _framenet()
-        up: dict[str, set[str]] = defaultdict(set)
-        for r in fn.frame_relations():
-            a, b, t = r.get("superFrameName"), r.get("subFrameName"), r.type.name
-            if not a or not b:
-                continue
-            if t in ("Inheritance", "Using"):
-                up[b].add(a)
-            elif t == "Perspective_on":
-                up[a].add(b)
-                up[b].add(a)
-        _onto_up = up
-    return _onto_up
+    if _onto_up is not None:
+        return _onto_up
+    with _lock:
+        if _onto_up is None:  # another thread won the race while we waited
+            fn = _framenet()
+            up: dict[str, set[str]] = defaultdict(set)
+            for r in fn.frame_relations():
+                a, b, t = r.get("superFrameName"), r.get("subFrameName"), r.type.name
+                if not a or not b:
+                    continue
+                if t in ("Inheritance", "Using"):
+                    up[b].add(a)
+                elif t == "Perspective_on":
+                    up[a].add(b)
+                    up[b].add(a)
+            _onto_up = up
+        return _onto_up
 
 
 @lru_cache(maxsize=8000)

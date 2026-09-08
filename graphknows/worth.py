@@ -1,6 +1,9 @@
-"""Is a turn worth extracting from? The default for ``infer``.
+"""Is a turn worth extracting from? An opt-in gate for ``infer``.
 
-Buffering every turn with ``infer=True`` mints entities from greetings: measured
+Both primary entry points — ``server/mcp/tools/stm.py`` and
+``Memory.ingest_memory`` — hardcode ``infer=True``; only the LangGraph adapter
+opts into this gate, via ``infer=worth_extracting``. Buffering every turn with
+``infer=True`` mints entities from greetings: measured
 on LoCoMo conv-30, "Jon" never existed as a node while "Hey Jon", "Thanks, Jon!"
 and "Oh no, Jon!" did, across 15 fragments. The decision is per-turn and purely
 linguistic — nothing about it is dataset-specific — so it belongs here rather
@@ -18,9 +21,9 @@ from typing import Any
 def _nlp() -> Any:
     """The shared spaCy pipeline, memoized by :func:`graphknows.nlp.load_spacy_model`."""
     from graphknows.nlp import load_spacy_model
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
 
-    return load_spacy_model(GraphKnowsSettings().spacy_model)
+    return load_spacy_model(get_settings().spacy_model)
 
 
 def worth_extracting(text: str) -> bool:

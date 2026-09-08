@@ -13,9 +13,10 @@ Two facts about the underlying engine shaped this design, both verified against
 ArcadeDB 26.5.1:
 
 - ``algo.louvain`` **ignores its parameter map** — resolution 0.1 and 5.0 return
-  identical partitions — so the community layer offers no granularity knob. The
-  tunable path clusters ``ENTITY.graph_embedding`` instead, which makes the
-  node2vec walk parameters the real knob.
+  identical partitions — so the community layer offers no granularity knob;
+  ``min_size`` is the only lever. A node2vec-clustering source once traded that
+  away for a real knob but was removed for coverage — see
+  :mod:`graphknows.topics.config`.
 - ``algo.modularityScore`` is **not** Newman modularity and must not be used as
   a tuning objective: an all-in-one-cluster partition scores 0.750 against a
   real Louvain partition's 0.247. See :mod:`graphknows.topics.metrics`.

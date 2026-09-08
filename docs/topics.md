@@ -44,30 +44,6 @@ separate real structure from random, so it is reported as
 `arcadedb_modularity_untrustworthy` for continuity, and never tuned against.
 The `newman_modularity` field is computed in Python and is the real objective.
 
-## Choosing a source
-
-`source` trades coverage against tunability.
-
-| | `community` (default) | `graph_embedding` |
-|---|---|---|
-| Basis | Louvain partition | node2vec entity vectors, average-linkage |
-| Granularity knob | none (only `min_size`) | `distance`, plus the node2vec params |
-| Coverage | ~every entity | only entities with ≥3 relation edges |
-
-The coverage caveat is not hypothetical: on conv-26, **33 of 1049 entities** have
-a `graph_embedding`, because node2vec skips sparsely-connected nodes and a
-conversational graph is sparse (327 REL edges over 1049 entities). Clustering
-that source there produces topics describing 3% of the corpus. `build_topics`
-logs a warning below 25% coverage, and `entity_coverage` is in the metrics —
-check it before trusting a `graph_embedding` build.
-
-node2vec's walk parameters are exposed (`n2v_walk_length`, `n2v_walks`,
-`n2v_dimensions`, with `recompute_embeddings` to re-run it). Note what they do
-and do not affect: they shape the embedding space, so they drive entity
-similarity and `graph_embedding` topic granularity. They do
-**not** influence the Louvain communities — nothing feeds node2vec output back
-into community detection.
-
 ## Outputs
 
 Per topic: `title` (top entities by PageRank), `summary`, `keywords` (TF-IDF

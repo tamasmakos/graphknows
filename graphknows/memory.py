@@ -12,12 +12,20 @@ import logging
 import os
 import re
 import uuid
+from collections import defaultdict
 from typing import Any
 
+from graphknows.bounds import (
+    check_limit,
+    check_metadata_size,
+    check_scope_id,
+    check_text_length,
+    check_top_k,
+)
 from graphknows.exceptions import ConfigurationError
 from graphknows.ingestion.parsers.text import strip_content_heading
 from graphknows.models.hit import Hit
-from graphknows.settings import Decoder, GraphKnowsSettings, MemoryMode
+from graphknows.settings import Decoder, GraphKnowsSettings, MemoryMode, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +39,10 @@ def _with_mode(settings: GraphKnowsSettings, mode: MemoryMode | str | None) -> G
     """
     if mode is None:
         return settings
-    resolved = settings.model_copy(update={"mode": MemoryMode(mode)})
+    try:
+        resolved = settings.model_copy(update={"mode": MemoryMode(mode)})
+    except ValueError as exc:
+        raise ConfigurationError(str(exc)) from exc
     resolved.check_production_secrets()
     return resolved
 
@@ -43,6 +54,21 @@ def _require_decoder_key(settings: GraphKnowsSettings) -> None:
             f"mode={settings.mode} decodes with the LLM and no API key resolves; "
             "set GRAPHKNOWS_LLM_API_KEY in the environment or .env."
         )
+
+
+def _redact_store_error(exc: Exception, *, where: str) -> str:
+    """Log ``exc`` in full and return a caller-safe summary with a correlation id.
+
+    ArcadeDB failures carry the request host and the raw server response body
+    (see ``ArcadeDBClient._raise_for_status``), and ``doctor``, ``purge_memory``
+    and ``flush_memory`` hand their errors straight to an MCP caller — that
+    detail must not cross the boundary verbatim (FR-031). The correlation id
+    ties the redacted message back to the full one in the log, so redacting
+    for the caller does not blind the operator (Constitution V).
+    """
+    correlation_id = uuid.uuid4().hex
+    logger.error("%s failed [correlation_id=%s]: %s", where, correlation_id, exc)
+    return f"correlation_id={correlation_id}; see server logs for details"
 
 
 def _format_fused_hits(fused_results: list[dict[str, Any]], session_id: str) -> list[Hit]:
@@ -119,7 +145,7 @@ class Memory:
         # The mode picks the decoder. Explicit arg wins over the settings value;
         # nothing implicit sets it, so a caller who named it meant it — hence the
         # keyless LLM decoder failing here rather than mid-ingest.
-        self.settings = _with_mode(settings or GraphKnowsSettings(), mode)
+        self.settings = _with_mode(settings or get_settings(), mode)
         _require_decoder_key(self.settings)
         # The namespace selects one physical ArcadeDB database (mem_<ns>, "" -> mem,
         # the golden layer). Explicit arg wins over the settings default.
@@ -134,6 +160,14 @@ class Memory:
         self._retriever: Any = None
         self._store: Any = None
         self._connect_lock = asyncio.Lock()
+        # One lock per session: allocating the next TURN sequence and writing at
+        # it is a read-then-write, so two concurrent add() calls on one session
+        # would otherwise read the same max(seq) and overwrite each other's
+        # turn_id. Per-session, not global, so unrelated sessions still ingest
+        # in parallel.
+        # ponytail: in-process only — a second worker on the same session needs
+        # a store-side sequence.
+        self._turn_seq_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def __aenter__(self) -> Memory:
         return self
@@ -202,7 +236,7 @@ class Memory:
             result["arcadedb"] = await c.database_exists(db)
             await c.close()
         except Exception as exc:
-            result["arcadedb"] = str(exc)
+            result["arcadedb"] = _redact_store_error(exc, where="doctor")
         result["pid"] = os.getpid()
         return result
 
@@ -285,22 +319,6 @@ class Memory:
         finally:
             await c.close()
 
-    async def rebind_memory(self, channel: str = "ontology") -> dict[str, Any]:
-        """Re-ground ``channel``'s stored mentions against the currently loaded index.
-
-        A dual-write: new groundings land under the index's current version
-        and the old version's edges are flagged superseded, never deleted —
-        see :meth:`STMService.rebind` (issue #145).
-        """
-        from graphknows.ingestion import build_stm_service
-
-        service = build_stm_service(self.settings, self.namespace)
-        try:
-            await service.connect()
-            return await service.rebind(channel)  # type: ignore[no-any-return]
-        finally:
-            await service.close()
-
     async def redecode(self, session_id: str) -> dict[str, Any]:
         """Re-run the decoder over this session's decode-failed chunks (FR-024).
 
@@ -352,6 +370,14 @@ class Memory:
         if text and not messages:
             messages = text
 
+        check_scope_id(session_id, "session_id")
+        check_scope_id(user_id, "user_id")
+        check_scope_id(agent_id, "agent_id")
+        check_scope_id(run_id, "run_id")
+        check_metadata_size(metadata)
+        if isinstance(messages, str):
+            check_text_length(messages, "text")
+
         from graphknows.models.message import normalize_messages
         from graphknows.models.scope import MemoryScope
 
@@ -381,23 +407,27 @@ class Memory:
             await self._get_retriever()  # connects the store + ensures schema
             store = self._store
             sid = scope.to_session_id()
-            await store.ensure_session(sid)
-            seq = await store.next_turn_seq(sid)
-            for m in msgs:
-                # The message's own timestamp, when it carries one, becomes the
-                # TURN's ts — and flush() feeds it back as the temporal anchor.
-                # Defaulting to write time would date every relative expression
-                # in the turn to whenever the buffer happened to be written.
-                await store.write_turn(
-                    sid,
-                    m.role.value,
-                    m.content,
-                    seq,
-                    m.timestamp or "",
-                    speaker=m.name or "",
-                    infer=infer,
-                )
-                seq += 1
+            # Held across the writes, not just the read: next_turn_seq derives
+            # the sequence from the turns already written, so releasing before
+            # they land would hand the same number to the next caller.
+            async with self._turn_seq_locks[sid]:
+                await store.ensure_session(sid)
+                seq = await store.next_turn_seq(sid)
+                for m in msgs:
+                    # The message's own timestamp, when it carries one, becomes the
+                    # TURN's ts — and flush() feeds it back as the temporal anchor.
+                    # Defaulting to write time would date every relative expression
+                    # in the turn to whenever the buffer happened to be written.
+                    await store.write_turn(
+                        sid,
+                        m.role.value,
+                        m.content,
+                        seq,
+                        m.timestamp or "",
+                        speaker=m.name or "",
+                        infer=infer,
+                    )
+                    seq += 1
             return {
                 "file_id": "",
                 "chunks": 0,
@@ -469,11 +499,16 @@ class Memory:
         to False so the MCP server and web UI keep today's session-scoped graph
         behaviour unless they opt in.
         """
-        # No ceiling. The caller decides how much memory it wants and pays the
-        # context for it. A cap here was measured discarding evidence the
-        # retriever had already ranked: a recall-vs-depth sweep on conv-30
-        # plateaued at 0.827 under the old cap of 100 and reads as gold chunks
-        # being UNREACHABLE, when lifting it reaches 1.000 at k=369.
+        # Bounded at the trust boundary (FR-030), not silently clamped: a
+        # top_k above MAX_TOP_K is rejected. It used to have no ceiling at all
+        # — measured discarding evidence the retriever had already ranked (a
+        # recall-vs-depth sweep on conv-30 plateaued at 0.827 under an old cap
+        # of 100 and read as gold chunks being UNREACHABLE) — but an unbounded
+        # top_k also multiplies straight into the retriever's pool_k and the
+        # store's k_pre = top_k * 20, so an oversized request is a resourcing
+        # problem before it is a ranking one.
+        check_scope_id(session_id, "session_id")
+        check_top_k(top_k)
         top_k = max(1, top_k)
         if scope not in {"stm", "ltm", "both"}:
             scope = "both"
@@ -521,24 +556,34 @@ class Memory:
         s = self.settings
         return TopicSummarizer(
             model=s.summarization_model or s.llm_model,
-            api_key=s.llm_api_key,
+            api_key=s.llm_api_key.get_secret_value(),
             api_base=s.llm_api_base,
         )
 
     async def _flush_topics(self, store: Any) -> dict[str, Any]:
-        """The topic stage as invoked by a flush, using the configured defaults.
+        """The topic stage as invoked by a flush — opt-in only (FR-045).
 
         Returns ``{"topics_created": int, "modularity": float | None}``. The
         modularity is the topic stage's own Newman modularity over the entity
         graph (``TopicSet.metrics["newman_modularity"]``) — the real, trusted
         number, now that ArcadeDB's ``modularityScore``-derived reporting
         (``compute_community_quality``) has been retired.
+
+        Topics have exactly one reader, the browse tool (``ltm_topics``), so a
+        flush no longer pays clustering + description just because
+        ``GRAPHKNOWS_MODE=llm_assisted`` prefers ``TopicMode.llm`` as a
+        preset — that read ``self.settings.topic_mode``, the preset-resolved
+        value. Here it reads the raw ``topics`` field instead: unset means no
+        one asked, same as an explicit ``none``. A caller who wants topics
+        sets ``GRAPHKNOWS_TOPICS`` explicitly, or rebuilds on demand through
+        :meth:`build_topics` / the ``memory_topics`` tool, which do keep
+        following the preset — calling either one is itself the opt-in.
         """
         from graphknows.settings import TopicMode
         from graphknows.topics import TopicConfig, build_topics, persist_topics
 
-        mode = self.settings.topic_mode
-        if mode is TopicMode.none:
+        mode = self.settings.topics
+        if mode is None or mode is TopicMode.none:
             return {"topics_created": 0, "modularity": None}
         cfg = TopicConfig(mode=mode)
         topic_set = await build_topics(
@@ -556,6 +601,7 @@ class Memory:
         config: Any = None,
         persist: bool = True,
         export_path: str = "",
+        include_export: bool = False,
         **overrides: Any,
     ) -> dict[str, Any]:
         """Rebuild the topic layer over the existing graph. Returns the metrics.
@@ -570,11 +616,16 @@ class Memory:
                 runtime defaults when omitted.
             persist: Write the resulting TOPIC layer (replacing the previous one).
             export_path: Optional path for a read-only JSON artifact.
+            include_export: Return the artifact payload in-band under
+                ``export`` — the same dict ``export_path`` would have written —
+                for callers that cannot be handed a file. Off by default: the
+                CLI prints every key it gets back.
             **overrides: Field overrides applied to ``config`` (e.g.
                 ``min_size=3``).
 
         Returns:
-            The build's metrics, plus ``persisted`` and ``export_path``.
+            The build's metrics, plus ``persisted``, and ``export`` or
+            ``export_path`` when either was asked for.
         """
         from dataclasses import replace
 
@@ -595,6 +646,8 @@ class Memory:
             "persisted": persisted,
             "config_fingerprint": cfg.fingerprint(),
         }
+        if include_export:
+            out["export"] = topic_set.to_dict()
         if export_path:
             out["export_path"] = str(export_json(topic_set, export_path))
         return out
@@ -633,7 +686,18 @@ class Memory:
         # time. A turn stored with infer=False is still written and embedded —
         # it stays retrievable as text — it just mints no entities.
         infer_flags = [bool(t.get("infer", True)) for t in ordered]
-        options = IngestOptions(scope=MemoryScope(run_id=session_id))
+        scope = MemoryScope(run_id=session_id)
+        # Continue this dialog file's chunk sequence instead of restarting at 0.
+        # Every flush ingests into the same file_id, and neighbor_chunks expands
+        # a hit to its siblings by (file_id, seq ± radius) — a second flush
+        # numbering from 0 again hands retrieval the first flush's chunks as
+        # this one's neighbours. Forward-only: seq values already colliding on
+        # disk stay as they are.
+        last_seq = await store.max_chunk_seq(scope.to_dialog_id())
+        options = IngestOptions(
+            scope=scope,
+            turn_index_offset=0 if last_seq is None else last_seq + 1,
+        )
 
         service = build_stm_service(self.settings, self.namespace)
         try:
@@ -723,8 +787,7 @@ class Memory:
             try:
                 return await coro
             except Exception as exc:
-                logger.warning("flush_memory: %s failed: %s", name, exc)
-                errors.append(f"{name}: {exc}")
+                errors.append(f"{name}: {_redact_store_error(exc, where=f'flush_memory:{name}')}")
                 return default
             finally:
                 stage_s[name] = round(time.monotonic() - started, 2)
@@ -734,7 +797,7 @@ class Memory:
             store = self._store
         except Exception as exc:
             # Without a connected store no step below can run.
-            errors.append(f"connect: {exc}")
+            errors.append(f"connect: {_redact_store_error(exc, where='flush_memory:connect')}")
             store = None
 
         if store is not None:
@@ -765,13 +828,13 @@ class Memory:
             # Each channel soft-fails under its own name — one broken extension
             # must not cost the consolidation the rest of the flush does.
             #
-            # Settings-gated defaults (frames/ontology/wordnet) go through the
-            # same loop as caller-supplied channels: default_channels() is
-            # also what build_retriever() uses for the read side (see
+            # Settings-gated defaults (frames/ontology) go through the same
+            # loop as caller-supplied channels: default_channels() is also
+            # what build_retriever() uses for the read side (see
             # ``_build_retriever``), so a channel registered there is active
-            # on both paths from one registration. Only ``WordNetChannel``
-            # implements ``populate`` today; the others inherit the no-op
-            # default, so this adds no new write work for them.
+            # on both paths from one registration. None of the defaults
+            # implements ``populate`` today; they inherit the no-op default,
+            # so this loop adds no write work for them yet.
             from graphknows.channels.registry import default_channels
 
             for channel in [*default_channels(self.settings), *self._channels]:
@@ -968,7 +1031,7 @@ class Memory:
             finally:
                 await store.close()
         except Exception as exc:
-            errors.append(f"arcadedb: {exc}")
+            errors.append(f"arcadedb: {_redact_store_error(exc, where='arcadedb')}")
         return {
             "session_id": session_id or "(all)",
             "deleted": deleted,
@@ -1114,6 +1177,8 @@ class Memory:
 
     async def ltm_entities(self, session_id: str = "", limit: int = 200) -> dict[str, Any]:
         """List ENTITY nodes from the golden graph, optionally scoped to one session."""
+        check_scope_id(session_id, "session_id")
+        check_limit(limit)
         from graphknows.storage import build_graph_store
 
         store = build_graph_store(self.settings, self.namespace)

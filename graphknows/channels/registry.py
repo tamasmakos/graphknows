@@ -53,13 +53,6 @@ def default_channels(settings: GraphKnowsSettings) -> list[Channel]:
         from graphknows.channels.ontology import OntologyChannel
 
         channels.append(OntologyChannel())
-    # Unconditional, unlike the two above: WordNetChannel only populates (a
-    # flush-time backfill) and never implements collect, so it contributes no
-    # leg to the RRF fusion and cannot perturb retrieval the way a settings
-    # gate protects against for enable_ontology_channel.
-    from graphknows.channels.wordnet import WordNetChannel
-
-    channels.append(WordNetChannel())
     return channels
 
 

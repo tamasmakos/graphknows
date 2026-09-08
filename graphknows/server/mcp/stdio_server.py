@@ -28,6 +28,23 @@ from graphknows.server.mcp._app import app  # noqa: E402
 # on this module. The package's __all__ is the authoritative inventory.
 from graphknows.server.mcp.tools import *  # noqa: F403, E402
 
+# The destructive tools leave __all__ when the admin gate is shut, so name them
+# explicitly: the Python surface always carries them, only the MCP surface is
+# gated.
+from graphknows.server.mcp.tools.admin import (  # noqa: E402, F401
+    ENABLED_ADMIN_TOOLS,
+    memory_drop_namespace,
+    memory_purge,
+)
+
+
+def _announce_admin_tools() -> None:
+    """Name an enabled destructive surface on stderr — it is never invisible."""
+    if ENABLED_ADMIN_TOOLS:
+        logging.getLogger("graphknows.startup").warning(
+            "admin tools ENABLED: %s", ", ".join(ENABLED_ADMIN_TOOLS)
+        )
+
 
 async def _startup_warmup() -> None:
     """Pre-warm embedder and stores before first tool call."""
@@ -64,9 +81,10 @@ def main() -> None:
     Reads JSON-RPC 2.0 requests on stdin, writes responses on stdout.
     All logging goes to stderr.
     """
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
 
-    GraphKnowsSettings().check_production_secrets()
+    get_settings().check_production_secrets()
+    _announce_admin_tools()
     asyncio.run(_run_server())
 
 

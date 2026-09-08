@@ -13,7 +13,11 @@ class IngestOptions(BaseModel, frozen=True):
 
     Attributes:
         scope: Identity triple (user_id / agent_id / run_id).
-        metadata: Extra key/value pairs stored alongside each record.
+        metadata: Ingest-time hints read by the write path. Only ``timestamp``,
+            ``anchor_date`` and ``memory_class`` are stored — ``timestamp`` or
+            ``anchor_date`` dates the chunk and anchors relative-date
+            resolution, ``memory_class`` classifies it. Every other key is
+            dropped.
         infer: When True, run NER extraction and build entity graph nodes.
             When False, embed only — no NER, no STM graph writes. Useful for
             tool output, system prompts, and high-volume ephemeral content.

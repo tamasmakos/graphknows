@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import os
 import re
 import sys
 import time
@@ -54,10 +53,11 @@ from graphknows.ingestion.extraction.relations._lingfeatures import (
     resolve_deixis,
 )
 from graphknows.nlp import load_spacy_model
+from graphknows.settings import get_settings
 
 log = logging.getLogger(__name__)
 
-_BASE_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_THRESHOLD", "0.35"))
+_BASE_THRESHOLD: float = get_settings().relex_threshold
 # relex classifies a candidate entity PAIR as bearing a relation, and its card
 # recommends a markedly higher floor here than for entity spans (0.7-0.9 vs
 # 0.3-0.5) because a low relation threshold pairs up every co-occurring entity.
@@ -69,11 +69,11 @@ _BASE_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_THRESHOLD", "0.3
 # textbook sentence, a correct relation — scores 0.437. At 0.3 it survives; at
 # 0.1 sub-span noise appears; at 0.0 the output explodes. Precision is defended
 # by the endpoint guards in _relation_reject, not by an unreachable floor.
-_RELATION_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_RELATION_THRESHOLD", "0.3"))
+_RELATION_THRESHOLD: float = get_settings().relex_relation_threshold
 # Floor on relex's entity-PAIR candidate score. Without it every co-occurring
 # pair of entities is a relation candidate and gets scored against every supplied
 # predicate, which manufactures confident nonsense between unrelated spans.
-_ADJACENCY_THRESHOLD: float = float(os.environ.get("GRAPHKNOWS_RELEX_ADJACENCY", "0.6"))
+_ADJACENCY_THRESHOLD: float = get_settings().relex_adjacency
 
 # relex is ZERO-SHOT: it can only assign a type it was handed, so feeding it only
 # the labels spaCy happened to observe in one chunk collapses the type space —
@@ -788,8 +788,14 @@ class _SpacySchemaMiner:
         """The shared spaCy pipeline, memoized by :func:`graphknows.nlp.load_spacy_model`."""
         return load_spacy_model(self._model_name)
 
-    def build(self, text: str, speaker: str = "") -> _DynamicSchema:
-        return self._build_from_doc(self.nlp(text), speaker)
+    def build(self, text: str, speaker: str = "", doc: Any | None = None) -> _DynamicSchema:
+        """Mine the schema for *text*, parsing it unless the caller already has a ``doc``.
+
+        ``GLiNER2EntityExtractor.extract`` hands over the doc its own
+        :meth:`~GLiNER2EntityExtractor.parse` memo just produced, so the window
+        is parsed once per turn rather than once here and again there.
+        """
+        return self._build_from_doc(doc if doc is not None else self.nlp(text), speaker)
 
     def build_batch(self, texts: list[str], speakers: Sequence[str] = ()) -> list[_DynamicSchema]:
         """Mine schemas for many chunks via one batched ``nlp.pipe`` pass.
@@ -835,9 +841,9 @@ class GLiNER2EntityExtractor:
         self._model_loader = model_loader
         settings = None
         if not spacy_model:
-            from graphknows.settings import GraphKnowsSettings
+            from graphknows.settings import get_settings
 
-            settings = GraphKnowsSettings()
+            settings = get_settings()
             spacy_model = settings.spacy_model
         self._schema_miner = schema_miner or _SpacySchemaMiner(model_name=spacy_model)
         # One-entry memo behind `parse()`; see its docstring.
@@ -849,9 +855,9 @@ class GLiNER2EntityExtractor:
             from graphknows.ingestion.extraction.relations.verifier import (
                 build_relation_verifier,
             )
-            from graphknows.settings import GraphKnowsSettings
+            from graphknows.settings import get_settings
 
-            relation_verifier = build_relation_verifier(settings or GraphKnowsSettings())
+            relation_verifier = build_relation_verifier(settings or get_settings())
         self._relation_verifier = relation_verifier
         # The relation label space is normally the per-chunk ontology properties
         # the caller passes to extract(). An explicit *relation_schema* (escape
@@ -1060,7 +1066,11 @@ class GLiNER2EntityExtractor:
         self._ensure_model_loaded()
         assert self._gliner is not None
 
-        dynamic_schema = self._schema_miner.build(text, speaker)
+        # Schema mining used to re-parse text that self.parse() had already (or
+        # was about to) cache for lexical labelling / frame-candidate ranking /
+        # modality -- see its docstring. Parsing here instead of inside build()
+        # populates that same one-entry memo, so the window is parsed once.
+        dynamic_schema = self._schema_miner.build(text, speaker, doc=self.parse(text))
         if not text.strip():
             return ExtractionResult()
         # No early return on an empty entity_spec. The labels handed to relex are

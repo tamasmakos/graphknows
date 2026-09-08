@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any
 
 # ArcadeDB database names are filesystem directory names; keep them to a safe
 # character set and a conservative length. The prefix we add is ``mem_``.
@@ -41,14 +40,6 @@ def sanitize(namespace: str) -> str:
         digest = hashlib.sha256(ns.encode("utf-8")).hexdigest()[:8]
         ns = f"{ns[: _MAX_NS_LEN - 9]}_{digest}"
     return ns
-
-
-def resolve(namespace: str, settings: Any) -> str:
-    """Effective namespace: an explicit non-empty argument wins, else the settings default.
-
-    The one rule for every transport — MCP tool argument and web query param alike.
-    """
-    return namespace or settings.namespace
 
 
 def db_name(namespace: str) -> str:

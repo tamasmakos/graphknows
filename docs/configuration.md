@@ -29,7 +29,7 @@ async with Memory(settings) as mem:
 | `GRAPHKNOWS_ARCADEDB_USER` | `root` | ArcadeDB user. |
 | `GRAPHKNOWS_ARCADEDB_PASSWORD` | `changeme` | ArcadeDB password. Required in production. |
 | `GRAPHKNOWS_NAMESPACE` | `""` | Tenant isolation boundary → one physical database `mem_<ns>` (`""` = the shared `mem`). The default when an MCP call omits `namespace`. See [multi-tenancy.md](multi-tenancy.md). |
-| `GRAPHKNOWS_MAX_OPEN_NAMESPACES` | `64` | MCP server cap on concurrently-open namespace runtimes (LRU-evicted). |
+| `GRAPHKNOWS_ENABLE_ADMIN_TOOLS` | `false` | Register the destructive MCP tools `memory_purge` and `memory_drop_namespace`. Off: they are not advertised at all. Read once at startup; the server names them on stderr when on. |
 | **Embeddings** | | |
 | `GRAPHKNOWS_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | Local sentence-transformers model, or a remote model id when `EMBED_API_BASE` is set. |
 | `GRAPHKNOWS_EMBED_API_BASE` | _(empty)_ | Set to use a remote OpenAI-compatible embeddings endpoint instead of local. |

@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from graphknows.ingestion.stm.ingest import _STMIngestHandler
+from graphknows.settings import get_settings
 from graphknows.symbolic.ontology.loader import OntologyTerm
 
 # Orthogonal unit vectors, so each property's "fit" to a chunk is unambiguous.
@@ -83,6 +84,7 @@ def test_ranking_puts_the_best_fitting_property_first_in_its_group(
     handler, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GRAPHKNOWS_RELATION_GROUP_RANKING", "1")
+    get_settings.cache_clear()
 
     offered = handler._relation_labels(ENTITIES, KNOWS_CHUNK)
 
@@ -94,6 +96,7 @@ def test_ranking_reorders_but_never_changes_the_offered_set(
 ) -> None:
     plain = handler._relation_labels(ENTITIES)
     monkeypatch.setenv("GRAPHKNOWS_RELATION_GROUP_RANKING", "1")
+    get_settings.cache_clear()
     ranked = handler._relation_labels(ENTITIES, KNOWS_CHUNK)
 
     assert set(ranked) == set(plain)
@@ -104,6 +107,7 @@ def test_round_robin_across_groups_survives_the_reordering(
 ) -> None:
     """One property per (domain, range) group before any group's second."""
     monkeypatch.setenv("GRAPHKNOWS_RELATION_GROUP_RANKING", "1")
+    get_settings.cache_clear()
 
     offered = list(handler._relation_labels(ENTITIES, KNOWS_CHUNK))
 
@@ -117,6 +121,7 @@ def test_a_missing_embedding_leaves_the_order_untouched(
 ) -> None:
     # Tests and the lexical path both call without one; it must not reorder or raise.
     monkeypatch.setenv("GRAPHKNOWS_RELATION_GROUP_RANKING", "1")
+    get_settings.cache_clear()
     assert list(handler._relation_labels(ENTITIES, [])) == list(handler._relation_labels(ENTITIES))
 
 

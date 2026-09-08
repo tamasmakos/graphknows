@@ -30,6 +30,7 @@ class ChannelContext:
 
     __slots__ = (
         "_frame_parse",
+        "_resolved_entities",
         "emb",
         "emb2",
         "query",
@@ -59,6 +60,19 @@ class ChannelContext:
         self.words = words
         self.words_graph = words_graph
         self._frame_parse: dict[str, Any] | None = None
+        self._resolved_entities: list[str] | None = None
+
+    async def resolve_entities(self, store: Any) -> list[str]:
+        """Entity names the query tokens resolve to (cached per query).
+
+        Three consumers ask for the same names from the same ``words_graph``
+        (fact sheet, frame re-rank, frame-fact channel); the graph read is
+        issued once and shared. Lazy like ``frame_parse``: a run where none of
+        them is enabled never touches the store.
+        """
+        if self._resolved_entities is None:
+            self._resolved_entities = await store.resolve_query_entities(self.words_graph)
+        return self._resolved_entities
 
     def frame_parse(self) -> dict[str, Any]:
         """Parse the query into frames/anchors (cached).

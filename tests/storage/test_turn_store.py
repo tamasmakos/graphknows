@@ -16,30 +16,8 @@ import pytest
 from graphknows.storage.arcadedb.graph_store import GraphStore
 
 
-def _arcadedb_reachable() -> bool:
-    """Return True when ArcadeDB is up at the configured URL."""
-    import httpx
-
-    from graphknows.settings import GraphKnowsSettings
-
-    try:
-        s = GraphKnowsSettings()
-        r = httpx.get(
-            f"{s.arcadedb_url}/api/v1/exists/ltm",
-            auth=(s.arcadedb_user, s.arcadedb_password),
-            timeout=3,
-        )
-    except Exception:
-        return False
-    else:
-        return r.status_code == 200
-
-
 @pytest.fixture
-async def store():
-    if not _arcadedb_reachable():
-        pytest.skip("ArcadeDB not reachable")
-
+async def store(arcadedb_required: None):
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_arcadedb_client
 

@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from graphknows.retrieval.retriever import DETRetriever
+from graphknows.settings import get_settings
 
 
 def _fake_embed(texts, model):
@@ -64,6 +65,7 @@ async def test_all_collectors_contribute():
 @pytest.mark.asyncio
 async def test_fact_context_attached_when_enabled(monkeypatch):
     monkeypatch.setenv("GRAPHKNOWS_FACT_CONTEXT", "true")
+    get_settings.cache_clear()
     retriever, store = _make_retriever()
     store.resolve_query_entities = AsyncMock(return_value=["Jon"])
     store.entity_fact_context = AsyncMock(return_value=["Jon visiting Rome"])
@@ -78,6 +80,7 @@ async def test_fact_context_attached_when_enabled(monkeypatch):
 @pytest.mark.asyncio
 async def test_fact_context_disabled_by_flag(monkeypatch):
     monkeypatch.setenv("GRAPHKNOWS_FACT_CONTEXT", "false")
+    get_settings.cache_clear()
     retriever, store = _make_retriever()
     store.resolve_query_entities = AsyncMock(return_value=["Jon"])
     store.entity_fact_context = AsyncMock(return_value=["Jon visiting Rome"])

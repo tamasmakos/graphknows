@@ -388,9 +388,9 @@ def _lemmatise(labels: set[str]) -> set[str]:
     against noun compounds where lemmatising the whole phrase would not help.
     """
     from graphknows.nlp import load_spacy_model
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
 
-    nlp = load_spacy_model(GraphKnowsSettings().spacy_model)
+    nlp = load_spacy_model(get_settings().spacy_model)
     out = set(labels)
     for label in labels:
         out.add(" ".join(t.lemma_.lower() for t in nlp(label)))
@@ -465,6 +465,32 @@ def lexical_index(scheme: dict[str, Concept]) -> dict[str, set[str]]:
     return index
 
 
+# scheme id -> (the scheme it was built from, casefolded label -> actual key).
+# Keyed by identity because the scheme is a process-wide singleton
+# (``scheme.load_scheme`` builds and caches it once, never in place afterwards)
+# and ``ancestors`` is called with it on nearly every chunk. The stashed scheme
+# reference keeps that id from being recycled onto an unrelated dict; it is a
+# handful of long-lived schemes in production and, at worst, one entry per
+# scheme a test builds.
+_casefold_index_cache: dict[int, tuple[dict[str, Concept], dict[str, str]]] = {}
+
+
+def _casefold_index(scheme: dict[str, Concept]) -> dict[str, str]:
+    """Casefolded label -> the scheme's real key, built once per scheme and cached.
+
+    ``ancestors`` used to fall back to an O(n) walk over the whole scheme (~1,660
+    CCO concepts) on every case-mismatched lookup -- which was nearly every
+    lookup, since the extractor's coarse types are lowercase and the scheme is
+    keyed by capitalised prefLabels.
+    """
+    cached = _casefold_index_cache.get(id(scheme))
+    if cached is not None and cached[0] is scheme:
+        return cached[1]
+    index = {key.casefold(): key for key in scheme}
+    _casefold_index_cache[id(scheme)] = (scheme, index)
+    return index
+
+
 def ancestors(
     scheme: dict[str, Concept], label: str, depth: int = 12, *, transitive_only: bool = True
 ) -> list[str]:
@@ -502,8 +528,7 @@ def ancestors(
     hierarchy terminate.
     """
     if label not in scheme:
-        folded = label.casefold()
-        label = next((k for k in scheme if k.casefold() == folded), label)
+        label = _casefold_index(scheme).get(label.casefold(), label)
     out: list[str] = []
     seen: set[str] = {label}
     frontier = [label]

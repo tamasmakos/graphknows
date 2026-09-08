@@ -28,6 +28,7 @@ import hashlib
 import logging
 from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -344,6 +345,105 @@ def _drop_subsumed_siblings(
     return absorbed_by
 
 
+def _frame_co_role_rel_rows(
+    ordered: list[tuple[str, str, str]], frame: str, fid: str, inst: dict[str, Any]
+) -> tuple[list[dict[str, Any]], int]:
+    """Entity adjacency for one instance: every cross-role ordered filler pair.
+
+    Capped — a 7-role instance would otherwise be 21 edges, and the tail of
+    that list is co-role trivia, not fact.
+
+    ``a[0] != b[0]`` is the load-bearing half. Two fillers of the SAME role
+    are co-participants, not a relation: emitting them produced `(Gina)
+    -Residence[Co_resident->Co_resident]-> (Jon)` and `(banker)
+    -Avoiding[Agent->Agent]-> (Gina)`, which read as facts and assert nothing
+    true. Measured on conv-30 before this filter: **829 of 2590 reified
+    edges — 32% of the fact layer — related a role to itself.**
+    Co-participation is already expressed correctly, by both fillers hanging
+    off the same FRAME_INSTANCE via PLAYS_ROLE; the projection only ever
+    needed to add the cross-role adjacency that walking entity-to-entity
+    cannot otherwise reach.
+
+    Returns the REL rows plus the count of same-role pairs refused (for the
+    caller's ``co_role_dropped`` diagnostic).
+    """
+    same_role = sum(
+        1 for i, a in enumerate(ordered) for b in ordered[i + 1 :] if a[1] != b[1] and a[0] == b[0]
+    )
+    pairs = [
+        (a, b)
+        for i, a in enumerate(ordered)
+        for b in ordered[i + 1 :]
+        if a[1] != b[1] and a[0] != b[0]
+    ][:_MAX_FRAME_REL_PAIRS]
+    rel_rows = [
+        {
+            "h": hnn,
+            "t": tnn,
+            "p": f"fn:{frame}",
+            "f": frame,
+            "hr": hr,
+            "tr": tr,
+            # Tier 1 of the stability ladder: a frame + its two role
+            # names is the same identifier however the surface
+            # varies, which is what makes it safe to dedup on.
+            "cp": f"fn:{frame}:{hr}->{tr}",
+            "fid": fid,
+            "pol": str(inst.get("polarity") or "pos"),
+            "mod": str(inst.get("modality") or "none"),
+            "epi": str(inst.get("epistemic") or "asserted"),
+            "hed": bool(inst.get("hedged") or False),
+        }
+        for (hr, hnn, _), (tr, tnn, _) in pairs
+    ]
+    return rel_rows, same_role
+
+
+@dataclass(frozen=True)
+class _FrameInstanceRows:
+    """Rows :meth:`GraphStore.write_frame_instances` batches into its UNWINDs.
+
+    Built by :meth:`GraphStore._build_frame_instance_rows`; the three drop
+    counters feed :meth:`GraphStore._log_frame_instance_diagnostics`.
+    """
+
+    inst_rows: list[dict[str, Any]]
+    role_rows: list[dict[str, Any]]
+    rel_rows: list[dict[str, Any]]
+    fid_at: dict[int, str]
+    gated_dropped: int
+    co_role_dropped: int
+    collapsed: int
+
+
+@dataclass(frozen=True)
+class RelationWrite:
+    """One :meth:`GraphStore.write_relation` call's fields, bundled.
+
+    ``src_name``/``predicate``/``dst_name`` identify the edge; every other
+    field annotates or merges it exactly as described in write_relation's own
+    docstring, which this bundle does not repeat.
+    """
+
+    src_name: str
+    predicate: str
+    dst_name: str
+    fact: str = ""
+    chunk_id: str = ""
+    confidence: float = 0.5
+    valid_at: str | None = None
+    source: str = ""
+    src_type: str = ""
+    dst_type: str = ""
+    ontology_property: str = ""
+    verifier_score: float | None = None
+    ontology_blocked: bool = False
+    speaker: str = ""
+    is_current: bool = True
+    invalid_at: str | None = None
+    merge_key: dict[str, str] | None = None
+
+
 class GraphStore(ArcadeStoreBase):
     """Single-database ArcadeDB store for one namespace (golden layer).
 
@@ -562,6 +662,22 @@ class GraphStore(ArcadeStoreBase):
             for c in batch:
                 if c.get("embedding"):
                     await self._set_embedding("CHUNK", "chunk_id", c["chunk_id"], c["embedding"])
+
+    async def max_chunk_seq(self, file_id: str) -> int | None:
+        """Highest ``CHUNK.seq`` written for this file; ``None`` when it has none.
+
+        ``seq`` is a per-file position, not a per-batch counter: ``neighbor_chunks``
+        expands a hit to its siblings by walking ``(file_id, seq ± radius)``. A
+        second ingest into the same file therefore has to continue the sequence —
+        restarting at 0 makes the new chunks read as neighbours of the old ones.
+        The file is reached through PART_OF; CHUNK carries no ``file_id`` property.
+        """
+        rows = await self.query(
+            "MATCH (c:CHUNK)-[:PART_OF]->(f:FILE {file_id: $fid}) RETURN max(c.seq) AS m",
+            fid=file_id,
+        )
+        m = rows[0].get("m") if rows else None
+        return None if m is None else int(m)
 
     # ------------------------------------------------------------------
     # Write API — TURN (short-term conversation buffer)
@@ -789,46 +905,32 @@ class GraphStore(ArcadeStoreBase):
     async def _supersede_edge(self, predicate: str, src_norm: str, dst_norm: str, now: str) -> None:
         """Tombstone any current edge for (src, predicate) pointing elsewhere.
 
-        Called only for single-valued predicates. Sets ``invalid_at``/
-        ``is_current=false`` instead of deleting, preserving history.
+        Called only for single-valued predicates, and only from inside the
+        ``self.transaction()`` block ``write_relation`` opens around this call
+        and the MERGE that follows it. Raises rather than swallowing: silently
+        skipping a failed tombstone here used to let the MERGE go on to write a
+        second current edge beside the one this call failed to retire — the
+        exact double-current-edge state a single-valued predicate must never
+        reach. Left to propagate, the shared transaction rolls both writes back
+        instead. Sets ``invalid_at``/``is_current=false`` instead of deleting,
+        preserving history.
         """
-        try:
-            await self.command(
-                "MATCH (a:ENTITY {name_norm: $src})-[r:REL]->(b:ENTITY) "
-                "WHERE r.predicate = $predicate AND r.is_current = true "
-                "AND b.name_norm <> $dst "
-                "SET r.invalid_at = $now, r.is_current = false",
-                src=src_norm,
-                dst=dst_norm,
-                predicate=predicate,
-                now=now,
-            )
-        except Exception as exc:
-            logger.debug(
-                "_supersede_edge %s (%s -> !=%s) skipped: %s", predicate, src_norm, dst_norm, exc
-            )
+        await self.command(
+            "MATCH (a:ENTITY {name_norm: $src})-[r:REL]->(b:ENTITY) "
+            "WHERE r.predicate = $predicate AND r.is_current = true "
+            "AND b.name_norm <> $dst "
+            "SET r.invalid_at = $now, r.is_current = false",
+            src=src_norm,
+            dst=dst_norm,
+            predicate=predicate,
+            now=now,
+        )
 
-    async def write_relation(
-        self,
-        src_name: str,
-        predicate: str,
-        dst_name: str,
-        fact: str = "",
-        chunk_id: str = "",
-        confidence: float = 0.5,
-        valid_at: str | None = None,
-        source: str = "",
-        src_type: str = "",
-        dst_type: str = "",
-        ontology_property: str = "",
-        verifier_score: float | None = None,
-        ontology_blocked: bool = False,
-        speaker: str = "",
-        is_current: bool = True,
-        invalid_at: str | None = None,
-        merge_key: dict[str, str] | None = None,
-    ) -> None:
+    async def write_relation(self, write: RelationWrite) -> None:
         """MERGE a dynamic relation edge (type = taxonomy predicate).
+
+        Takes its fields bundled in ``write`` (a :class:`RelationWrite`) rather
+        than as a flat parameter list.
 
         PROVENANCE CONTRACT (both REL writers, see also
         ``write_frame_instances``): every REL edge carries the chunks that
@@ -890,7 +992,23 @@ class GraphStore(ArcadeStoreBase):
         key exists to protect. Only the repair path passes it; everything else
         keeps the one-edge-per-predicate semantics described above.
         """
-        predicate = predicate.strip()
+        src_name = write.src_name
+        dst_name = write.dst_name
+        fact = write.fact
+        chunk_id = write.chunk_id
+        confidence = write.confidence
+        valid_at = write.valid_at
+        source = write.source
+        src_type = write.src_type
+        dst_type = write.dst_type
+        ontology_property = write.ontology_property
+        verifier_score = write.verifier_score
+        ontology_blocked = write.ontology_blocked
+        speaker = write.speaker
+        is_current = write.is_current
+        invalid_at = write.invalid_at
+        merge_key = write.merge_key
+        predicate = write.predicate.strip()
         if not predicate or not src_name or not dst_name:
             return
         # Stability ladder, tiers 3-4: an ontology property IRI when relex
@@ -904,8 +1022,7 @@ class GraphStore(ArcadeStoreBase):
         now = datetime.now(UTC).isoformat()
 
         # A replayed dead edge must not tombstone the winner's live sibling.
-        if is_current and await self._is_functional(canon, predicate):
-            await self._supersede_edge(predicate, src_norm, dst_norm, now)
+        supersede = is_current and await self._is_functional(canon, predicate)
 
         evidence_set = _evidence_set(chunk_id)
         if not chunk_id:
@@ -942,7 +1059,7 @@ class GraphStore(ArcadeStoreBase):
         # unreliable for MATCHING); the values stay bound parameters.
         key_sql = "".join(f", {column}: $key_{column}" for column in (merge_key or {}))
         key_params = {f"key_{column}": value for column, value in (merge_key or {}).items()}
-        await self.command(
+        merge_cypher = (
             f"MERGE (a:ENTITY {{name_norm: $src_nn}}) "
             f"SET a.name = coalesce(a.name, $src), a.state = coalesce(a.state, 'raw'), "
             f"    a.type = coalesce(a.type, $src_type) "
@@ -977,27 +1094,42 @@ class GraphStore(ArcadeStoreBase):
             f"        WHEN coalesce(r.ontology_blocked, false) OR $ont_blocked THEN null "
             f"        ELSE coalesce(r.ontology_property, $ont_prop) END, "
             f"    {verifier_set}"
-            f"    r.created_at = coalesce(r.created_at, $now)",
-            src_nn=src_norm,
-            dst_nn=dst_norm,
-            src=src_name,
-            dst=dst_name,
-            predicate=predicate,
-            fact=fact,
-            conf=float(confidence),
-            valid_at=valid_at or None,
-            source=source,
-            src_type=src_type or None,
-            dst_type=dst_type or None,
-            ont_prop=ontology_property or None,
-            ont_blocked=bool(ontology_blocked),
-            vscore=None if verifier_score is None else float(verifier_score),
-            invalid_at=invalid_at or None,
-            canon=canon,
-            anchor=anchor,
-            now=now,
-            **key_params,
+            f"    r.created_at = coalesce(r.created_at, $now)"
         )
+        merge_params: dict[str, Any] = {
+            "src_nn": src_norm,
+            "dst_nn": dst_norm,
+            "src": src_name,
+            "dst": dst_name,
+            "predicate": predicate,
+            "fact": fact,
+            "conf": float(confidence),
+            "valid_at": valid_at or None,
+            "source": source,
+            "src_type": src_type or None,
+            "dst_type": dst_type or None,
+            "ont_prop": ontology_property or None,
+            "ont_blocked": bool(ontology_blocked),
+            "vscore": None if verifier_score is None else float(verifier_score),
+            "invalid_at": invalid_at or None,
+            "canon": canon,
+            "anchor": anchor,
+            "now": now,
+            **key_params,
+        }
+        # Single-valued predicates tombstone the old current edge and MERGE the
+        # new one as one ArcadeDB transaction (T013's context manager), not two
+        # independent HTTP calls: a failure between them must undo both, or the
+        # old edge survives as current beside a brand-new current edge —
+        # exactly the double-current-edge state a single-valued predicate must
+        # never reach. Multi-valued predicates never tombstone, so there is
+        # nothing to keep atomic with and the plain single call is unchanged.
+        if supersede:
+            async with self.transaction():
+                await self._supersede_edge(predicate, src_norm, dst_norm, now)
+                await self.command(merge_cypher, **merge_params)
+        else:
+            await self.command(merge_cypher, **merge_params)
 
         # Provenance for the endpoints this call just MERGEd. Without it an
         # entity that only ever appears as a relation argument has no edge back
@@ -1698,106 +1830,9 @@ class GraphStore(ArcadeStoreBase):
         )
         return len(rows)
 
-    # Full provenance block a grounding row must carry — asserted complete at
-    # the single write choke point rather than trusted at each call site.
-    _GROUNDING_FIELDS = (
-        "name",
-        "uri",
-        "channel",
-        "version",
-        "matcher",
-        "score",
-        "rank",
-        "chunk_id",
-        "span",
-    )
-
-    async def write_groundings(self, rows: list[dict[str, Any]]) -> int:
-        """MERGE ENTITY-[:INSTANCE_OF {provenance}]->ONTOLOGY_CLASS edges.
-
-        The single place a grounding edge is written. Each row must carry the
-        full provenance block (``name, uri, channel, version, matcher, score,
-        rank, chunk_id, span``); a row missing any field raises immediately —
-        a provenance gap that only shows up as a missing property in the graph
-        months later is the silent failure this checks against.
-
-        ``score`` is *that entity's* confidence in being an instance of that
-        class — not the class's own match score. An entity may accumulate
-        several INSTANCE_OF edges — different chunks extract different types,
-        which is legitimate multi-classing. Repeated writes keep the strongest
-        mention rather than the latest, so the stored score does not depend on
-        chunk order.
-
-        ``version`` is part of the MERGE pattern, not just a SET property: a
-        resource upgrade (issue #145) writes new groundings under a new
-        version string, and without version in the key the second write
-        overwrites the first on the same (entity, class) pair — the old and
-        new versions could never coexist. Keying on it means two versions of
-        one grounding are two edges; :meth:`supersede_groundings` is how the
-        older one gets flagged, never overwritten.
-
-        Callers pass only the accepted candidate (``rank`` 0): nothing reads
-        INSTANCE_OF at retrieval today (the ENTITY route through it was
-        measured byte-identical to the direct CHUNK->MATCHES_CLASS route and
-        removed — see the comment in ``search_ontology_classes`` below), so
-        writing k-best sibling edges would triple a write-only layer for no
-        reader.
-        """
-        if not rows:
-            return 0
-        for row in rows:
-            missing = [f for f in self._GROUNDING_FIELDS if row.get(f) is None]
-            if missing:
-                raise ValueError(f"grounding row missing provenance field(s) {missing}: {row}")
-        merged = [
-            {
-                "nn": _name_norm(str(r["name"])),
-                "uri": r["uri"],
-                "channel": r["channel"],
-                "version": r["version"],
-                "matcher": r["matcher"],
-                "score": float(r["score"]),
-                "rank": int(r["rank"]),
-                "chunk_id": r["chunk_id"],
-                "span": r["span"],
-            }
-            for r in rows
-        ]
-        await self.command(
-            "UNWIND $rows AS r "
-            "MATCH (e:ENTITY {name_norm: r.nn}), (o:ONTOLOGY_CLASS {uri: r.uri}) "
-            "MERGE (e)-[i:INSTANCE_OF {version: r.version}]->(o) "
-            "SET i.score = CASE "
-            "    WHEN r.score > coalesce(i.score, 0) THEN r.score "
-            "    ELSE i.score "
-            "END, "
-            "i.channel = r.channel, i.matcher = r.matcher, "
-            "i.rank = r.rank, i.chunk_id = r.chunk_id, i.span = r.span",
-            rows=merged,
-        )
-        return len(merged)
-
-    async def supersede_groundings(self, channel: str, keep_version: str) -> int:
-        """Flag every ``channel`` grounding NOT on ``keep_version`` as superseded.
-
-        Never DELETEs: the point of keying INSTANCE_OF on version (see
-        :meth:`write_groundings`) is that a rebind is a dual-write, not data
-        loss — an evaluated graph keeps its old groundings, flagged, right
-        alongside the new ones. Returns how many edges were flagged.
-        """
-        rows = await self.command(
-            "MATCH (:ENTITY)-[i:INSTANCE_OF]->(:ONTOLOGY_CLASS) "
-            "WHERE i.channel = $channel AND i.version <> $keep_version "
-            "SET i.superseded = true "
-            "RETURN count(i) AS c",
-            channel=channel,
-            keep_version=keep_version,
-        )
-        return int(rows[0].get("c") or 0) if rows else 0
-
     # Full provenance block a WordNet grounding row must carry -- asserted
-    # complete at the single write choke point, same contract as
-    # ``_GROUNDING_FIELDS``.
+    # complete at the single write choke point rather than trusted at each
+    # call site.
     _SENSE_FIELDS = (
         "name",
         "synset_id",
@@ -1829,7 +1864,7 @@ class GraphStore(ArcadeStoreBase):
         span, channel, version, matcher, score, rank``); a row missing any
         field raises immediately -- a provenance gap that only surfaces
         months later as a missing property is exactly the silent failure
-        this guards against, same contract as :meth:`write_groundings`.
+        this guards against.
 
         ``chunk_id``, ``span`` and ``synset`` sit INSIDE the ``HAS_SENSE``
         pattern braces, not only in the SET clause: that is what makes the
@@ -1966,8 +2001,7 @@ class GraphStore(ArcadeStoreBase):
         """MERGE the SOURCE vertex for one (channel, version) import (issue #145).
 
         Keyed on ``"<channel>@<version>"`` so a channel upgrade MERGEs a new
-        vertex rather than overwriting the record of the version it replaces
-        — the same identity gap ``write_groundings`` closes for INSTANCE_OF.
+        vertex rather than overwriting the record of the version it replaces.
         ``imported_at`` defaults to now when the caller does not supply one;
         missing counts default to 0 rather than raising, since a channel that
         drops nothing has no reason to compute a zero itself. Returns the id.
@@ -2074,6 +2108,366 @@ class GraphStore(ArcadeStoreBase):
                 )
         return out
 
+    async def _known_frame_fillers(self, instances: list[dict[str, Any]]) -> set[str] | None:
+        """Which role fillers already exist as ENTITY vertices, by name_norm.
+
+        Identity is computed over these alone, so the lookup precedes the
+        hash (see write_frame_instances). One batched query. Returns
+        ``None`` — not an empty set — when the lookup itself failed, so the
+        caller can tell "nothing survived" from "could not check".
+        """
+        wanted = {
+            _name_norm(str(f))
+            for inst in instances
+            for fs in (inst.get("roles") or {}).values()
+            for f in (fs or [])
+            if str(f).strip()
+        }
+        if not wanted:
+            return set()
+        try:
+            rows = await self.query(
+                f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(sorted(wanted))} "
+                f"RETURN e.name_norm AS nn"
+            )
+            return {str(r["nn"]) for r in rows if r.get("nn")}
+        except Exception as exc:
+            logger.warning("frame-instance filler lookup failed: %s", exc)
+            return None
+
+    def _build_frame_instance_rows(
+        self,
+        instances: list[dict[str, Any]],
+        known: set[str],
+        session_id: str,
+        chunk_id: str,
+    ) -> _FrameInstanceRows:
+        """Derive each instance's content-hash id and its batched write rows.
+
+        Applies the two write-time gates described in write_frame_instances
+        (the surviving-edge floor and sibling collapse) and builds the
+        FRAME_INSTANCE, PLAYS_ROLE and co-role REL rows in one pass. Pure
+        computation, no I/O — the caller does the writing.
+        """
+        inst_rows: list[dict[str, Any]] = []
+        role_rows: list[dict[str, Any]] = []
+        rel_rows: list[dict[str, Any]] = []
+        # Same-role filler pairs refused by the projection (see below).
+        co_role_dropped = 0
+        # Instances dropped for having fewer than _MIN_SURVIVING_ROLE_EDGES
+        # surviving PLAYS_ROLE edges (issue #161, "13% under-connected").
+        gated_dropped = 0
+        # Position in `instances` -> the id it was written under, so a nesting
+        # pair given by index survives the drops below (no fills, no frame).
+        fid_at: dict[int, str] = {}
+
+        derived = [
+            (index, *parts)
+            for index, inst in enumerate(instances)
+            if (parts := _derive_frame_instance(inst, known)) is not None
+        ]
+        # Same (frame, assertion) siblings whose surviving fills are a strict
+        # subset of another's are the same fact stated less completely — one
+        # extraction pass finding two candidate spans for the same event
+        # (issue #161, "duplicates inside one chunk").
+        absorbed_by = _drop_subsumed_siblings(
+            [
+                (index, frame, assertion, frozenset(persistable))
+                for index, frame, _, assertion, persistable in derived
+            ]
+        )
+        collapsed = len(absorbed_by)
+
+        for index, frame, _roles, assertion, persistable in derived:
+            if index in absorbed_by:
+                continue  # written under the surviving sibling's fid, below
+            inst = instances[index]
+            sig = [*sorted(f"{r}={nn}" for r, nn, _ in persistable), f"@{assertion}"]
+            # Nothing that can be written is nothing to identify the fact BY, so
+            # the instance is dropped rather than written as a bare frame label.
+            # Tested on `persistable`, not `sig`: sig now always carries the
+            # assertion suffix and is therefore never empty.
+            #
+            # Gate on EDGE COUNT, not distinct role names — two surviving
+            # fills sharing one role still clear the floor.
+            if len(persistable) < _MIN_SURVIVING_ROLE_EDGES:
+                gated_dropped += 1
+                continue
+            # Content hash for a stable frame-instance id — not a security digest.
+            digest = hashlib.sha1("|".join(sig).encode(), usedforsecurity=False).hexdigest()
+            fid = f"{frame}:{digest[:16]}"
+            fid_at[index] = fid
+            role_conf = float(inst.get("role_confidence") or 0.0)
+            inst_rows.append(
+                {
+                    "fid": fid,
+                    "frame": frame,
+                    "cid": chunk_id,
+                    "sid": session_id,
+                    "ms": float(inst.get("match_sim") or 0.0),
+                    "rc": role_conf,
+                    "pol": str(inst.get("polarity") or "pos"),
+                    "mod": str(inst.get("modality") or "none"),
+                    "epi": str(inst.get("epistemic") or "asserted"),
+                    "hed": bool(inst.get("hedged") or False),
+                    "voi": str(inst.get("voice") or "active"),
+                    "ten": str(inst.get("tense") or ""),
+                    "att": str(inst.get("attributed_to") or ""),
+                    "mru": str(inst.get("modality_rules") or ""),
+                    # Provenance about HOW the trigger was found (a light-verb
+                    # construction's noun object vs. the frame's own LU) — not
+                    # part of the fact's identity, so it plays no role in `sig`
+                    # / the content hash above, and never gates or projects.
+                    "lvc": bool(inst.get("lvc") or False),
+                }
+            )
+            ordered = sorted(persistable)
+            for role, nn, name in ordered:
+                role_rows.append({"fid": fid, "nn": nn, "name": name, "role": role})
+            pair_rows, same_role = _frame_co_role_rel_rows(ordered, frame, fid, inst)
+            rel_rows.extend(pair_rows)
+            if same_role:
+                co_role_dropped += same_role
+        # A subsumed sibling maps to the id it was ABSORBED into (so a nesting
+        # pair naming it still resolves), never to nothing — that only happens
+        # to an instance the gate above dropped outright.
+        for dropped_index, survivor_index in absorbed_by.items():
+            if survivor_index in fid_at:
+                fid_at[dropped_index] = fid_at[survivor_index]
+        return _FrameInstanceRows(
+            inst_rows=inst_rows,
+            role_rows=role_rows,
+            rel_rows=rel_rows,
+            fid_at=fid_at,
+            gated_dropped=gated_dropped,
+            co_role_dropped=co_role_dropped,
+            collapsed=collapsed,
+        )
+
+    def _log_frame_instance_diagnostics(
+        self,
+        instances: list[dict[str, Any]],
+        known: set[str],
+        rows: _FrameInstanceRows,
+        chunk_id: str,
+    ) -> None:
+        """Log the silent-loss counts write_frame_instances promises not to hide.
+
+        B19 / R13: PLAYS_ROLE MATCHes ENTITY by name_norm and never MERGEs —
+        correct policy (a filler the extractor never minted must not be
+        invented here), but it means a filler with no ENTITY produces no edge
+        and nothing recorded it. That is the "4% of objects reach a chunk"
+        family of silent hole. Do not change the MATCH; make the miss visible.
+        """
+        unbound = sum(
+            1
+            for inst in instances
+            for fs in (inst.get("roles") or {}).values()
+            for f in (fs or [])
+            if str(f).strip() and _name_norm(str(f)) not in known
+        )
+        if unbound or rows.gated_dropped:
+            logger.info(
+                "frame role fillers unbound: %d (no ENTITY was minted for them, so they "
+                "get no PLAYS_ROLE edge); %d instance(s) consequently dropped for surviving "
+                "fewer than %d role edge(s), in chunk %s",
+                unbound,
+                rows.gated_dropped,
+                _MIN_SURVIVING_ROLE_EDGES,
+                chunk_id,
+            )
+        if rows.collapsed:
+            logger.info(
+                "frame instances collapsed: %d in chunk %s (a less completely filled "
+                "sibling of the same fact — same frame and assertion, its surviving "
+                "fills a subset of another instance's)",
+                rows.collapsed,
+                chunk_id,
+            )
+        if rows.co_role_dropped:
+            logger.debug(
+                "frame projection: %d same-role filler pair(s) not written as REL in chunk %s "
+                "(co-participation, not a relation — they remain joined by their instance)",
+                rows.co_role_dropped,
+                chunk_id,
+            )
+
+    async def _write_frame_instance_vertices(
+        self, inst_rows: list[dict[str, Any]], chunk_id: str
+    ) -> None:
+        """Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).
+
+        RETURNs its count because the leading MATCH is SILENT when the CHUNK is
+        absent: this batch then writes nothing at all while batch 2b still
+        writes REL edges carrying a frame_instance_id that was never created.
+        """
+        written = await self.command(
+            "UNWIND $rows AS row "
+            "MATCH (c:CHUNK {chunk_id: row.cid}) "
+            "MERGE (fi:FRAME_INSTANCE {id: row.fid}) "
+            "SET fi.frame = row.frame, fi.session_id = row.sid, "
+            "    fi.chunk_id = coalesce(fi.chunk_id, row.cid), "
+            "    fi.match_sim = CASE WHEN row.ms > coalesce(fi.match_sim, 0) "
+            "                        THEN row.ms ELSE fi.match_sim END, "
+            "    fi.role_confidence = CASE WHEN row.rc > coalesce(fi.role_confidence, 0) "
+            "                              THEN row.rc ELSE fi.role_confidence END, "
+            "    fi.polarity = row.pol, fi.modality = row.mod, fi.epistemic = row.epi, "
+            "    fi.hedged = row.hed, fi.voice = row.voi, fi.tense = row.ten, "
+            "    fi.attributed_to = row.att, fi.modality_rules = row.mru, "
+            "    fi.lvc = row.lvc "
+            "MERGE (fi)-[:FRAME_EVOKED_IN]->(c) "
+            "RETURN count(fi) AS n",
+            rows=inst_rows,
+        )
+        # Only a count we actually read can say "nothing was written" — no result
+        # row at all is an unknown, not a zero, and must not raise a false alarm.
+        # (ArcadeDB returns [{'n': 0}] for the miss; verified against a live db.)
+        if chunk_id and written and not int(written[0].get("n") or 0):
+            logger.warning(
+                "frame instances dropped: chunk %s has no CHUNK vertex, so %d "
+                "FRAME_INSTANCE(s) were not written — the co-role REL edges below "
+                "still carry their frame_instance_id and it resolves to nothing",
+                chunk_id,
+                len(inst_rows),
+            )
+
+    async def _link_frame_instances_to_frames(
+        self, inst_rows: list[dict[str, Any]], chunk_id: str
+    ) -> None:
+        """Batch 1b: link each instance to its canonical FRAME vertex.
+
+        Own command, not folded into batch 1 — batch 1's leading MATCH is
+        already silent when the CHUNK is missing, and adding a second MATCH
+        there would drop the whole instance write whenever the FRAME vertex is
+        absent. Never MERGE the FRAME here: a FRAME minted without its
+        definition, embedding and BROADER parents is a stub, and an edge into
+        a stub buys nothing (that is the ingest-path FRAME writer's job).
+        """
+        linked = await self.command(
+            "UNWIND $rows AS row "
+            "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
+            "MATCH (f:FRAME {id: row.frame}) "
+            "MERGE (fi)-[:EVOKES]->(f) "
+            "RETURN count(*) AS n",
+            rows=inst_rows,
+        )
+        if linked and int(linked[0].get("n") or 0) < len(inst_rows):
+            logger.info(
+                "frame instances under-linked: chunk %s has %d FRAME_INSTANCE(s) "
+                "but only %d EVOKES edge(s) to a FRAME vertex — the missing FRAME "
+                "vertices mean those instances cannot generalise through the "
+                "BROADER taxonomy",
+                chunk_id,
+                len(inst_rows),
+                int(linked[0].get("n") or 0),
+            )
+
+    async def _write_frame_role_edges(self, role_rows: list[dict[str, Any]]) -> None:
+        """Batch 2a: MERGE the distinct filler ENTITIES first, on their own.
+
+        role_rows is keyed (fid, nn, role), so ONE entity filling TWO roles of a
+        frame repeats its name_norm — and MERGEing the entity inside the same
+        UNWIND as the edge creates it twice before the ENTITY[name_norm] UNIQUE
+        index settles, raising DuplicatedKeyException and failing the caller's
+        whole document. ("Being_named" with Entity=X and Name=X is exactly this.)
+        Collapsing on the merge key first makes the edge pass a pure MATCH.
+        """
+        if not role_rows:
+            return
+        # A role edge attaches to an entity the EXTRACTION path already
+        # minted — it never creates one. This used to MERGE, and a MERGE here
+        # invents a node with no type, no confidence and no MENTIONS edge to
+        # any chunk: 624 of 2105 nodes on LoCoMo conv-30 (30%) existed only
+        # because a frame pointed at a span. They are unreachable by any
+        # entity query, they cannot be resolved or merged with anything, and
+        # they reached the generator's fact-sheet as role fillers.
+        #
+        # A span worth a graph node is one the extractor recognised on its
+        # own evidence. If it did not, the frame layer citing it is not extra
+        # knowledge — it is an assertion with no provenance, so the role is
+        # dropped. MATCH, never MERGE.
+        await self.command(
+            "UNWIND $rows AS row "
+            "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
+            "MATCH (e:ENTITY {name_norm: row.nn}) "
+            "MERGE (fi)-[:PLAYS_ROLE {role: row.role}]->(e)",
+            rows=role_rows,
+        )
+
+    async def _write_frame_co_role_edges(
+        self, rel_rows: list[dict[str, Any]], chunk_id: str
+    ) -> None:
+        """Batch 2b: co-role entity adjacency (see write_frame_instances).
+
+        MATCH, never MERGE, on the endpoints — same rule as the role edges: a
+        filler the extractor never minted does not get invented here.
+        """
+        if not rel_rows:
+            return
+        # Same evidence append as write_relation (see the contract in both
+        # docstrings). chunk_id is constant across rel_rows, so one
+        # interpolated literal covers the whole UNWIND.
+        # ponytail: forward-only, and the residue is counted at write time,
+        # not surveyed. Namespaces ingested before this keep their empty
+        # `evidence` until re-ingest (backfill is one Cypher pass:
+        # MATCH (fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c), (a)-[r:REL]->(b)
+        # WHERE r.frame_instance_id = fi.id SET r.evidence = collect(c.chunk_id)),
+        # and a graph-wide "unsourced by either route" census belongs in the
+        # flush return dict, which lives outside this package.
+        frame_key_sql = ", ".join(f"{column}: {field}" for column, field in _FRAME_REL_KEY.items())
+        await self.command(
+            "UNWIND $rows AS row "
+            "MATCH (a:ENTITY {name_norm: row.h}) "
+            "MATCH (b:ENTITY {name_norm: row.t}) "
+            # polarity/modality are part of the MERGE key for the same reason
+            # they are part of the instance's content hash: without them a
+            # fact and its denial are one edge, and the later write silently
+            # wins. This is the §6.6 dedup key minus the temporal bucket.
+            # Built from _FRAME_REL_KEY so the entity-merge repair replays a
+            # projected edge under the very key written here.
+            f"MERGE (a)-[r:REL {{predicate: row.p, {frame_key_sql}}}]->(b) "
+            "SET r.source = 'frame', r.is_current = true, "
+            "    r.canonical_predicate = row.cp, r.frame = row.f, "
+            f"    {_evidence_set(chunk_id)}"
+            "    r.frame_instance_id = row.fid, r.reified = true, r.anchor = 'frame', "
+            "    r.epistemic = row.epi, r.hedged = row.hed",
+            rows=rel_rows,
+        )
+        if not chunk_id:
+            # Residue: no chunk to cite, and batch 1's `MATCH (c:CHUNK ...)`
+            # matched nothing either, so the FRAME_INSTANCE these edges point
+            # at was never written. Unsourced by BOTH routes — count it.
+            logger.warning(
+                "frame co-role REL edges with no recoverable provenance: %d "
+                "(no chunk_id, so neither r.evidence nor FRAME_EVOKED_IN)",
+                len(rel_rows),
+            )
+
+    async def _write_frame_nesting_edges(
+        self, nesting: list[tuple[int, str, int]] | None, fid_at: dict[int, str]
+    ) -> None:
+        """Batch 3: frame-to-frame nesting, which a flat role list cannot hold.
+
+        ("...because my laptop died" as Explanation -> Causation -> Death.)
+
+        Both endpoints must have been written; a pair naming a dropped instance
+        is dropped with it rather than pointing at nothing.
+        """
+        nest_rows = [
+            {"p": fid_at[p], "role": role, "c": fid_at[c]}
+            for p, role, c in (nesting or [])
+            if p in fid_at and c in fid_at and fid_at[p] != fid_at[c]
+        ]
+        if not nest_rows:
+            return
+        await self.command(
+            "UNWIND $rows AS row "
+            "MATCH (p:FRAME_INSTANCE {id: row.p}) "
+            "MATCH (c:FRAME_INSTANCE {id: row.c}) "
+            "MERGE (p)-[:FRAME_NESTS {role: row.role}]->(c)",
+            rows=nest_rows,
+        )
+
     async def write_frame_instances(
         self,
         session_id: str,
@@ -2167,346 +2561,27 @@ class GraphStore(ArcadeStoreBase):
           and ``entity_fact_context`` excludes them from its REL read, because
           its frame facts already state the same content in a better format.
 
+        The phases below are batched, private helpers, split out so each stays
+        readable on its own: filler lookup, row derivation, diagnostics, then
+        one write per batch the comments above already name.
+
         Idempotent (all MERGE). Returns the number of instances processed.
         """
         if not instances:
             return 0
-        # Which fillers actually exist as entities? Identity is computed over
-        # these alone, so the lookup precedes the hash. One batched query.
-        wanted = {
-            _name_norm(str(f))
-            for inst in instances
-            for fs in (inst.get("roles") or {}).values()
-            for f in (fs or [])
-            if str(f).strip()
-        }
-        known: set[str] = set()
-        if wanted:
-            try:
-                rows = await self.query(
-                    f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(sorted(wanted))} "
-                    f"RETURN e.name_norm AS nn"
-                )
-                known = {str(r["nn"]) for r in rows if r.get("nn")}
-            except Exception as exc:
-                logger.warning("frame-instance filler lookup failed: %s", exc)
-                return 0
-
-        inst_rows: list[dict[str, Any]] = []
-        role_rows: list[dict[str, Any]] = []
-        rel_rows: list[dict[str, Any]] = []
-        # Same-role filler pairs refused by the projection (see below).
-        co_role_dropped = 0
-        # Instances dropped for having fewer than _MIN_SURVIVING_ROLE_EDGES
-        # surviving PLAYS_ROLE edges (issue #161, "13% under-connected").
-        gated_dropped = 0
-        # Position in `instances` -> the id it was written under, so a nesting
-        # pair given by index survives the drops below (no fills, no frame).
-        fid_at: dict[int, str] = {}
-
-        derived = [
-            (index, *parts)
-            for index, inst in enumerate(instances)
-            if (parts := _derive_frame_instance(inst, known)) is not None
-        ]
-        # Same (frame, assertion) siblings whose surviving fills are a strict
-        # subset of another's are the same fact stated less completely — one
-        # extraction pass finding two candidate spans for the same event
-        # (issue #161, "duplicates inside one chunk").
-        absorbed_by = _drop_subsumed_siblings(
-            [
-                (index, frame, assertion, frozenset(persistable))
-                for index, frame, _, assertion, persistable in derived
-            ]
-        )
-        collapsed = len(absorbed_by)
-
-        for index, frame, _roles, assertion, persistable in derived:
-            if index in absorbed_by:
-                continue  # written under the surviving sibling's fid, below
-            inst = instances[index]
-            sig = [*sorted(f"{r}={nn}" for r, nn, _ in persistable), f"@{assertion}"]
-            # Nothing that can be written is nothing to identify the fact BY, so
-            # the instance is dropped rather than written as a bare frame label.
-            # Tested on `persistable`, not `sig`: sig now always carries the
-            # assertion suffix and is therefore never empty.
-            #
-            # Gate on EDGE COUNT, not distinct role names — two surviving
-            # fills sharing one role still clear the floor.
-            if len(persistable) < _MIN_SURVIVING_ROLE_EDGES:
-                gated_dropped += 1
-                continue
-            # Content hash for a stable frame-instance id — not a security digest.
-            digest = hashlib.sha1("|".join(sig).encode(), usedforsecurity=False).hexdigest()
-            fid = f"{frame}:{digest[:16]}"
-            fid_at[index] = fid
-            role_conf = float(inst.get("role_confidence") or 0.0)
-            inst_rows.append(
-                {
-                    "fid": fid,
-                    "frame": frame,
-                    "cid": chunk_id,
-                    "sid": session_id,
-                    "ms": float(inst.get("match_sim") or 0.0),
-                    "rc": role_conf,
-                    "pol": str(inst.get("polarity") or "pos"),
-                    "mod": str(inst.get("modality") or "none"),
-                    "epi": str(inst.get("epistemic") or "asserted"),
-                    "hed": bool(inst.get("hedged") or False),
-                    "voi": str(inst.get("voice") or "active"),
-                    "ten": str(inst.get("tense") or ""),
-                    "att": str(inst.get("attributed_to") or ""),
-                    "mru": str(inst.get("modality_rules") or ""),
-                    # Provenance about HOW the trigger was found (a light-verb
-                    # construction's noun object vs. the frame's own LU) — not
-                    # part of the fact's identity, so it plays no role in `sig`
-                    # / the content hash above, and never gates or projects.
-                    "lvc": bool(inst.get("lvc") or False),
-                }
-            )
-            ordered = sorted(persistable)
-            for role, nn, name in ordered:
-                role_rows.append({"fid": fid, "nn": nn, "name": name, "role": role})
-            # Entity adjacency for this fact: every ordered pair of fillers of
-            # DIFFERENT roles. Capped — a 7-role instance would otherwise be 21
-            # edges, and the tail of that list is co-role trivia, not fact.
-            #
-            # ``a[0] != b[0]`` is the load-bearing half. Two fillers of the SAME
-            # role are co-participants, not a relation: emitting them produced
-            # `(Gina) -Residence[Co_resident->Co_resident]-> (Jon)` and
-            # `(banker) -Avoiding[Agent->Agent]-> (Gina)`, which read as facts and
-            # assert nothing true. Measured on conv-30 before this filter: **829
-            # of 2590 reified edges — 32% of the fact layer — related a role to
-            # itself.** Co-participation is already expressed correctly, by both
-            # fillers hanging off the same FRAME_INSTANCE via PLAYS_ROLE; the
-            # projection only ever needed to add the cross-role adjacency that
-            # walking entity-to-entity cannot otherwise reach.
-            same_role = sum(
-                1
-                for i, a in enumerate(ordered)
-                for b in ordered[i + 1 :]
-                if a[1] != b[1] and a[0] == b[0]
-            )
-            if same_role:
-                co_role_dropped += same_role
-            pairs = [
-                (a, b)
-                for i, a in enumerate(ordered)
-                for b in ordered[i + 1 :]
-                if a[1] != b[1] and a[0] != b[0]
-            ][:_MAX_FRAME_REL_PAIRS]
-            for (hr, hnn, _), (tr, tnn, _) in pairs:
-                rel_rows.append(
-                    {
-                        "h": hnn,
-                        "t": tnn,
-                        "p": f"fn:{frame}",
-                        "f": frame,
-                        "hr": hr,
-                        "tr": tr,
-                        # Tier 1 of the stability ladder: a frame + its two role
-                        # names is the same identifier however the surface
-                        # varies, which is what makes it safe to dedup on.
-                        "cp": f"fn:{frame}:{hr}->{tr}",
-                        "fid": fid,
-                        "pol": str(inst.get("polarity") or "pos"),
-                        "mod": str(inst.get("modality") or "none"),
-                        "epi": str(inst.get("epistemic") or "asserted"),
-                        "hed": bool(inst.get("hedged") or False),
-                    }
-                )
-        # A subsumed sibling maps to the id it was ABSORBED into (so a nesting
-        # pair naming it still resolves), never to nothing — that only happens
-        # to an instance the gate above dropped outright.
-        for dropped_index, survivor_index in absorbed_by.items():
-            if survivor_index in fid_at:
-                fid_at[dropped_index] = fid_at[survivor_index]
-        # B19 / R13: PLAYS_ROLE MATCHes ENTITY by name_norm and never MERGEs —
-        # correct policy (a filler the extractor never minted must not be
-        # invented here), but it means a filler with no ENTITY produces no edge
-        # and nothing recorded it. That is the "4% of objects reach a chunk"
-        # family of silent hole. Do not change the MATCH; make the miss visible.
-        unbound = sum(
-            1
-            for inst in instances
-            for fs in (inst.get("roles") or {}).values()
-            for f in (fs or [])
-            if str(f).strip() and _name_norm(str(f)) not in known
-        )
-        if unbound or gated_dropped:
-            logger.info(
-                "frame role fillers unbound: %d (no ENTITY was minted for them, so they "
-                "get no PLAYS_ROLE edge); %d instance(s) consequently dropped for surviving "
-                "fewer than %d role edge(s), in chunk %s",
-                unbound,
-                gated_dropped,
-                _MIN_SURVIVING_ROLE_EDGES,
-                chunk_id,
-            )
-        if collapsed:
-            logger.info(
-                "frame instances collapsed: %d in chunk %s (a less completely filled "
-                "sibling of the same fact — same frame and assertion, its surviving "
-                "fills a subset of another instance's)",
-                collapsed,
-                chunk_id,
-            )
-        if co_role_dropped:
-            logger.debug(
-                "frame projection: %d same-role filler pair(s) not written as REL in chunk %s "
-                "(co-participation, not a relation — they remain joined by their instance)",
-                co_role_dropped,
-                chunk_id,
-            )
-        if not inst_rows:
+        known = await self._known_frame_fillers(instances)
+        if known is None:
             return 0
-        # Batch 1: FRAME_INSTANCE + FRAME_EVOKED_IN evidence edge (per chunk).
-        # RETURNs its count because the leading MATCH is SILENT when the CHUNK is
-        # absent: this batch then writes nothing at all while batch 2b still
-        # writes REL edges carrying a frame_instance_id that was never created.
-        written = await self.command(
-            "UNWIND $rows AS row "
-            "MATCH (c:CHUNK {chunk_id: row.cid}) "
-            "MERGE (fi:FRAME_INSTANCE {id: row.fid}) "
-            "SET fi.frame = row.frame, fi.session_id = row.sid, "
-            "    fi.chunk_id = coalesce(fi.chunk_id, row.cid), "
-            "    fi.match_sim = CASE WHEN row.ms > coalesce(fi.match_sim, 0) "
-            "                        THEN row.ms ELSE fi.match_sim END, "
-            "    fi.role_confidence = CASE WHEN row.rc > coalesce(fi.role_confidence, 0) "
-            "                              THEN row.rc ELSE fi.role_confidence END, "
-            "    fi.polarity = row.pol, fi.modality = row.mod, fi.epistemic = row.epi, "
-            "    fi.hedged = row.hed, fi.voice = row.voi, fi.tense = row.ten, "
-            "    fi.attributed_to = row.att, fi.modality_rules = row.mru, "
-            "    fi.lvc = row.lvc "
-            "MERGE (fi)-[:FRAME_EVOKED_IN]->(c) "
-            "RETURN count(fi) AS n",
-            rows=inst_rows,
-        )
-        # Only a count we actually read can say "nothing was written" — no result
-        # row at all is an unknown, not a zero, and must not raise a false alarm.
-        # (ArcadeDB returns [{'n': 0}] for the miss; verified against a live db.)
-        if chunk_id and written and not int(written[0].get("n") or 0):
-            logger.warning(
-                "frame instances dropped: chunk %s has no CHUNK vertex, so %d "
-                "FRAME_INSTANCE(s) were not written — the co-role REL edges below "
-                "still carry their frame_instance_id and it resolves to nothing",
-                chunk_id,
-                len(inst_rows),
-            )
-        # Batch 1b: link each instance to its canonical FRAME vertex. Own
-        # command, not folded into batch 1 — batch 1's leading MATCH is already
-        # silent when the CHUNK is missing, and adding a second MATCH there
-        # would drop the whole instance write whenever the FRAME vertex is
-        # absent. Never MERGE the FRAME here: a FRAME minted without its
-        # definition, embedding and BROADER parents is a stub, and an edge into
-        # a stub buys nothing (that is the ingest-path FRAME writer's job).
-        linked = await self.command(
-            "UNWIND $rows AS row "
-            "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
-            "MATCH (f:FRAME {id: row.frame}) "
-            "MERGE (fi)-[:EVOKES]->(f) "
-            "RETURN count(*) AS n",
-            rows=inst_rows,
-        )
-        if linked and int(linked[0].get("n") or 0) < len(inst_rows):
-            logger.info(
-                "frame instances under-linked: chunk %s has %d FRAME_INSTANCE(s) "
-                "but only %d EVOKES edge(s) to a FRAME vertex — the missing FRAME "
-                "vertices mean those instances cannot generalise through the "
-                "BROADER taxonomy",
-                chunk_id,
-                len(inst_rows),
-                int(linked[0].get("n") or 0),
-            )
-        # Batch 2a: MERGE the distinct filler ENTITIES first, on their own.
-        # role_rows is keyed (fid, nn, role), so ONE entity filling TWO roles of a
-        # frame repeats its name_norm — and MERGEing the entity inside the same
-        # UNWIND as the edge creates it twice before the ENTITY[name_norm] UNIQUE
-        # index settles, raising DuplicatedKeyException and failing the caller's
-        # whole document. ("Being_named" with Entity=X and Name=X is exactly this.)
-        # Collapsing on the merge key first makes the edge pass a pure MATCH.
-        if role_rows:
-            # A role edge attaches to an entity the EXTRACTION path already
-            # minted — it never creates one. This used to MERGE, and a MERGE here
-            # invents a node with no type, no confidence and no MENTIONS edge to
-            # any chunk: 624 of 2105 nodes on LoCoMo conv-30 (30%) existed only
-            # because a frame pointed at a span. They are unreachable by any
-            # entity query, they cannot be resolved or merged with anything, and
-            # they reached the generator's fact-sheet as role fillers.
-            #
-            # A span worth a graph node is one the extractor recognised on its
-            # own evidence. If it did not, the frame layer citing it is not extra
-            # knowledge — it is an assertion with no provenance, so the role is
-            # dropped. MATCH, never MERGE.
-            await self.command(
-                "UNWIND $rows AS row "
-                "MATCH (fi:FRAME_INSTANCE {id: row.fid}) "
-                "MATCH (e:ENTITY {name_norm: row.nn}) "
-                "MERGE (fi)-[:PLAYS_ROLE {role: row.role}]->(e)",
-                rows=role_rows,
-            )
-        # Batch 2b: co-role entity adjacency (see the docstring). MATCH, never
-        # MERGE, on the endpoints — same rule as the role edges: a filler the
-        # extractor never minted does not get invented here.
-        if rel_rows:
-            # Same evidence append as write_relation (see the contract in both
-            # docstrings). chunk_id is constant across rel_rows, so one
-            # interpolated literal covers the whole UNWIND.
-            # ponytail: forward-only, and the residue is counted at write time,
-            # not surveyed. Namespaces ingested before this keep their empty
-            # `evidence` until re-ingest (backfill is one Cypher pass:
-            # MATCH (fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c), (a)-[r:REL]->(b)
-            # WHERE r.frame_instance_id = fi.id SET r.evidence = collect(c.chunk_id)),
-            # and a graph-wide "unsourced by either route" census belongs in the
-            # flush return dict, which lives outside this package.
-            frame_key_sql = ", ".join(
-                f"{column}: {field}" for column, field in _FRAME_REL_KEY.items()
-            )
-            await self.command(
-                "UNWIND $rows AS row "
-                "MATCH (a:ENTITY {name_norm: row.h}) "
-                "MATCH (b:ENTITY {name_norm: row.t}) "
-                # polarity/modality are part of the MERGE key for the same reason
-                # they are part of the instance's content hash: without them a
-                # fact and its denial are one edge, and the later write silently
-                # wins. This is the §6.6 dedup key minus the temporal bucket.
-                # Built from _FRAME_REL_KEY so the entity-merge repair replays a
-                # projected edge under the very key written here.
-                f"MERGE (a)-[r:REL {{predicate: row.p, {frame_key_sql}}}]->(b) "
-                "SET r.source = 'frame', r.is_current = true, "
-                "    r.canonical_predicate = row.cp, r.frame = row.f, "
-                f"    {_evidence_set(chunk_id)}"
-                "    r.frame_instance_id = row.fid, r.reified = true, r.anchor = 'frame', "
-                "    r.epistemic = row.epi, r.hedged = row.hed",
-                rows=rel_rows,
-            )
-            if not chunk_id:
-                # Residue: no chunk to cite, and batch 1's `MATCH (c:CHUNK ...)`
-                # matched nothing either, so the FRAME_INSTANCE these edges point
-                # at was never written. Unsourced by BOTH routes — count it.
-                logger.warning(
-                    "frame co-role REL edges with no recoverable provenance: %d "
-                    "(no chunk_id, so neither r.evidence nor FRAME_EVOKED_IN)",
-                    len(rel_rows),
-                )
-        # Batch 3: frame-to-frame nesting, the structure a flat role list cannot
-        # hold ("...because my laptop died" as Explanation -> Causation -> Death).
-        # Both endpoints must have been written; a pair naming a dropped instance
-        # is dropped with it rather than pointing at nothing.
-        nest_rows = [
-            {"p": fid_at[p], "role": role, "c": fid_at[c]}
-            for p, role, c in (nesting or [])
-            if p in fid_at and c in fid_at and fid_at[p] != fid_at[c]
-        ]
-        if nest_rows:
-            await self.command(
-                "UNWIND $rows AS row "
-                "MATCH (p:FRAME_INSTANCE {id: row.p}) "
-                "MATCH (c:FRAME_INSTANCE {id: row.c}) "
-                "MERGE (p)-[:FRAME_NESTS {role: row.role}]->(c)",
-                rows=nest_rows,
-            )
-        return len(inst_rows)
+        rows = self._build_frame_instance_rows(instances, known, session_id, chunk_id)
+        self._log_frame_instance_diagnostics(instances, known, rows, chunk_id)
+        if not rows.inst_rows:
+            return 0
+        await self._write_frame_instance_vertices(rows.inst_rows, chunk_id)
+        await self._link_frame_instances_to_frames(rows.inst_rows, chunk_id)
+        await self._write_frame_role_edges(rows.role_rows)
+        await self._write_frame_co_role_edges(rows.rel_rows, chunk_id)
+        await self._write_frame_nesting_edges(nesting, rows.fid_at)
+        return len(rows.inst_rows)
 
     async def write_topics(self, topics: list[dict[str, Any]]) -> int:
         """Upsert TOPIC vertices + IN_TOPIC membership edges.
@@ -2614,13 +2689,17 @@ class GraphStore(ArcadeStoreBase):
         return results
 
     @staticmethod
-    def _chunk_filters(session_id: str | None, state: str | None) -> str:
-        """Optional AND-filter tail for CHUNK queries (interpolated via _sql)."""
+    def _chunk_filters(session_id: str | None, state: str | None, alias: str = "c.") -> str:
+        """Optional AND-filter tail for CHUNK queries (interpolated via _sql).
+
+        ``alias`` is the Cypher pattern variable the tail qualifies; the SQL
+        candidate query selects straight from the type and passes ``""``.
+        """
         parts = []
         if session_id:
-            parts.append(f"c.session_id = {quote(session_id)}")
+            parts.append(f"{alias}session_id = {quote(session_id)}")
         if state:
-            parts.append(f"c.state = {quote(state)}")
+            parts.append(f"{alias}state = {quote(state)}")
         return (" AND " + " AND ".join(parts)) if parts else ""
 
     async def query_entity_chunks(
@@ -2634,6 +2713,12 @@ class GraphStore(ArcadeStoreBase):
 
         Short tokens (< 5 chars) use exact match to avoid substring false
         positives ("war" matching "edward"); longer tokens use CONTAINS.
+
+        Ordered by ``chunk_id`` (FR-032): this collector feeds RRF rank
+        straight from row position, so an unordered ``LIMIT`` let ArcadeDB's
+        storage order — not the query — decide which chunks even reach
+        fusion, and in which order. ``chunk_id`` is the cheapest deterministic
+        key available: already unique, no extra column to compute.
         """
         if not entity_names:
             return []
@@ -2650,7 +2735,8 @@ class GraphStore(ArcadeStoreBase):
         rows = await self.query(
             f"MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
             f"WHERE ({where_entity}){filters} "
-            f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text LIMIT $k",
+            f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text "
+            f"ORDER BY chunk_id LIMIT $k",
             k=top_k,
         )
         return [{"chunk_id": r["chunk_id"], "text": r.get("text", "")} for r in rows]
@@ -2665,14 +2751,26 @@ class GraphStore(ArcadeStoreBase):
     ) -> list[dict[str, Any]]:
         """Return CHUNKs whose text contains the given terms.
 
-        A CONTAINS scan for now; a FULL_TEXT index replaces this in Phase 4.
-        ``require_all=True`` uses AND (all terms must appear); False uses OR.
+        Served by the ``FULL_TEXT`` indexes on ``CHUNK.text`` and
+        ``CHUNK.search_text``: ``CONTAINSTEXT`` is the operator ArcadeDB answers
+        from one (``EXPLAIN`` reports ``FETCH FROM INDEX CHUNK[text]``), where
+        the ``toLower(...) CONTAINS`` predicate this replaces got a bucket scan —
+        the ``toLower()`` wrapper alone defeated any index. SQL rather than
+        Cypher because ArcadeDB's openCypher dialect has no ``CONTAINSTEXT``; the
+        full-text analyser folds case on both sides, so dropping ``toLower()``
+        costs nothing. ``require_all=True`` uses AND (all terms must appear);
+        False uses OR.
 
-        Scans ``search_text`` — ``text`` prefixed with the speaker — so a query
+        Searches ``search_text`` — ``text`` prefixed with the speaker — so a query
         naming a person reaches utterances that never name them ("I'm opening a
         dance studio" is about Gina and says so nowhere). ``text`` stays in the
         predicate as a fallback: chunks written before ``search_text`` existed
-        have it unset, and a bare CONTAINS on a null would silently drop them.
+        have it unset, and matching a null would silently drop them.
+
+        Ordered by ``chunk_id`` (FR-032): this is the OR-pool the BM25 channel
+        re-ranks in Python, but an unordered ``LIMIT`` decided which chunks made
+        the pool at all before the re-rank ever saw them, off ArcadeDB's storage
+        order rather than the query.
         """
         if not terms:
             return []
@@ -2681,15 +2779,14 @@ class GraphStore(ArcadeStoreBase):
             return []
         op = " AND " if require_all else " OR "
         text_where = op.join(
-            f"(toLower(c.search_text) CONTAINS '{t.lower()}' "
-            f"OR toLower(c.text) CONTAINS '{t.lower()}')"
-            for t in safe
+            f"(search_text CONTAINSTEXT '{t}' OR text CONTAINSTEXT '{t}')" for t in safe
         )
-        filters = self._chunk_filters(session_id, state)
-        rows = await self.query(
-            f"MATCH (c:CHUNK) WHERE ({text_where}){filters} "
-            f"RETURN c.chunk_id AS chunk_id, c.text AS text LIMIT $k",
-            k=top_k,
+        filters = self._chunk_filters(session_id, state, alias="")
+        rows = await self._c.query(
+            self._db,
+            f"SELECT chunk_id, text FROM CHUNK WHERE ({text_where}){filters} "  # nosec B608
+            f"ORDER BY chunk_id LIMIT {int(top_k)}",
+            language="sql",
         )
         return [{"chunk_id": r["chunk_id"], "text": r.get("text", "")} for r in rows]
 
@@ -2703,6 +2800,10 @@ class GraphStore(ArcadeStoreBase):
         """CHUNKs linked to TEMPORAL nodes matching the given ISO dates.
 
         Exact match per date; 4-digit years also prefix-match ``YYYY-``.
+
+        Ordered by ``chunk_id`` (FR-032): same deterministic-``LIMIT`` reasoning
+        as ``query_entity_chunks`` — this collector's rank feeds RRF straight
+        from row position.
         """
         dates = [sanitize(str(d).strip()) for d in iso_dates if str(d).strip()]
         if not dates:
@@ -2718,7 +2819,7 @@ class GraphStore(ArcadeStoreBase):
             f"MATCH (c:CHUNK)-[:MENTIONS_DATE]->(d:TEMPORAL) "
             f"WHERE ({where_iso}){filters} "
             f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text, d.date AS date "
-            f"LIMIT $k",
+            f"ORDER BY chunk_id LIMIT $k",
             k=top_k,
         )
         return [
@@ -2742,8 +2843,10 @@ class GraphStore(ArcadeStoreBase):
         what we are looking for — chunks that mention the subject AND carry a
         TEMPORAL edge are exactly the dated evidence about it.
 
-        Ordered by how many of the query's entities a chunk mentions, so a chunk
-        naming both subjects of a question outranks one naming either.
+        Ordered by ``chunk_id`` (FR-032), not by how many of the query's
+        entities a chunk mentions — the query returns no such count, and this
+        collector's rank feeds RRF straight from row position, so an
+        unordered ``LIMIT`` let ArcadeDB's storage order pick the winners.
         """
         safe = [sanitize(n) for n in entity_names if n]
         if not safe:
@@ -2763,7 +2866,7 @@ class GraphStore(ArcadeStoreBase):
             f"WITH c "
             f"MATCH (c)-[:MENTIONS_DATE]->(d:TEMPORAL) "
             f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text, d.date AS date "
-            f"LIMIT $k",
+            f"ORDER BY chunk_id LIMIT $k",
             k=top_k,
         )
         return [
@@ -3832,18 +3935,20 @@ class GraphStore(ArcadeStoreBase):
         # replay must not drop an edge for arriving unsourced.
         for cid in evidence or [""]:
             await self.write_relation(
-                src_name,
-                predicate,
-                dst_name,
-                fact=fact,
-                chunk_id=cid,
-                confidence=conf,
-                valid_at=valid_at,
-                source=source,
-                verifier_score=vscore,
-                is_current=current,
-                invalid_at=row.get("invalid_at"),
-                merge_key=key,
+                RelationWrite(
+                    src_name,
+                    predicate,
+                    dst_name,
+                    fact=fact,
+                    chunk_id=cid,
+                    confidence=conf,
+                    valid_at=valid_at,
+                    source=source,
+                    verifier_score=vscore,
+                    is_current=current,
+                    invalid_at=row.get("invalid_at"),
+                    merge_key=key,
+                )
             )
         await self._carry_rel_columns(src_name, predicate, dst_name, row, merge_key=key)
         # frame_instance_id is carried above, so a frame edge with no evidence is

@@ -14,7 +14,10 @@ import logging
 import os
 import time
 from collections import defaultdict, deque
-from typing import Any
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, nullcontext
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -30,7 +33,10 @@ from graphknows.ingestion.parsers.text import (
     strip_content_heading,
 )
 from graphknows.models.ingest import IngestResult
-from graphknows.symbolic import match
+from graphknows.storage.arcadedb.graph_store import RelationWrite
+
+if TYPE_CHECKING:
+    from graphknows.settings import GraphKnowsSettings
 
 log = logging.getLogger("graphknows.ingestion.stm.ingest")
 
@@ -188,12 +194,9 @@ def _group_ranking_enabled() -> bool:
     Read at call time so the eval A/B can flip it per subprocess, matching
     ``GRAPHKNOWS_FRAME_SRL``. Delete the knob once the arm has decided it.
     """
-    return os.environ.get("GRAPHKNOWS_RELATION_GROUP_RANKING", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    from graphknows.settings import get_settings
+
+    return get_settings().relation_group_ranking
 
 
 def _entities_from(entities: list[dict[str, Any]], offset: int) -> list[dict[str, Any]]:
@@ -242,136 +245,6 @@ def _attributed(
     return kept
 
 
-def _curated_alias_candidate(
-    key: str, coarse_aliases: dict[str, str], classes: list[Any], label_index: dict[str, str]
-) -> tuple[dict[str, str] | None, bool]:
-    """The curated-alias resolution for ``_lexical_candidates`` rule 1.
-
-    Returns ``(result, abstain)``: ``result`` is the resolved ``{label: uri}``
-    candidate when the alias's target class exists, or ``None`` when there is
-    no alias for ``key`` or it did not resolve (caller falls through to the
-    normal lexical build in either ``None`` case). ``abstain`` is ``True``
-    only for a deliberate empty-string mapping, telling the caller to return
-    ``{}`` outright rather than fall through.
-    """
-    if key not in coarse_aliases:
-        return None, False
-    mapped = coarse_aliases[key]
-    if not mapped:
-        return None, True
-    uri = label_index.get(mapped.casefold())
-    if not uri:
-        uri = next((t.uri for t in classes if t.label.casefold() == mapped.casefold()), "")
-    return ({mapped: uri} if uri else None), False
-
-
-def _lexical_candidates(
-    entity_type: str,
-    classes: list[Any],
-    label_index: dict[str, str],
-    lex_index: dict[str, set[str]] | None,
-    scheme: dict[str, Any] | None,
-    coarse_aliases: dict[str, str],
-) -> dict[str, str]:
-    """``{label: uri}`` candidates for ``entity_type``, from lexical evidence only.
-
-    The anchor law: a grounding candidate may come ONLY from a lexical hit — the
-    exact-label index (``label_index``) or, when built, the SKOS altLabel index
-    (``lex_index``, prefLabel resolved back to a uri via ``scheme`` / ``classes``).
-    Cosine is never consulted here; it may only RANK what this returns.
-
-    Two rules on top of that, in order:
-
-    1. A CURATED alias wins when its target class exists in the loaded
-       ontology. The overlay's ``coarseAliases`` block already says what each
-       of the extractor's guaranteed coarse types (``labels.COARSE``) MEANS in
-       CCO terms — a human curated this, so it is the answer and nothing else
-       is even looked up. A mapped empty string is a deliberate abstention
-       (e.g. ``entity``: untypeable), not a miss. But the alias block is
-       CCO-authored and independent of which base ontology ``GRAPHKNOWS_ONTOLOGY``
-       loads; when the mapped label names no class here, that is not an
-       abstention — fall through to the normal lexical build below so a
-       non-CCO ontology keeps its own exact-label typing.
-    2. A FRAGMENT may not anchor. ``skos.lexicalize`` turns every content word
-       of a class label into a standalone altLabel, so ``lex_index`` can offer
-       a class whose label merely CONTAINS ``entity_type`` as one word among
-       several ("product" -> "Product Transport Facility"). Kept only when
-       every content word of the candidate label is also a content word of
-       ``entity_type`` — the same STRONG-match rule ``lexical.evoked`` applies,
-       for the same reason: one word of a multi-word label is not the
-       ontology's term, it is one of its words. The exact-label branch is
-       exempt: an exact match already names the whole class.
-    """
-    key = entity_type.casefold()
-    alias_result, abstain = _curated_alias_candidate(key, coarse_aliases, classes, label_index)
-    if abstain:
-        return {}
-    if alias_result is not None:
-        return alias_result
-    candidates: dict[str, str] = {}
-    if uri := label_index.get(key):
-        label = next((t.label for t in classes if t.uri == uri), entity_type)
-        candidates[label] = uri
-    if lex_index is not None:
-        from graphknows.symbolic.ontology.skos import content_tokens
-
-        wanted = set(content_tokens(entity_type))
-        for pref in lex_index.get(key, ()):
-            concept = scheme.get(pref) if scheme is not None else None
-            pref_tokens = set(concept.tokens) if concept is not None else set(content_tokens(pref))
-            if not pref_tokens <= wanted:
-                continue
-            uri2 = concept.uri if concept is not None else ""
-            if not uri2:
-                uri2 = next((t.uri for t in classes if t.label.casefold() == pref.casefold()), "")
-            if uri2:
-                candidates.setdefault(pref, uri2)
-    return candidates
-
-
-def _resolve_candidate(
-    entity_type: str, candidates: dict[str, str], index: Any
-) -> tuple[str, str, float, str]:
-    """``(uri, label, score, matcher)`` for an already-anchored candidate set.
-
-    One candidate is the answer at score 1.0 (``"lexical"``): the existing
-    exact-label behaviour, and ``index`` (an ``OntologyIndex``-shaped object)
-    is not touched at all in that case — its embedding matrix may not even
-    exist yet, and a single-candidate lookup has no cosine step to need it.
-    Several candidates are ranked by embedding ``entity_type`` once and reading
-    each candidate's own definition embedding straight off ``index`` — never a
-    full-vocabulary cosine pass, since the candidate set is already anchored
-    and cannot gain a uri the lexical stage did not already offer — then
-    resolved by :func:`graphknows.symbolic.match.accept` (``"lexical+cosine"``).
-    An empty set is the abstention: ``("", "", 0.0, "")``.
-    """
-    if not candidates:
-        return "", "", 0.0, ""
-    if len(candidates) == 1:
-        ((label, uri),) = candidates.items()
-        return uri, label, 1.0, "lexical"
-    from graphknows.storage.embedder import embed_one
-
-    v = np.asarray(embed_one(entity_type), dtype=np.float32).ravel()
-    norm = float(np.linalg.norm(v))
-    if norm == 0.0:
-        return "", "", 0.0, ""
-    v = v / norm
-    sim_of = {
-        uri: float(np.dot(v, term_vec))
-        for uri in candidates.values()
-        if (term_vec := index.term_embedding(uri))
-    }
-    order = sorted(sim_of, key=lambda u: sim_of[u], reverse=True)
-    matched_uri, score = match.accept(
-        order, sim_of, floor=_ONT_CLASS_MIN_SIM, floor_single=_ONT_CLASS_MIN_SIM, margin=0.0
-    )
-    if not matched_uri:
-        return "", "", 0.0, ""
-    label = next(lbl for lbl, u in candidates.items() if u == matched_uri)
-    return matched_uri, label, score, "lexical+cosine"
-
-
 def _decoded_instances(frames: list[dict[str, Any]]) -> list[Any]:
     """``ExtractionResult.frames`` as frame instances, filled, with no model run.
 
@@ -393,6 +266,32 @@ def _decoded_instances(frames: list[dict[str, Any]]) -> list[Any]:
         )
         for filled in frames
     ]
+
+
+@dataclass(frozen=True)
+class ExtractedChunk:
+    """One :meth:`_STMIngestHandler._write_extracted` call's fields, bundled.
+
+    A single chunk's CHUNK row plus everything already computed upstream for
+    it — entities/relations, temporal facts, ontology classes, frame triggers.
+    """
+
+    session_id: str
+    file_id: str
+    chunk_id: str
+    text: str
+    seq: int
+    kind: str
+    speaker: str
+    ts: str
+    embedding: list[float]
+    extraction: ExtractionResult
+    temporal: list[dict[str, str]]
+    memory_class: str
+    search_text: str = ""
+    ontology_classes: list[tuple[str, float]] | None = None
+    srl_hits: list[Any] | None = None
+    decode_state: str = ""
 
 
 class _STMIngestHandler:
@@ -422,7 +321,15 @@ class _STMIngestHandler:
         enable_frames: bool = False,
         ontology_index: Any | None = None,
         relation_index: Any | None = None,
+        settings: GraphKnowsSettings | None = None,
     ) -> None:
+        from graphknows.settings import get_settings
+
+        # The instance the caller was built with, not a fresh read of the
+        # environment: an explicit ``Memory(settings=s)`` must win. Only a
+        # caller that hands none (a bare STMService in tests) falls back to
+        # the process accessor.
+        self._settings = settings if settings is not None else get_settings()
         self._store = store
         self._extractor = extractor
         self._enable_frames = enable_frames
@@ -435,19 +342,9 @@ class _STMIngestHandler:
         # returns nonsense (LOCATION -> Organization, ANIMAL -> Goal), so types
         # are matched against the class DEFINITIONS by embedding instead.
         self._property_mapper: Any = None
-        self._uri_by_label: dict[str, str] = {}
-        self._type_cache: dict[str, tuple[str, str, float, str]] = {}
-        # The grounding provenance block's "version" field falls back to this
-        # configured string only when the loaded index has no digest, so a
-        # grounding edge is never written with an empty version. The primary
-        # value is ``self._ontology.digest`` — a content hash over every
-        # term's uri/label/definition — not this file path: two loads of the
-        # same path can carry different content after an ontology upgrade,
-        # and the digest is what makes that visible.
-        self._ontology_source: str = ""
-        # Entity type -> RELATION-profile class, memoised the same way and kept
-        # separate: the two vocabularies are the same file by default but need
-        # not be, and a type resolves against each independently.
+        # Entity type -> RELATION-profile class, memoised per type string:
+        # types repeat across every chunk, so this costs one embedding per
+        # DISTINCT ambiguous type in the corpus.
         self._profile_class_cache: dict[str, tuple[str, float]] = {}
         # Built on first use from the loaded ontology, then reused: the schema is
         # the same for every chunk, and rebuilding it per chunk would re-scan the
@@ -458,9 +355,7 @@ class _STMIngestHandler:
         # leaves at most that many strings behind. Read here rather than beside
         # the ontology settings below, because the window is independent of
         # whether an ontology is configured.
-        from graphknows.settings import GraphKnowsSettings as _Settings
-
-        _cfg = _Settings()
+        _cfg = self._settings
         self._extract_window: int = _cfg.extract_window
         self._window_overlap: int = _cfg.extract_overlap
         self._window_chunks: bool = _cfg.window_chunks
@@ -471,6 +366,10 @@ class _STMIngestHandler:
         # chunking a turn does not get its own chunk; it joins the next window,
         # which is emitted every ``_chunk_stride`` turns.
         self._since_emit: dict[str, int] = {}
+        # Whether any turn folded into the pending window asked to be extracted.
+        # The emitted chunk carries those turns' text, so it must carry their
+        # extract/skip decision too -- not just the emitting turn's.
+        self._pending_infer: dict[str, bool] = {}
         # Chunks actually written, so the service can report the real count
         # instead of assuming one per message.
         self._chunks_written: int = 0
@@ -518,11 +417,10 @@ class _STMIngestHandler:
         self._corpus_seen: list[str] = []
         self._lex_frozen: bool = False
         # Corpus size the lexical index was last built at. `_ensure_scheme` is
-        # now called both once per chunk (`_lexical_labels`) and once per
-        # distinct-type cache miss (`_map_to_class`); without this guard every
-        # one of those calls would re-run `build_index` — a full spaCy
-        # re-parse of the corpus — even though the corpus has not grown since
-        # the last build this same chunk.
+        # called from both `_lexical_labels` and `_match_classes` per chunk;
+        # without this guard every one of those calls would re-run
+        # `build_index` — a full spaCy re-parse of the corpus — even though
+        # the corpus has not grown since the last build this same chunk.
         self._lex_built_at: int = -1
         # rdfs:domain / rdfs:range per property label (both multi-valued), and
         # each class's parent chain. These are the ingredients of BOTH halves of
@@ -544,12 +442,8 @@ class _STMIngestHandler:
         # ``GraphKnowsSettings.ontology_hint_min_sim`` for the measurement.
         self._hint_min_sim: float = 0.0
         if ontology_index is not None:
-            from graphknows.settings import GraphKnowsSettings
-
-            settings = GraphKnowsSettings()
+            settings = self._settings
             self._hint_min_sim = settings.ontology_hint_min_sim
-            self._ontology_source = settings.ontology_source
-            self._uri_by_label = {t.label.casefold(): t.uri for t in ontology_index.classes}
             if self._relations is None:
                 from graphknows.symbolic.ontology import load_ontology_index
 
@@ -623,7 +517,9 @@ class _STMIngestHandler:
         # writing (no double-clean).
         cleaned_texts = [self._clean_text(seg.text) for seg in parsed.segments]
 
-        use_batch, batch_embeddings = self._precompute_embeddings(cleaned_texts)
+        use_batch, batch_embeddings = await asyncio.to_thread(
+            self._precompute_embeddings, cleaned_texts
+        )
 
         # Bounded chunk-level concurrency. Default 1 (sequential): the
         # ENTITY(name_norm) index is UNIQUE, so concurrent MERGEs of a shared
@@ -673,7 +569,9 @@ class _STMIngestHandler:
         async def _process_chunk(idx: int) -> int:
             seg = parsed.segments[idx]
             clean = cleaned_texts[idx]
-            embedding: list[float] = batch_embeddings[idx] if use_batch else self._embed_fn(clean)
+            embedding: list[float] = (
+                batch_embeddings[idx] if use_batch else await self._aembed(clean)
+            )
             if not infer:
                 extraction = ExtractionResult()
             elif batch_extractions is not None:
@@ -683,22 +581,24 @@ class _STMIngestHandler:
             temporal = self._resolve_temporal(extraction.entities, seg, metadata)
             chunk_id = self._make_chunk_id(session_id, parsed.source_id, seg)
             return await self._write_extracted(
-                session_id=session_id,
-                file_id=parsed.source_id,
-                chunk_id=chunk_id,
-                text=clean,
-                seq=idx,
-                kind="text",
-                speaker="",
-                ts=str(seg.metadata.get("timestamp") or metadata.get("timestamp") or ""),
-                embedding=embedding,
-                extraction=extraction,
-                temporal=temporal,
-                memory_class=seg.metadata.get("memory_class")
-                or metadata.get("memory_class")
-                or "raw_evidence",
-                ontology_classes=ont_classes[idx] if idx < len(ont_classes) else [],
-                srl_hits=batch_srl_hits[idx],
+                ExtractedChunk(
+                    session_id=session_id,
+                    file_id=parsed.source_id,
+                    chunk_id=chunk_id,
+                    text=clean,
+                    seq=idx,
+                    kind="text",
+                    speaker="",
+                    ts=str(seg.metadata.get("timestamp") or metadata.get("timestamp") or ""),
+                    embedding=embedding,
+                    extraction=extraction,
+                    temporal=temporal,
+                    memory_class=seg.metadata.get("memory_class")
+                    or metadata.get("memory_class")
+                    or "raw_evidence",
+                    ontology_classes=ont_classes[idx] if idx < len(ont_classes) else [],
+                    srl_hits=batch_srl_hits[idx],
+                )
             )
 
         async def _run_all() -> tuple[list[int], list[str]]:
@@ -796,24 +696,26 @@ class _STMIngestHandler:
         before = self._decode_failures
         extraction = await asyncio.to_thread(self._extract, text, None, None, speaker)
         failed = self._decode_failures > before
-        embedding = self._embed_fn(text)
+        embedding = await self._aembed(text)
         await self._write_extracted(
-            session_id=session_id,
-            # The CHUNK already carries its PART_OF edge; an empty file_id is
-            # what stops this write from re-asserting one it was not told.
-            file_id="",
-            chunk_id=row["chunk_id"],
-            text=text,
-            seq=int(row.get("seq") or 0),
-            kind=str(stored.get("kind") or "text"),
-            speaker=speaker,
-            ts=ts,
-            embedding=embedding,
-            extraction=extraction,
-            temporal=self._resolve_temporal_entities(extraction.entities, ts or None),
-            memory_class=str(stored.get("memory_class") or "raw_evidence"),
-            ontology_classes=self._match_classes(embedding, text),
-            decode_state="failed" if failed else "ok",
+            ExtractedChunk(
+                session_id=session_id,
+                # The CHUNK already carries its PART_OF edge; an empty file_id is
+                # what stops this write from re-asserting one it was not told.
+                file_id="",
+                chunk_id=row["chunk_id"],
+                text=text,
+                seq=int(row.get("seq") or 0),
+                kind=str(stored.get("kind") or "text"),
+                speaker=speaker,
+                ts=ts,
+                embedding=embedding,
+                extraction=extraction,
+                temporal=self._resolve_temporal_entities(extraction.entities, ts or None),
+                memory_class=str(stored.get("memory_class") or "raw_evidence"),
+                ontology_classes=self._match_classes(embedding, text),
+                decode_state="failed" if failed else "ok",
+            )
         )
         return failed
 
@@ -999,6 +901,28 @@ class _STMIngestHandler:
             merged[idx] = result
         return merged
 
+    def _window_decision(
+        self, session_id: str, infer: bool, last_in_batch: bool
+    ) -> tuple[bool, bool]:
+        """Whether this turn emits the pending window, and under which flag.
+
+        With window chunking a turn does not get its own chunk: it is folded
+        into the window a later turn emits. The emitted chunk carries the folded
+        turns' text, so it carries their extract/skip decision too -- extract
+        when ANY of them asked for it. Taking only the emitting turn's flag is
+        how one trailing ``infer=False`` turn (tool output, a greeting) silenced
+        extraction for everything said before it.
+
+        Returns ``(emit_now, infer_for_the_window)``.
+        """
+        pending = self._since_emit.get(session_id, 0) + 1
+        if pending < self._chunk_stride and not last_in_batch:
+            self._since_emit[session_id] = pending
+            self._pending_infer[session_id] = self._pending_infer.get(session_id, False) or infer
+            return False, infer
+        self._since_emit[session_id] = 0
+        return True, infer or self._pending_infer.pop(session_id, False)
+
     async def ingest_turn(
         self,
         session_id: str,
@@ -1083,11 +1007,9 @@ class _STMIngestHandler:
         # extractor runs once per window instead of once per turn over
         # substantially the same text.
         if self._window_chunks:
-            pending = self._since_emit.get(session_id, 0) + 1
-            if pending < self._chunk_stride and not last_in_batch:
-                self._since_emit[session_id] = pending
+            emit, infer = self._window_decision(session_id, infer, last_in_batch)
+            if not emit:
                 return 0
-            self._since_emit[session_id] = 0
 
         # What is stored, embedded and retrieved. A multi-turn window carries
         # the turns around this one, so a question about a fact stated two turns
@@ -1098,7 +1020,7 @@ class _STMIngestHandler:
         windowed = self._window_chunks and verbatim != clean
         chunk_text = verbatim if windowed else clean
         chunk_surface = verbatim if windowed else surface
-        embedding = self._embed_fn(chunk_surface)
+        embedding = await self._aembed(chunk_surface)
         # Same ontology steering as the chunk path — the chunk's own embedding
         # selects the candidate entity labels, so no extra embedding call.
         ent_hints = self._label_hints([embedding])
@@ -1160,23 +1082,25 @@ class _STMIngestHandler:
         ).hexdigest()[:16]
         self._chunks_written += 1
         return await self._write_extracted(
-            session_id=session_id,
-            file_id=file_id,
-            chunk_id=chunk_id,
-            text=chunk_text,
-            seq=seq,
-            kind="turn",
-            speaker=speaker or role,
-            search_text=chunk_surface,
-            # The same anchor the relative dates resolve against is what dates
-            # the chunk at retrieval. Until now nothing populated CHUNK.ts, so
-            # the column was written, indexed and selected as "" everywhere.
-            ts=str(anchor or ""),
-            embedding=embedding,
-            extraction=extraction,
-            temporal=temporal,
-            memory_class=metadata.get("memory_class") or "raw_evidence",
-            ontology_classes=self._match_classes(embedding, chunk_text) if infer else [],
+            ExtractedChunk(
+                session_id=session_id,
+                file_id=file_id,
+                chunk_id=chunk_id,
+                text=chunk_text,
+                seq=seq,
+                kind="turn",
+                speaker=speaker or role,
+                search_text=chunk_surface,
+                # The same anchor the relative dates resolve against is what dates
+                # the chunk at retrieval. Until now nothing populated CHUNK.ts, so
+                # the column was written, indexed and selected as "" everywhere.
+                ts=str(anchor or ""),
+                embedding=embedding,
+                extraction=extraction,
+                temporal=temporal,
+                memory_class=metadata.get("memory_class") or "raw_evidence",
+                ontology_classes=self._match_classes(embedding, chunk_text) if infer else [],
+            )
         )
 
     # ------------------------------------------------------------------
@@ -1201,10 +1125,9 @@ class _STMIngestHandler:
             log.info("Lexical label selection off: the extractor exposes no spaCy pipeline")
             return False
         if self._scheme is None:
-            from graphknows.settings import GraphKnowsSettings
             from graphknows.symbolic.ontology.scheme import load_coarse_aliases, load_scheme
 
-            cfg = GraphKnowsSettings()
+            cfg = self._settings
             self._scheme = load_scheme(cfg.ontology_source, cfg.overlay_source)
             self._coarse_aliases = load_coarse_aliases(cfg.overlay_source)
             self._overlay_index = self._build_overlay_index()
@@ -1323,27 +1246,58 @@ class _STMIngestHandler:
         await self._store.ensure_session(session_id, started_at=str(t0))
         await self._store.ensure_file(file_id=parsed.source_id, session_id=session_id)
 
-    async def _write_extracted(
-        self,
-        *,
-        session_id: str,
-        file_id: str,
-        chunk_id: str,
-        text: str,
-        seq: int,
-        kind: str,
-        speaker: str,
-        ts: str,
-        embedding: list[float],
-        search_text: str = "",
-        extraction: ExtractionResult,
-        temporal: list[dict[str, str]],
-        memory_class: str,
-        ontology_classes: list[tuple[str, float]] | None = None,
-        srl_hits: list[Any] | None = None,
-        decode_state: str = "",
-    ) -> int:
+    async def _frame_payload(
+        self, chunk: ExtractedChunk, filtered: list[dict[str, Any]]
+    ) -> tuple[list[tuple[str, float]], list[dict[str, Any]], Any]:
+        """Everything the frame layers need, computed before any write opens.
+
+        Split out of :meth:`_write_extracted` so the model inference runs
+        OUTSIDE the per-chunk transaction: an ArcadeDB HTTP transaction held
+        open across SRL and frame-instance inference expires server-side, and
+        the write that follows dies with a rollback that cannot find its own
+        transaction.
+
+        Returns the chunk's frame tags, its frame instances and their nesting.
+        """
+        # One parse serves both frame layers when SRL identification is on -- it
+        # is the expensive step, and running it twice per chunk would double it.
+        srl_hits = await self._srl_hits(chunk.text) if chunk.srl_hits is None else chunk.srl_hits
+        if not self._enable_frames:
+            return [], [], None
+
+        from graphknows.symbolic.framenet.index import match_frames
+
+        # Parsed triggers name the frames this chunk actually evokes; the
+        # embedding match only ranks candidates by definition similarity. The
+        # confidence is 1.0 because a trigger is an observation, not a guess --
+        # EVOKED_BY.confidence weights the chunk at query time, so a parsed tag
+        # should outweigh a cosine one.
+        matches = (
+            [(f, 1.0) for f in dict.fromkeys(h.frame for h in srl_hits)]
+            if srl_hits
+            else match_frames(chunk.embedding, top_k=_FRAME_TOP_K, min_sim=_FRAME_MIN_SIM)
+        )
+        # {name.casefold(): type} from this chunk's own already-typed entities --
+        # the type veto's filler type comes from the graph's OWN entity typing,
+        # not a second WordNet lookup.
+        entity_types = {str(e["name"]).casefold(): str(e.get("type", "")) for e in filtered}
+        instances, nesting = await asyncio.to_thread(
+            self._frame_instances,
+            chunk.text,
+            chunk.chunk_id,
+            chunk.speaker,
+            chunk.embedding,
+            srl_hits,
+            entity_types,
+            chunk.extraction.frames,
+        )
+        return matches, instances, nesting
+
+    async def _write_extracted(self, chunk: ExtractedChunk) -> int:
         """Write one chunk's CHUNK + ENTITY/MENTIONS + RELATION + TEMPORAL. Returns entity count.
+
+        Takes its fields bundled in ``chunk`` (an :class:`ExtractedChunk`)
+        rather than as a flat parameter list.
 
         ``srl_hits`` are this chunk's parsed frame triggers when the batch stage
         already has them (``[]`` is a real answer there — no triggers found);
@@ -1353,11 +1307,25 @@ class _STMIngestHandler:
         ``'failed'``); the default leaves it absent, which is every chunk no LLM
         decoder ever saw.
         """
+        session_id = chunk.session_id
+        file_id = chunk.file_id
+        chunk_id = chunk.chunk_id
+        text = chunk.text
+        seq = chunk.seq
+        kind = chunk.kind
+        speaker = chunk.speaker
+        ts = chunk.ts
+        embedding = chunk.embedding
+        search_text = chunk.search_text
+        extraction = chunk.extraction
+        temporal = chunk.temporal
+        memory_class = chunk.memory_class
+        ontology_classes = chunk.ontology_classes
+        decode_state = chunk.decode_state
         filtered = graph_entities(extraction.entities)
         # Definition-described typing (default off). Runs BEFORE the entity write
-        # so a surface only this pass saw is a first-class ENTITY rather than a
-        # dangling INSTANCE_OF, and its result is carried into _link_ontology so
-        # the class it named wins over the embedding guess for that surface.
+        # so a surface only this pass saw is written as a first-class ENTITY
+        # rather than dropped.
         typed = await self._definition_typing(text)
         if typed:
             known = {str(e.get("name", "")).casefold() for e in filtered}
@@ -1376,82 +1344,46 @@ class _STMIngestHandler:
         self._abstentions["untyped_entities"] += sum(
             1 for e in filtered if str(e.get("type") or "").upper() in _UNTYPED_ENTITY_TYPES
         )
-        await self._store.write_chunk(
-            {
-                "chunk_id": chunk_id,
-                "session_id": session_id,
-                "file_id": file_id,
-                "text": text,
-                "search_text": search_text or text,
-                "seq": seq,
-                "kind": kind,
-                "speaker": speaker,
-                "ts": ts,
-                "memory_class": memory_class,
-                "decode_state": decode_state,
-                "embedding": embedding,
-            }
-        )
-        if filtered:
-            await self._store.write_entities_bulk(session_id, chunk_id, filtered)
+        # Everything the writes need is computed FIRST, outside the transaction:
+        # model inference held inside an open ArcadeDB HTTP transaction expires it
+        # server-side on a slow or cold machine (observed in CI, 2026-09-07).
+        matches, instances, nesting = await self._frame_payload(chunk, filtered)
 
-        # Ontology layer — tag the chunk with the classes it evokes and link each
-        # entity to its class. Both are additive: an entity that maps to nothing
-        # keeps its extracted type and is written exactly as before.
-        await self._link_ontology(chunk_id, filtered, ontology_classes or [], typed)
-        await self._link_senses(chunk_id, filtered)
-
-        # FRAME layer — match the chunk's embedding against FrameNet definitions
-        # (top-k + min-sim floor, reusing the embedding already computed above; no
-        # re-embed) so abstract/general questions can reach this chunk by the frame
-        # it evokes. Each FRAME node carries the frame's summary + definition
-        # embedding (copied from the catalog, not recomputed) so the query side can
-        # vector-search the frames evoked in this namespace.
-        # One parse serves both frame layers when SRL identification is on — it is
-        # the expensive step, and running it twice per chunk would double it.
-        srl_hits = await self._srl_hits(text) if srl_hits is None else srl_hits
-
-        tagged_frames: set[str] = set()
-        if self._enable_frames:
-            from graphknows.symbolic.framenet.index import match_frames
-
-            # Parsed triggers name the frames this chunk actually evokes; the
-            # embedding match only ranks candidates by definition similarity. The
-            # confidence is 1.0 because a trigger is an observation, not a guess —
-            # EVOKED_BY.confidence weights the chunk at query time, so a parsed
-            # tag should outweigh a cosine one.
-            matches = (
-                [(f, 1.0) for f in dict.fromkeys(h.frame for h in srl_hits)]
-                if srl_hits
-                else match_frames(embedding, top_k=_FRAME_TOP_K, min_sim=_FRAME_MIN_SIM)
+        # Every write this chunk makes is one unit of work: a failure anywhere
+        # below must not leave a visible CHUNK with no relations, frames or
+        # temporal facts for a reader to mistake for a chunk that had none.
+        async with self._chunk_transaction():
+            await self._store.write_chunk(
+                {
+                    "chunk_id": chunk_id,
+                    "session_id": session_id,
+                    "file_id": file_id,
+                    "text": text,
+                    "search_text": search_text or text,
+                    "seq": seq,
+                    "kind": kind,
+                    "speaker": speaker,
+                    "ts": ts,
+                    "memory_class": memory_class,
+                    "decode_state": decode_state,
+                    "embedding": embedding,
+                }
             )
-            await self._write_frame_tags(chunk_id, matches)
-            tagged_frames = {name for name, _ in matches}
+            if filtered:
+                await self._store.write_entities_bulk(session_id, chunk_id, filtered)
 
-        # FRAME_INSTANCE layer — frame-guided semantic role labeling. Each
-        # trigger in the chunk (a verb group, a nominalisation, or a light-verb
-        # construction) gets its own ranked FrameNet frames (LU lookup,
-        # embedding-ranked) as a GLiNER2 core-FE schema; the role-fillability
-        # gate keeps 0-1 filled instances per trigger. Reuses the extractor's
-        # spaCy + GLiNER2 (no second load); a second GLiNER2 schema pass per
-        # trigger, so only on fact-bearing chunks. Distinct from the FRAME
-        # chunk-tag layer above.
-        if self._enable_frames:
-            # {name.casefold(): type} from this chunk's own already-typed
-            # entities — the type veto's filler type comes from the graph's
-            # OWN entity typing, not a second WordNet lookup.
-            entity_types = {str(e["name"]).casefold(): str(e.get("type", "")) for e in filtered}
-            instances, nesting = await asyncio.to_thread(
-                self._frame_instances,
-                text,
-                chunk_id,
-                speaker,
-                embedding,
-                srl_hits,
-                entity_types,
-                extraction.frames,
-            )
-            if instances:
+            # Ontology layer — tag the chunk with the classes it evokes.
+            await self._link_ontology(chunk_id, ontology_classes or [])
+            await self._link_senses(chunk_id, filtered)
+
+            # FRAME layer — the chunk's evoked frames, matched above.
+            tagged_frames: set[str] = set()
+            if self._enable_frames and matches:
+                await self._write_frame_tags(chunk_id, matches)
+                tagged_frames = {name for name, _ in matches}
+
+            # FRAME_INSTANCE layer — frame-guided semantic role labeling, run above.
+            if self._enable_frames and instances:
                 # An instance whose FRAME vertex does not exist gets no EVOKES
                 # edge, so the fact cannot generalise through the taxonomy.
                 # write_frames is idempotent (MERGE) and skips per-frame
@@ -1473,15 +1405,36 @@ class _STMIngestHandler:
                     session_id, chunk_id, instances, nesting=nesting
                 )
 
-        relation_report = await self._write_relations(extraction, chunk_id, text, speaker)
-        for gate in ("blocked_domain", "blocked_range", "unsupported", "pruned_endpoint"):
-            self._abstentions[gate] += int(relation_report.get(gate, 0))
-        self._abstentions["relations"] += int(relation_report.get("relations", 0))
+            relation_report = await self._write_relations(extraction, chunk_id, text, speaker)
+            for gate in ("blocked_domain", "blocked_range", "unsupported", "pruned_endpoint"):
+                self._abstentions[gate] += int(relation_report.get(gate, 0))
+            self._abstentions["relations"] += int(relation_report.get("relations", 0))
 
-        iso_dates = [t["iso"] for t in temporal if t.get("iso")]
-        if iso_dates:
-            await self._store.write_temporal(chunk_id, iso_dates)
+            iso_dates = [t["iso"] for t in temporal if t.get("iso")]
+            if iso_dates:
+                await self._store.write_temporal(chunk_id, iso_dates)
         return len(filtered)
+
+    @asynccontextmanager
+    async def _chunk_transaction(self) -> AsyncIterator[None]:
+        """Run one chunk's writes inside the store's transaction.
+
+        The rollback is counted and the exception re-raised: a chunk that was
+        thrown away must be visible in ``IngestResult.abstentions``, or the
+        graph is short a chunk and nothing downstream can tell.
+
+        A store that cannot transact (the in-memory doubles the unit tests
+        drive this handler with) writes exactly as it did before.
+        """
+        # Looked up on the class, not the instance: a test double whose
+        # ``__getattr__`` answers everything would hand back a coroutine here.
+        can_transact = hasattr(type(self._store), "transaction")
+        try:
+            async with self._store.transaction() if can_transact else nullcontext():
+                yield
+        except Exception:
+            self._abstentions["chunk_write_rolled_back"] += 1
+            raise
 
     async def _write_relations(
         self, extraction: ExtractionResult, chunk_id: str, text: str, speaker: str = ""
@@ -1550,19 +1503,21 @@ class _STMIngestHandler:
             counts["blocked_range"] += range_blocked
             blocked = domain_blocked or range_blocked
             await self._store.write_relation(
-                rel["head"],
-                rel["relation"],
-                rel["tail"],
-                fact=rel.get("evidence", "") or text,
-                chunk_id=chunk_id,
-                confidence=rel.get("score", 0.5),
-                source=rel.get("source", "gliner"),
-                src_type=rel.get("head_type", ""),
-                dst_type=rel.get("tail_type", ""),
-                ontology_property=ont_property,
-                verifier_score=rel.get("verifier_score"),
-                ontology_blocked=blocked,
-                speaker=speaker,
+                RelationWrite(
+                    rel["head"],
+                    rel["relation"],
+                    rel["tail"],
+                    fact=rel.get("evidence", "") or text,
+                    chunk_id=chunk_id,
+                    confidence=rel.get("score", 0.5),
+                    source=rel.get("source", "gliner"),
+                    src_type=rel.get("head_type", ""),
+                    dst_type=rel.get("tail_type", ""),
+                    ontology_property=ont_property,
+                    verifier_score=rel.get("verifier_score"),
+                    ontology_blocked=blocked,
+                    speaker=speaker,
+                )
             )
 
         return self._report(chunk_id, len(extraction.relations), counts)
@@ -1628,6 +1583,17 @@ class _STMIngestHandler:
             return True, [self._embed_fn(t) for t in texts]
         return False, []
 
+    async def _aembed(self, text: str) -> list[float]:
+        """Embed one text off the event loop.
+
+        ``_embed_fn`` blocks — an HTTP round-trip by default, a loaded model
+        under an override — and every caller here is a coroutine. The batch
+        sibling above stays synchronous and is handed to a thread whole, at its
+        one call site, so a file pays a single hop instead of one per chunk.
+        """
+        embedding: list[float] = await asyncio.to_thread(self._embed_fn, text)
+        return embedding
+
     # ------------------------------------------------------------------
     # Ontology injection (mode-independent; inert when no ontology is set)
     # ------------------------------------------------------------------
@@ -1671,8 +1637,8 @@ class _STMIngestHandler:
         """Ontology classes this chunk evokes, as ``[(uri, sim)]`` for tagging.
 
         These become persisted MATCHES_CLASS edges, which retrieval trusts, so
-        they obey the same anchor law as entity typing (``_lexical_candidates``):
-        the candidate set comes from lexical evidence, cosine only RANKS it.
+        they obey the anchor law: the candidate set comes from lexical
+        evidence, cosine only RANKS it.
         Absolute cosine over CCO's 1437 class definitions is uncalibrated (see
         the docstring of ``catalog.py``: median 0.409, p95 0.493 on real
         conversation) -- on conv-30 every unanchored tag landed in a 0.557-0.590
@@ -1922,8 +1888,8 @@ class _STMIngestHandler:
     def _map_to_profile_class(self, entity_type: str) -> tuple[str, float]:
         """Map an extracted entity type onto a RELATION-profile class: ``(label, score)``.
 
-        Same two stages as :meth:`_map_to_class` — exact label first ("PERSON" ->
-        ``Person``), then the type string embedded against the class definitions
+        Exact label first ("PERSON" -> ``Person``), then the type string
+        embedded against the class definitions
         — but over the RELATION vocabulary's classes, which is where the
         properties' declared domain and range are written. The anchor law does
         not apply here: this class is only ever read for the domain/range
@@ -1956,107 +1922,13 @@ class _STMIngestHandler:
         self._profile_class_cache[entity_type] = result
         return result
 
-    def _map_to_class(self, entity_type: str) -> tuple[str, str, float, str]:
-        """Map a free-text entity type onto an ontology class: ``(uri, label, score, matcher)``.
-
-        The candidate set is built ONLY from lexical evidence — the exact-label
-        index and, once built, the SKOS altLabel index — never from cosine over
-        the whole vocabulary (the anchor law). A single candidate scores 1.0
-        (``matcher="lexical"``, the common case, because the ontology's own
-        labels were injected into the extractor's vocabulary); several are
-        ranked by embedding the type string once and resolved by
-        :func:`graphknows.symbolic.match.accept` (``matcher="lexical+cosine"``).
-        Results are memoised per type string: types repeat across every chunk,
-        so this costs one embedding per DISTINCT ambiguous type in the corpus.
-
-        ``("", "", 0.0, "")`` means unmapped (no lexical candidate at all, the
-        anchor abstention) — and an unmapped entity is still written with its
-        extracted type: this is enrichment, not a filter.
-        """
-        if self._ontology is None or not entity_type:
-            return "", "", 0.0, ""
-        if (hit := self._type_cache.get(entity_type)) is not None:
-            return hit
-        self._ensure_scheme()
-        candidates = _lexical_candidates(
-            entity_type,
-            self._ontology.classes,
-            self._uri_by_label,
-            self._lex_index,
-            self._scheme,
-            self._coarse_aliases,
-        )
-        if not candidates:
-            self._abstentions["unanchored_type"] += 1
-        result = _resolve_candidate(entity_type, candidates, self._ontology)
-        self._type_cache[entity_type] = result
-        return result
-
     async def _link_ontology(
-        self,
-        chunk_id: str,
-        entities: list[dict[str, Any]],
-        ontology_classes: list[tuple[str, float]],
-        typed: dict[str, tuple[str, float]] | None = None,
+        self, chunk_id: str, ontology_classes: list[tuple[str, float]]
     ) -> None:
-        """Write the chunk's MATCHES_CLASS tags and its entities' INSTANCE_OF edges.
-
-        The edge score is THIS entity's confidence in being an instance of THAT
-        class: the extractor's own confidence for the entity times the
-        type->class mapping confidence. The mapping score alone is a property of
-        the (type, class) pair and identical for every entity sharing the type,
-        so on its own it can rank nothing; with the per-entity factor two
-        entities of one class carry different scores.
-        ``typed`` is the definition-described pass's verdict, keyed by casefolded
-        surface. Where it has one it wins, because it read the class DEFINITION
-        against the sentence, while :meth:`_map_to_class` only ever sees the
-        extracted TYPE STRING in isolation — that is the difference that moved
-        ``research`` off OCCUPATION and onto Act. Surfaces it did not type fall
-        through to the existing path unchanged.
-        """
-        if self._ontology is None:
+        """Write the chunk's MATCHES_CLASS tags for the ontology classes it evokes."""
+        if self._ontology is None or not ontology_classes:
             return
-        if ontology_classes:
-            await self._store.write_class_matches(chunk_id, ontology_classes)
-        version = getattr(self._ontology, "digest", "") or self._ontology_source
-        by_norm = {s.casefold(): v for s, v in (typed or {}).items()}
-        mappings: list[dict[str, Any]] = []
-        for ent in entities:
-            name = str(ent.get("name", ""))
-            hit = by_norm.get(name.casefold())
-            if hit and (uri := self._uri_by_label.get(hit[0].casefold())):
-                mappings.append(
-                    {
-                        "name": name,
-                        "uri": uri,
-                        "channel": "ontology",
-                        "version": version,
-                        "matcher": "definition_typing",
-                        "score": hit[1],
-                        "rank": 0,
-                        "chunk_id": chunk_id,
-                        "span": name,
-                    }
-                )
-                continue
-            uri, _label, score, matcher = self._map_to_class(str(ent.get("type", "")))
-            if uri:
-                confidence = float(ent.get("confidence", ent.get("score", 1.0)) or 0.0)
-                mappings.append(
-                    {
-                        "name": name,
-                        "uri": uri,
-                        "channel": "ontology",
-                        "version": version,
-                        "matcher": matcher,
-                        "score": confidence * score,
-                        "rank": 0,
-                        "chunk_id": chunk_id,
-                        "span": name,
-                    }
-                )
-        if mappings:
-            await self._store.write_groundings(mappings)
+        await self._store.write_class_matches(chunk_id, ontology_classes)
 
     async def _link_senses(self, chunk_id: str, entities: list[dict[str, Any]]) -> None:
         """Ground each entity to its WordNet most-frequent-sense (MFS), lazily.
@@ -2088,10 +1960,9 @@ class _STMIngestHandler:
                         "score": score,
                         "rank": 0,
                         "chunk_id": chunk_id,
-                        # ponytail: surface name as span, same convention
-                        # _link_ontology uses; a character offset is the
-                        # upgrade path if two occurrences of one surface in
-                        # a single chunk ever need distinguishing.
+                        # ponytail: surface name as span; a character offset
+                        # is the upgrade path if two occurrences of one
+                        # surface in a single chunk ever need distinguishing.
                         "span": name,
                     }
                 )
@@ -2531,13 +2402,12 @@ class _STMIngestHandler:
         # "Speaker=Yeah", "Cognizer=Wow").
         # Default-off experiment (settings.enable_fe_type_gate): vetoes a role
         # filler whose graph entity type conflicts with the FE's FrameNet
-        # semantic type. Read the same way this file reads other one-off
-        # settings (local import, fresh instance) rather than threaded through
-        # the constructor, so an eval A/B can flip it by environment alone.
-        from graphknows.settings import GraphKnowsSettings
+        # semantic type. Read off the settings instance this handler was built
+        # with, so an eval A/B flips it through ``Memory(settings=...)`` as well
+        # as through the environment.
         from graphknows.symbolic.framenet import fe
 
-        type_gate_on = GraphKnowsSettings().enable_fe_type_gate
+        type_gate_on = self._settings.enable_fe_type_gate
 
         out: list[dict[str, Any]] = []
         kept_offsets: list[int] = []

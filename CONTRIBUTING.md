@@ -37,7 +37,9 @@ scripts/bake_models.py` warms the volume ahead of time.
 
 ## Quality gates
 
-`make ci` is the full local gate and mirrors CI:
+`make ci` is the full local gate and mirrors CI: it runs `scripts/gate.sh`
+(via `make gate`) and then `make build-wheel`. The targets below are the
+narrower quick checks it supersedes:
 
 | Command | Checks |
 | --- | --- |
@@ -49,9 +51,10 @@ scripts/bake_models.py` warms the volume ahead of time.
 
 `make gate` runs the pre-push hook exactly as the hook runs it, both locally
 and in CI: a wider ruff scope (`graphknows evaluation tests`, not just
-`graphknows tests`), plus `bandit` and a 65% coverage floor that `make lint`
-and `make test` above don't cover. `make lint` and `make test` are quick
-local checks, not a substitute for `make gate` before you push.
+`graphknows tests`), plus `mypy --strict`, `bandit`, a dependency audit and a
+65% coverage floor that `make lint` and `make test` above don't cover. `make
+lint` and `make test` are quick local checks, not a substitute for `make gate`
+before you push.
 
 Integration tests need a live ArcadeDB and are excluded from the unit run:
 

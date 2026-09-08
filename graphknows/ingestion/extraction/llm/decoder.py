@@ -258,9 +258,9 @@ class LLMDecoder:
     """
 
     def __init__(self, settings: Any | None = None, *, lm: Any | None = None) -> None:
-        from graphknows.settings import GraphKnowsSettings
+        from graphknows.settings import get_settings
 
-        self._settings = settings if settings is not None else GraphKnowsSettings()
+        self._settings = settings if settings is not None else get_settings()
         self._lm = lm if lm is not None else self._build_lm()
         _register_response_schema(self._lm.model)
         # Pinned, never the ambient adapter: this decoder's call is the only one
@@ -288,7 +288,7 @@ class LLMDecoder:
         model = settings.extraction_model or settings.llm_model
         return build_lm(
             model,
-            api_key=settings.llm_api_key,
+            api_key=settings.llm_api_key.get_secret_value(),
             api_base=settings.llm_api_base,
             temperature=settings.llm_temperature,
             max_tokens=max(settings.llm_max_tokens, 4096),

@@ -37,7 +37,7 @@ from graphknows.ingestion.extraction.entities.extractor import (
 )
 from graphknows.ingestion.extraction.llm.decoder import LLMDecoder
 from graphknows.ingestion.extraction.llm.schema import FrameCandidate
-from graphknows.ingestion.stm.ingest import _STMIngestHandler
+from graphknows.ingestion.stm.ingest import ExtractedChunk, _STMIngestHandler
 from graphknows.settings import GraphKnowsSettings, MemoryMode
 
 pytestmark = pytest.mark.unit
@@ -204,19 +204,21 @@ async def _drive(decoder: Any, results: list[ExtractionResult]) -> _FakeStore:
     handler = _STMIngestHandler(store, extractor=decoder, embed_fn=lambda _text: [0.1])
     for seq, (text, extraction) in enumerate(zip(CHUNKS, results, strict=True)):
         await handler._write_extracted(
-            session_id="s1",
-            file_id="f1",
-            chunk_id=f"chunk-{seq}",
-            text=text,
-            seq=seq,
-            kind="text",
-            speaker="",
-            ts="",
-            embedding=[0.1],
-            extraction=extraction,
-            temporal=[],
-            memory_class="raw_evidence",
-            srl_hits=[],
+            ExtractedChunk(
+                session_id="s1",
+                file_id="f1",
+                chunk_id=f"chunk-{seq}",
+                text=text,
+                seq=seq,
+                kind="text",
+                speaker="",
+                ts="",
+                embedding=[0.1],
+                extraction=extraction,
+                temporal=[],
+                memory_class="raw_evidence",
+                srl_hits=[],
+            )
         )
     return store
 
@@ -254,8 +256,22 @@ def _entities(store: _FakeStore) -> list[dict[str, Any]]:
 
 def _relations(store: _FakeStore) -> list[dict[str, Any]]:
     return [
-        {"head": args[0], "relation": args[1], "tail": args[2], **kwargs}
-        for args, kwargs in store.calls["write_relation"]
+        {
+            "head": write.src_name,
+            "relation": write.predicate,
+            "tail": write.dst_name,
+            "fact": write.fact,
+            "chunk_id": write.chunk_id,
+            "confidence": write.confidence,
+            "source": write.source,
+            "src_type": write.src_type,
+            "dst_type": write.dst_type,
+            "ontology_property": write.ontology_property,
+            "verifier_score": write.verifier_score,
+            "ontology_blocked": write.ontology_blocked,
+            "speaker": write.speaker,
+        }
+        for (write,), _kwargs in store.calls["write_relation"]
     ]
 
 

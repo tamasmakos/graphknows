@@ -19,7 +19,6 @@ Schema: the FRAME vertex/EVOKED_BY edge live in the GraphStore core DDL.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from graphknows.channels._shared import (
@@ -29,15 +28,9 @@ from graphknows.channels._shared import (
     tag_coverage,
 )
 from graphknows.channels.base import Channel, ChannelContext, CollectResult
+from graphknows.settings import get_settings
 
 log = logging.getLogger(__name__)
-
-# A frame evoked in more than this fraction of a session's chunks is saturated:
-# like the conversation participants (see the entity-saturation drop), a generic
-# frame such as ``Activity_ongoing`` matches nearly every chunk, so returning its
-# chunks floods recall with the whole conversation and carries no discriminative
-# signal. Such query-frames are dropped from the join.
-_FRAME_SATURATION_RATIO: float = float(os.environ.get("GRAPHKNOWS_FRAME_SATURATION_RATIO", "0.5"))
 
 
 class FrameChannel(Channel):
@@ -97,6 +90,6 @@ class FrameChannel(Channel):
             field="frame_type",
             coverage=cover,
             total=total,
-            ratio=_FRAME_SATURATION_RATIO,
+            ratio=get_settings().frame_saturation_ratio,
             label="frame",
         )

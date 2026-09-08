@@ -12,8 +12,7 @@ from graphknows.server.mcp._state import get_runtime
 async def corpus_ingest(
     documents: list[dict[str, Any]],
     session_id: str | None = None,
-    namespace: str = "",
 ) -> dict[str, Any]:
     """Ingest a corpus of documents into the long-term knowledge graph."""
-    runtime = await get_runtime(namespace)
+    runtime = await get_runtime()
     return await runtime.corpus_ingest(documents, session_id=session_id)

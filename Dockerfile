@@ -2,7 +2,7 @@
 # product, there is no shipped runtime image, so this is one stage.
 #
 #   docker build -t graphknows:dev .                                  # CPU
-#   docker build --build-arg TORCH_BACKEND=cu128 -t graphknows:dev .  # GPU
+#   docker build --build-arg TORCH_BACKEND=cu126 -t graphknows:dev .  # GPU
 #
 # Measured: 10.1GB (`docker images graphknows:dev`). The old four-stage `dev`
 # target additionally baked every model into the image on top of the same
@@ -25,7 +25,7 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:$PATH"
 
-# CPU wheel by default; --build-arg TORCH_BACKEND=cu128 for the GPU eval
+# CPU wheel by default; --build-arg TORCH_BACKEND=cu126 for the GPU eval
 # workstation. This replaces the old TORCH_INDEX arg: syncing from the lock
 # resolves from uv.lock, and pointing it at an alternate index URL would
 # conflict with --locked below, whereas UV_TORCH_BACKEND is uv's own

@@ -1,8 +1,10 @@
 """Layered entity resolution for the consolidation (flush) path.
 
 Run before ``consolidate_session`` to declutter the golden ENTITY graph. The
-layers are ordered most-confident-first; each re-reads the (shrinking) entity set
-so a later layer sees earlier layers' effects:
+entity table is read ONCE per flush into :class:`_Namespace`, which is pruned in
+place as drops and merges succeed — so a later layer still sees the earlier
+layers' effects without re-reading an unbounded table. The layers are ordered
+most-confident-first:
 
 1. **Junk/hub filter** — DETACH DELETE generic non-referential nouns that SVO
    object extraction emits as junk hub entities ("others", "many", "kind").
@@ -31,6 +33,7 @@ co-occurring emb>=0.92 layer is left as a documented, off-by-default hook (see
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from graphknows.storage.arcadedb.graph_store import _name_norm
@@ -183,42 +186,87 @@ def _standard_canonical(key: str, members: list[dict[str, Any]]) -> dict[str, An
     return _canonical(exact) if exact else _canonical(members)
 
 
-async def _drop_junk(store: Any) -> int:
+@dataclass(slots=True)
+class _Namespace:
+    """One flush's working entity set — fetched once, pruned as layers succeed.
+
+    Every layer used to re-read the whole (unbounded) ENTITY table plus the
+    speaker list to see its predecessors' effects: five table scans per flush.
+    The shrinking set lives here instead, so the reads happen once and the
+    pruning is local.
+    """
+
+    store: Any
+    entities: dict[str, dict[str, Any]]
+    speakers: set[str]
+
+    @classmethod
+    async def load(cls, store: Any) -> _Namespace:
+        """The one read of the entity table and the speaker list per flush."""
+        entities = await store.list_entities()
+        speakers = set(await store.distinct_speakers())
+        return cls(store, {e["name_norm"]: e for e in entities}, speakers)
+
+    @property
+    def persons(self) -> list[dict[str, Any]]:
+        """Live person-like entities — the nickname layer's whole domain."""
+        return [e for e in self.entities.values() if _is_person(e, self.speakers)]
+
+    @property
+    def commons(self) -> list[dict[str, Any]]:
+        """Live common nouns — what the morphological and syntactic layers may merge."""
+        return [
+            e
+            for e in self.entities.values()
+            if not _is_person(e, self.speakers) and not _is_proper(e)
+        ]
+
+    async def drop(self, name_norms: list[str]) -> int:
+        dropped = await self.store.drop_entities(name_norms)
+        for norm in name_norms:
+            self.entities.pop(norm, None)
+        return dropped
+
+    async def merge(self, winner: dict[str, Any], members: list[dict[str, Any]]) -> int:
+        """Merge every member but ``winner`` into it; prune what the store accepted."""
+        merged = 0
+        for m in members:
+            loser = m["name_norm"]
+            if loser == winner["name_norm"]:
+                continue
+            if await self.store.merge_entities(winner["name_norm"], loser):
+                # Mirror the store's roll-up: layer 4 ranks anchors by mentions.
+                winner["mention_count"] = winner.get("mention_count", 0) + m.get("mention_count", 0)
+                self.entities.pop(loser, None)
+                merged += 1
+        return merged
+
+
+async def _drop_junk(ns: _Namespace) -> int:
     """Layer 1 — delete generic non-referential hub entities."""
-    entities = await store.list_entities()
-    junk = [e["name_norm"] for e in entities if e["name_norm"] in _JUNK_ENTITIES]
-    return await store.drop_entities(junk) if junk else 0
+    junk = [name for name in ns.entities if name in _JUNK_ENTITIES]
+    return await ns.drop(junk) if junk else 0
 
 
-async def _merge_standardized(store: Any) -> int:
+async def _merge_standardized(ns: _Namespace) -> int:
     """Layer 2 — collapse morphological (plural) variants of non-person entities."""
-    entities = await store.list_entities()
-    speakers = set(await store.distinct_speakers())
     groups: dict[str, list[dict[str, Any]]] = {}
-    for e in entities:
-        if _is_person(e, speakers) or _is_proper(e):
-            continue  # persons -> nickname layer; other proper nouns never singularized
+    for e in ns.commons:  # persons -> nickname layer; other proper nouns never singularized
         groups.setdefault(_standard_key(e["name"]), []).append(e)
 
     merged = 0
     for key, members in groups.items():
-        if len(members) < 2:
-            continue
-        winner = _standard_canonical(key, members)
-        for m in members:
-            if m["name_norm"] == winner["name_norm"]:
-                continue
-            if await store.merge_entities(winner["name_norm"], m["name_norm"]):
-                merged += 1
+        if len(members) > 1:
+            merged += await ns.merge(_standard_canonical(key, members), members)
     return merged
 
 
 def _parser() -> Any:
     """The shared spaCy pipeline, memoized by :func:`graphknows.nlp.load_spacy_model`."""
     from graphknows.nlp import load_spacy_model
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
 
-    return load_spacy_model(GraphKnowsSettings().spacy_model)
+    return load_spacy_model(get_settings().spacy_model)
 
 
 def _head_key(name: str, nlp: Any) -> str:
@@ -240,7 +288,16 @@ def _head_key(name: str, nlp: Any) -> str:
     a thing and must survive whole, whereas a proper noun in MODIFIER position
     is a possessor whose claim belongs in a relation, not in the node's name.
     """
-    doc = nlp(" ".join(name.split()))
+    return _reduce_to_head(nlp(_parse_text(name)))
+
+
+def _parse_text(name: str) -> str:
+    """The surface handed to spaCy: whitespace-collapsed, otherwise verbatim."""
+    return " ".join(name.split())
+
+
+def _reduce_to_head(doc: Any) -> str:
+    """:func:`_head_key`'s reduction, over an already-parsed doc."""
     head = next((t for t in doc if t.dep_ == "ROOT"), None)
     if head is None or head.pos_ != "NOUN":
         return ""
@@ -251,24 +308,40 @@ def _head_key(name: str, nlp: Any) -> str:
     return reduced.strip()
 
 
-async def _head_groups(store: Any, nlp: Any) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    """Non-person, non-proper entities grouped by (syntactic head, type).
+# ponytail: hard cap on the spaCy parses one flush may spend. The highest-mention
+# names are reduced first; the tail keeps its duplicate nodes until a later flush
+# promotes it. Raise it, or move the reduction to ingest time, if the tail matters.
+_MAX_HEAD_PARSE = 2000
+
+
+def _head_groups(ns: _Namespace, nlp: Any) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """Common-noun entities grouped by (syntactic head, type), at most ``_MAX_HEAD_PARSE``.
 
     Type is part of the key: a Facility "store" and an Organization "store" are
     genuinely different nodes even when spelled alike.
+
+    The docs are produced by ``nlp.pipe`` — one batched parse for the whole
+    flush rather than a fresh pipeline call per distinct name.
     """
-    entities = await store.list_entities()
-    speakers = set(await store.distinct_speakers())
+    candidates = ns.commons
+    if len(candidates) > _MAX_HEAD_PARSE:
+        log.warning(
+            "syntactic head merge capped: parsing %d of %d entities",
+            _MAX_HEAD_PARSE,
+            len(candidates),
+        )
+        candidates = sorted(candidates, key=lambda e: -e.get("mention_count", 0))
+        candidates = candidates[:_MAX_HEAD_PARSE]
+
+    docs = nlp.pipe([_parse_text(str(e["name"])) for e in candidates])
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for e in entities:
-        if _is_person(e, speakers) or _is_proper(e):
-            continue
-        if key := _head_key(str(e["name"]), nlp):
+    for e, doc in zip(candidates, docs, strict=True):
+        if key := _reduce_to_head(doc):
             groups.setdefault((key, str(e.get("type") or "")), []).append(e)
     return groups
 
 
-async def _merge_syntactic_heads(store: Any) -> int:
+async def _merge_syntactic_heads(ns: _Namespace) -> int:
     """Layer 3 — collapse mentions sharing a syntactic head and a type."""
     try:
         nlp = _parser()
@@ -276,20 +349,15 @@ async def _merge_syntactic_heads(store: Any) -> int:
         log.warning("Syntactic entity merge skipped: spaCy unavailable (%s)", exc)
         return 0
 
-    groups = await _head_groups(store, nlp)
     merged = 0
-    for members in groups.values():
+    for members in _head_groups(ns, nlp).values():
         if len(members) < 2:
             continue
         # The shortest surface wins: it carries the fewest of one mention's
         # incidental modifiers, so it reads as the thing rather than an instance
         # of describing it.
         winner = min(members, key=lambda m: (len(str(m["name"])), str(m["name"])))
-        for m in members:
-            if m["name_norm"] == winner["name_norm"]:
-                continue
-            if await store.merge_entities(winner["name_norm"], m["name_norm"]):
-                merged += 1
+        merged += await ns.merge(winner, members)
     if merged:
         log.info("syntactic head merge collapsed %d duplicate mentions", merged)
     return merged
@@ -303,7 +371,7 @@ async def _merge_syntactic_heads(store: Any) -> int:
 _ANCHOR_DOMINANCE = 2
 
 
-async def _merge_nicknames(store: Any) -> int:
+async def _merge_nicknames(ns: _Namespace) -> int:
     """Layer 4 — merge a short person name into its person superstring.
 
     A candidate ``s`` merges into anchor ``l`` when: BOTH are person-like (spaCy
@@ -315,9 +383,8 @@ async def _merge_nicknames(store: Any) -> int:
     split), and both co-occur in the namespace. Merges Mel -> Melanie while
     leaving Caroline (not a prefix) and non-person prefixes untouched.
     """
-    entities = await store.list_entities()
-    speakers = set(await store.distinct_speakers())
-    persons = [e for e in entities if _is_person(e, speakers)]
+    persons = ns.persons
+    anchors_by_prefix = _anchor_buckets(persons)
 
     merged = 0
     for e in persons:  # the short side must itself be person-like
@@ -327,14 +394,8 @@ async def _merge_nicknames(store: Any) -> int:
         anchors = sorted(
             (
                 p
-                for p in persons
-                if p["name_norm"] != s
-                and p["name_norm"].startswith(s)
-                # A malformed "X: utterance" name must never anchor a nickname
-                # merge — "caroline" is a prefix of "caroline: thanks, melanie",
-                # and merging the REAL person into the junk name inverts the
-                # repair layer 4 performs.
-                and ":" not in p["name_norm"]
+                for p in anchors_by_prefix.get(s[:3], ())
+                if p["name_norm"] != s and p["name_norm"].startswith(s)
             ),
             key=lambda p: (p.get("mention_count", 0), len(p["name_norm"])),
             reverse=True,
@@ -346,11 +407,31 @@ async def _merge_nicknames(store: Any) -> int:
             runner_up = anchors[1].get("mention_count", 0)
             if anchor.get("mention_count", 0) < _ANCHOR_DOMINANCE * max(runner_up, 1):
                 continue  # ambiguous between distinct people
-        if not _co_occurs(e, anchor, speakers):
+        if not _co_occurs(e, anchor, ns.speakers):
             continue
-        if await store.merge_entities(anchor["name_norm"], s):
+        if await ns.merge(anchor, [e]):
             merged += 1
     return merged
+
+
+def _anchor_buckets(persons: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Candidate anchors keyed by their first three characters.
+
+    A candidate short name is at least 3 characters and must be a strict prefix
+    of its anchor, so the two always agree on those three characters — the
+    bucket is exact, and it replaces a scan of every person per person (O(P^2))
+    with a lookup into one small bucket.
+
+    A malformed "X: utterance" name never anchors: "caroline" is a prefix of
+    "caroline: thanks, melanie", and merging the REAL person into the junk name
+    inverts the repair this layer performs.
+    """
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for p in persons:
+        norm = p["name_norm"]
+        if len(norm) >= 3 and ":" not in norm:
+            buckets.setdefault(norm[:3], []).append(p)
+    return buckets
 
 
 def _co_occurs(a: dict[str, Any], b: dict[str, Any], speakers: set[str]) -> bool:
@@ -376,11 +457,12 @@ async def resolve_entities(store: Any, session_id: str = "") -> dict[str, int]:
     similarity does not cleanly separate nickname merges from distinct
     co-occurring people (see module docstring).
     """
-    considered = len(await store.list_entities())
-    dropped = await _drop_junk(store)
-    merged_morph = await _merge_standardized(store)
-    merged_head = await _merge_syntactic_heads(store)
-    merged_nick = await _merge_nicknames(store)
+    ns = await _Namespace.load(store)
+    considered = len(ns.entities)
+    dropped = await _drop_junk(ns)
+    merged_morph = await _merge_standardized(ns)
+    merged_head = await _merge_syntactic_heads(ns)
+    merged_nick = await _merge_nicknames(ns)
     merged = merged_morph + merged_head + merged_nick
     log.info(
         "resolve_entities: dropped=%d merged=%d (morphological=%d syntactic=%d nickname=%d)",

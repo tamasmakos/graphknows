@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 from typing import Any
 
@@ -22,6 +21,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on broke
 
     raise BrokenInstallError("The BM25 retrieval channel", "rank-bm25") from exc
 
+from graphknows.bounds import check_top_k
 from graphknows.channels.base import ChannelContext
 from graphknows.ranking.rrf import (
     FUSION_ALPHA,
@@ -29,6 +29,7 @@ from graphknows.ranking.rrf import (
     rrf_score,
 )
 from graphknows.retrieval.models.context import RetrievalContext
+from graphknows.settings import get_settings
 from graphknows.storage.arcadedb.graph_store import GraphStore
 from graphknows.storage.embedder import embed
 from graphknows.temporal import asks_for_a_date, query_date_candidates
@@ -127,24 +128,24 @@ def _declarative_variant(question: str) -> str | None:
 # at radius 2) but HURTS conversational memory, where short turns don't split
 # and the siblings are just context-rot noise (LoCoMo: 0.895 -> 0.814 at radius
 # 1). Enable per-corpus via GRAPHKNOWS_NEIGHBOR_RADIUS.
-_NEIGHBOR_RADIUS: int = int(os.environ.get("GRAPHKNOWS_NEIGHBOR_RADIUS", "0"))
+_NEIGHBOR_RADIUS: int = get_settings().neighbor_radius
 
 # Candidate pool handed to fusion, as a multiple of the caller's top_k with a
 # floor. Retrieve wide, return narrow: fusion can only rank what it was given,
 # and asking each channel for exactly top_k made the pool the same size as the
 # answer. Measured on conv-30 evidence_recall@25 without a reranker: pool=25
 # gives 0.589, pool=100 gives 0.692.
-_POOL_FACTOR: int = int(os.environ.get("GRAPHKNOWS_POOL_FACTOR", "4"))
+_POOL_FACTOR: int = get_settings().pool_factor
 # Query frames considered by the frame re-rank, before the 1-hop expansion. The
 # query's own cosine ranking is noisy past a handful, and every extra frame
 # widens the IN-list of the pool lookup.
-_FRAME_RERANK_TOP_K: int = int(os.environ.get("GRAPHKNOWS_FRAME_RERANK_TOP_K", "8"))
-_MIN_POOL: int = int(os.environ.get("GRAPHKNOWS_MIN_POOL", "100"))
+_FRAME_RERANK_TOP_K: int = get_settings().frame_rerank_top_k
+_MIN_POOL: int = get_settings().min_pool
 
 
 def _max_facts() -> int:
     """Fact-sheet size fed to the generator (default 40, the store's own cap)."""
-    return int(os.environ.get("GRAPHKNOWS_MAX_FACTS", "40"))
+    return get_settings().max_facts
 
 
 def _fact_context_enabled() -> bool:
@@ -153,11 +154,7 @@ def _fact_context_enabled() -> bool:
     Read at call time (not import time) so the eval A/B can flip
     ``GRAPHKNOWS_FACT_CONTEXT`` per MCP-server subprocess.
     """
-    return os.environ.get("GRAPHKNOWS_FACT_CONTEXT", "true").strip().lower() not in (
-        "0",
-        "false",
-        "no",
-    )
+    return get_settings().fact_context
 
 
 class DETRetriever:
@@ -184,6 +181,10 @@ class DETRetriever:
         scope: str = "both",
     ) -> RetrievalContext:
         """Run deterministic recall and return RRF-merged results."""
+        # Bounded here too (FR-030): a direct caller of DETRetriever bypasses
+        # the Memory facade's own check, and top_k multiplies straight into
+        # pool_k below and the store's k_pre = top_k * 20.
+        check_top_k(top_k)
         log.debug(
             "DET retrieve query=%r session=%s scope=%s top_k=%d",
             query,
@@ -241,7 +242,7 @@ class DETRetriever:
             session_id=session_id,
             fused_results=fused,
             search_type="DET",
-            facts=await self._fact_sheet(ctx.words_graph),
+            facts=await self._fact_sheet(ctx),
         )
 
     async def _frame_rerank(
@@ -274,7 +275,7 @@ class DETRetriever:
             frames = sorted(expand_frames(matched, hops=1)) if matched else []
             if not frames:
                 return combined
-            anchors = await self.store.resolve_query_entities(ctx.words_graph)
+            anchors = await ctx.resolve_entities(self.store)
             rows, df, total = await self.store.frame_rank_signals(
                 list(combined), frames, anchors, ctx.session_id or None, ctx.state
             )
@@ -392,7 +393,7 @@ class DETRetriever:
             )
         return rows
 
-    async def _fact_sheet(self, words_graph: list[str]) -> list[str]:
+    async def _fact_sheet(self, ctx: ChannelContext) -> list[str]:
         """Structured fact-sheet (D8) for the query's resolved entities.
 
         Surfaces their typed relations + frame-instance role fills. Soft-fails —
@@ -401,7 +402,7 @@ class DETRetriever:
         if not _fact_context_enabled():
             return []
         try:
-            resolved = await self.store.resolve_query_entities(words_graph)
+            resolved = await ctx.resolve_entities(self.store)
             if not resolved:
                 return []
             # Measured on conv-41 (--no-ingest, identical graph): turning the

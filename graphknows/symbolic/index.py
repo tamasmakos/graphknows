@@ -47,10 +47,10 @@ def cache_key(prefix: str, *parts: str) -> str:
     — otherwise a matrix built under the old encoding is silently reused against
     vectors produced by the new one. See ``storage.embedder._model_suffix``.
     """
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
     from graphknows.storage.embedder import _model_suffix, embed_dim
 
-    s = GraphKnowsSettings()
+    s = get_settings()
     model = re.sub(r"[^A-Za-z0-9._-]", "_", s.embed_model or "local")
     dim = s.embed_dimensions or embed_dim()
     suffix = _model_suffix(s.embed_model or "")

@@ -30,6 +30,10 @@ services:
     volumes:
       - arcadedb_data:/home/arcadedb/databases
     restart: unless-stopped
+    # Above the -Xmx heap, not equal to it: the JVM needs off-heap room for
+    # metaspace and native buffers, and a container OOM-killed at the heap
+    # ceiling loses the healthcheck's failure message along with the process.
+    mem_limit: "${GRAPHKNOWS_ARCADEDB_MEM_LIMIT:-10G}"
     healthcheck:
       # The arcadedb image ships wget, not curl. This window is what turns a
       # stopped database into a startup failure that names it (SC-003).
@@ -44,6 +48,9 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     environment:
+      # The shipped stack is production, so check_production_secrets runs on this
+      # path: a still-default GRAPHKNOWS_ARCADEDB_PASSWORD stops boot (FR-005).
+      GRAPHKNOWS_ENV: "production"
       GRAPHKNOWS_ARCADEDB_URL: "http://arcadedb:2480"
       GRAPHKNOWS_ARCADEDB_USER: "${GRAPHKNOWS_ARCADEDB_USER:-root}"
       GRAPHKNOWS_ARCADEDB_PASSWORD: "${GRAPHKNOWS_ARCADEDB_PASSWORD:-changeme}"
@@ -56,6 +63,9 @@ services:
     # A boot check that failed must stay failed and visible (SC-002), not
     # restart-loop into looking like a slow start.
     restart: "no"
+    # Bounds the extraction models (spaCy, GLiNER2, relex) an unbounded host
+    # would otherwise let this service run away with.
+    mem_limit: "${GRAPHKNOWS_APP_MEM_LIMIT:-6G}"
 
 volumes:
   arcadedb_data:

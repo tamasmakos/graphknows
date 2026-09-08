@@ -25,9 +25,10 @@ resident per process and a forward pass per line.
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Sequence
 from typing import Any
+
+from graphknows.settings import get_settings
 
 log = logging.getLogger(__name__)
 
@@ -43,17 +44,6 @@ MAX_DEFINITION: int = 140
 # same span.
 DEFAULT_THRESHOLD: float = 0.4
 
-# base, not large. Measured on eight conversational lines against the same
-# 13-label CCO schema: base is 784 ms/line to large's 2574 (3.3x), types MORE
-# surfaces (19 vs 17), and wins the two clearest semantic calls outright —
-# "charity race" as an Act (0.93) where large says Organization (0.46), and
-# "fashion internship" as an Occupation Role (0.78) where large says
-# Organization (0.42). Large is better on a couple ("dance studio" as a
-# Facility) but not enough to buy at triple the ingest cost, and the prototype's
-# 22/26 typing result was measured on base too. `GRAPHKNOWS_TYPING_MODEL`
-# switches it; both are baked into the image.
-_DEFAULT_MODEL = "fastino/gliner2-base-v1"
-
 
 def typing_enabled() -> bool:
     """Whether the definition-described typing pass runs (default off).
@@ -61,22 +51,7 @@ def typing_enabled() -> bool:
     Read at call time so an eval A/B can flip it per subprocess, matching
     ``GRAPHKNOWS_FRAME_SRL`` and ``GRAPHKNOWS_RELATION_GROUP_RANKING``.
     """
-    return os.environ.get("GRAPHKNOWS_DEFINITION_TYPING", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
-
-
-def model_id() -> str:
-    """The typing model's id — read by the ingest path and by the bake script."""
-    return os.environ.get("GRAPHKNOWS_TYPING_MODEL", _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
-
-
-def _device() -> str | None:
-    """``GRAPHKNOWS_TYPING_DEVICE`` override, mirroring the relex/SRL knobs."""
-    return os.environ.get("GRAPHKNOWS_TYPING_DEVICE", "").strip() or None
+    return get_settings().definition_typing
 
 
 def _load() -> Any:
@@ -85,11 +60,16 @@ def _load() -> Any:
     if _model is None:
         from gliner2 import GLiNER2
 
+        settings = get_settings()
         t0 = __import__("time").monotonic()
-        _model = GLiNER2.from_pretrained(model_id())
-        if device := _device():
+        _model = GLiNER2.from_pretrained(settings.typing_model)
+        if device := settings.typing_device.strip():
             _model = _model.to(device)
-        log.info("typing model %s loaded in %.1fs", model_id(), __import__("time").monotonic() - t0)
+        log.info(
+            "typing model %s loaded in %.1fs",
+            settings.typing_model,
+            __import__("time").monotonic() - t0,
+        )
     return _model
 
 

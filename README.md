@@ -69,7 +69,7 @@ docker compose up -d arcadedb
 > use into a compose named volume, so a rebuild never re-downloads gigabytes of
 > weights; the NLTK corpora still need baking ahead of time as above.
 > `python scripts/bake_models.py` warms the volume. CPU by default; for a GPU host:
-> `docker compose build --build-arg TORCH_BACKEND=cu128`.
+> `docker compose build --build-arg TORCH_BACKEND=cu126`.
 > See [.env.example](https://github.com/tamasmakos/graphknows/blob/main/.env.example) and [docs/configuration.md](https://github.com/tamasmakos/graphknows/blob/main/docs/configuration.md).
 
 ## Quickstart

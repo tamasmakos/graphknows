@@ -42,6 +42,7 @@ import pytest
 
 from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 from graphknows.ingestion.stm.ingest import _STMIngestHandler
+from graphknows.storage.arcadedb.graph_store import RelationWrite
 from graphknows.symbolic.ontology.catalog import load_ontology_index
 
 PERSONAL_TTL = Path(__file__).resolve().parents[1] / "fixtures" / "ontology" / "personal.ttl"
@@ -80,8 +81,16 @@ class _FakeStore:
     async def write_temporal(self, chunk_id, iso_dates) -> None:
         self.temporal.append((chunk_id, iso_dates))
 
-    async def write_relation(self, head, relation, tail, **kwargs: Any) -> None:
-        self.relations.append({"head": head, "relation": relation, "tail": tail, **kwargs})
+    async def write_relation(self, write: RelationWrite) -> None:
+        self.relations.append(
+            {
+                "head": write.src_name,
+                "relation": write.predicate,
+                "tail": write.dst_name,
+                "ontology_property": write.ontology_property,
+                "ontology_blocked": write.ontology_blocked,
+            }
+        )
 
     def annotated(self) -> dict[tuple[str, str], str]:
         """``(head, tail) -> ontology_property`` for every written relation."""

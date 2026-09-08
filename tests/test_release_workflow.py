@@ -228,6 +228,44 @@ def test_release_attaches_a_self_contained_deployment_bundle() -> None:
     assert "$BUNDLE" in text, f"{RELEASE}: the assembled bundle is never uploaded"
 
 
+def test_stack_job_builds_and_runs_acceptance() -> None:
+    """The `stack` job must build `deploy/Dockerfile`, bring `deploy/compose.yaml`
+    up with `--wait`, run `deploy/acceptance.sh` against the running stack, tear
+    it down unconditionally, and `publish` must not run until it has succeeded
+    (FR-004, SC-003)."""
+    text = _release_text()
+    stack_match = re.search(
+        r"^  stack:\n(.*?)(?=^  \S[^\n]*:\n|\Z)", text, re.MULTILINE | re.DOTALL
+    )
+    assert stack_match is not None, f"{RELEASE}: no `stack` job found"
+    stack_block = stack_match.group(1)
+
+    assert re.search(r"docker compose -f deploy/compose\.yaml build", stack_block), (
+        f"{RELEASE}: `stack` job never builds deploy/Dockerfile via `docker compose ... build`"
+    )
+    assert re.search(r"docker compose -f deploy/compose\.yaml up .*--wait", stack_block), (
+        f"{RELEASE}: `stack` job does not bring the stack up with `--wait`"
+    )
+    assert "deploy/acceptance.sh" in stack_block, (
+        f"{RELEASE}: `stack` job never runs deploy/acceptance.sh against the running stack"
+    )
+    assert re.search(
+        r"if:\s*always\(\).*?docker compose -f deploy/compose\.yaml down",
+        stack_block,
+        re.DOTALL,
+    ), f"{RELEASE}: `stack` job does not unconditionally (`if: always()`) tear the stack down"
+
+    publish_match = re.search(
+        r"^  publish:\n(.*?)(?=^  \S[^\n]*:\n|\Z)", text, re.MULTILINE | re.DOTALL
+    )
+    assert publish_match is not None, f"{RELEASE}: no `publish` job found"
+    needs_match = re.search(r"^\s*needs:\s*(.+)$", publish_match.group(1), re.MULTILINE)
+    assert needs_match is not None and "stack" in needs_match.group(1), (
+        f"{RELEASE}: `publish` does not `needs:` the `stack` job — a failing stack run would "
+        "not block publishing before an asset is attached"
+    )
+
+
 def test_has_its_own_non_cancelling_concurrency_group() -> None:
     """The release run must use its own concurrency group (not CI's) with
     cancellation off, so a superseded run never cancels an actual publish."""

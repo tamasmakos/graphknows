@@ -36,13 +36,11 @@ VERIFIER_ENCODER = "microsoft/deberta-v3-base"
 
 def _model_ids() -> dict[str, str]:
     """Resolve every model id from the code that owns it — never hardcoded here."""
-    from graphknows.ingestion.extraction.entities.gliner_model import _RELEX_MODEL
-    from graphknows.ingestion.extraction.entities.typing_model import model_id as _typing_model
     from graphknows.settings import GraphKnowsSettings
 
     s = GraphKnowsSettings()
     return {
-        "relex": _RELEX_MODEL,
+        "relex": s.relex_model,
         "embed": s.embed_model,
         "verifier": s.relation_verifier_model,
         "verifier_encoder": VERIFIER_ENCODER,
@@ -51,7 +49,7 @@ def _model_ids() -> dict[str, str]:
         # runtime sets HF_HUB_OFFLINE=1, so a model that is merely *available to
         # download* is a model that fails the moment someone flips the flag —
         # and it fails inside an ingest, not at boot where --check would catch it.
-        "typing": _typing_model(),
+        "typing": s.typing_model,
     }
 
 

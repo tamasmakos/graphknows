@@ -3,13 +3,13 @@
 Importing this module has no side-effects (no FastAPI, no store connections).
 Any agent or library that wants only settings can do::
 
-    from graphknows.settings import GraphKnowsSettings
-    cfg = GraphKnowsSettings()
+    from graphknows.settings import get_settings
+    cfg = get_settings()
 
 Example:
-    from graphknows.settings import GraphKnowsSettings
+    from graphknows.settings import get_settings
 
-    settings = GraphKnowsSettings()
+    settings = get_settings()
     settings.check_production_secrets()
 """
 
@@ -18,12 +18,14 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from graphknows.bounds import CALL_TIMEOUT_S
 from graphknows.exceptions import ConfigurationError
 
 # The always-on default ontology, resolved off this file rather than imported
@@ -89,6 +91,18 @@ _BUNDLED_OVERLAY = str(
     / "cco"
     / "conversational.json"
 )
+
+
+class Env(StrEnum):
+    """Which deployment the process believes it is running in.
+
+    Lowercase and closed: ``prod``, ``Production`` and ``PROD`` are rejected at
+    construction rather than silently skipping
+    :meth:`GraphKnowsSettings.check_production_secrets`.
+    """
+
+    development = "development"
+    production = "production"
 
 
 class MemoryMode(StrEnum):
@@ -169,7 +183,7 @@ class GraphKnowsSettings(BaseSettings):
         populate_by_name=True,
     )
 
-    graphknows_env: str = Field(default="development", alias="GRAPHKNOWS_ENV")
+    graphknows_env: Env = Field(default=Env.development, alias="GRAPHKNOWS_ENV")
 
     # Named preset. The decoder follows the mode alone; the topic layer can be
     # overridden independently. Read the resolved values through the
@@ -183,9 +197,20 @@ class GraphKnowsSettings(BaseSettings):
     enable_dspy_relations: bool | None = Field(default=None, alias="GRAPHKNOWS_DSPY_RELATIONS")
 
     # ArcadeDB
+    mcp_call_timeout_s: float = Field(
+        default=CALL_TIMEOUT_S,
+        alias="GRAPHKNOWS_MCP_CALL_TIMEOUT_S",
+        description=(
+            "Wall-clock budget for one MCP tool call. The first call after a cold "
+            "start pays the extraction models' load time; raise this if a "
+            "deployment does not warm them."
+        ),
+    )
     arcadedb_url: str = Field(default="http://localhost:2480", alias="GRAPHKNOWS_ARCADEDB_URL")
     arcadedb_user: str = Field(default="root", alias="GRAPHKNOWS_ARCADEDB_USER")
-    arcadedb_password: str = Field(default="changeme", alias="GRAPHKNOWS_ARCADEDB_PASSWORD")
+    arcadedb_password: SecretStr = Field(
+        default=SecretStr("changeme"), alias="GRAPHKNOWS_ARCADEDB_PASSWORD"
+    )
 
     # Multi-tenant isolation boundary. Each namespace maps to ONE physical
     # ArcadeDB database (``mem_<ns>``; "" -> ``mem``) — see storage/namespace.py.
@@ -194,11 +219,16 @@ class GraphKnowsSettings(BaseSettings):
     # default when an MCP call omits an explicit namespace.
     namespace: str = Field(default="", alias="GRAPHKNOWS_NAMESPACE")
 
+    # The destructive MCP surface (``memory_purge``, ``memory_drop_namespace``).
+    # Read at import time by ``server/mcp/tools/admin.py``: the gate is on
+    # REGISTRATION, so with this off the tools are never advertised at all.
+    enable_admin_tools: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_ADMIN_TOOLS")
+
     # LLM (provider-neutral; litellm model strings)
     llm_model: str = Field(
         default="openrouter/deepseek/deepseek-v4-flash", alias="GRAPHKNOWS_LLM_MODEL"
     )
-    llm_api_key: str = Field(default="", alias="GRAPHKNOWS_LLM_API_KEY")
+    llm_api_key: SecretStr = Field(default=SecretStr(""), alias="GRAPHKNOWS_LLM_API_KEY")
     llm_api_base: str = Field(default="", alias="GRAPHKNOWS_LLM_API_BASE")
     llm_temperature: float = Field(default=0.0, alias="GRAPHKNOWS_LLM_TEMPERATURE")
     llm_max_tokens: int = Field(default=2048, alias="GRAPHKNOWS_LLM_MAX_TOKENS")
@@ -217,7 +247,7 @@ class GraphKnowsSettings(BaseSettings):
     # re-index.
     embed_model: str = Field(default="BAAI/bge-small-en-v1.5", alias="GRAPHKNOWS_EMBED_MODEL")
     embed_api_base: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_BASE")
-    embed_api_key: str = Field(default="", alias="GRAPHKNOWS_EMBED_API_KEY")
+    embed_api_key: SecretStr = Field(default=SecretStr(""), alias="GRAPHKNOWS_EMBED_API_KEY")
     # Local-embedding device: "auto" (CUDA if present, else CPU), "cuda", or "cpu".
     embed_device: str = Field(default="auto", alias="GRAPHKNOWS_EMBED_DEVICE")
     # Local-embedding weight quantization (bitsandbytes, CUDA only): "", "8bit",
@@ -231,9 +261,42 @@ class GraphKnowsSettings(BaseSettings):
     # you deliberately re-size the store.
     embed_dimensions: int = Field(default=0, alias="GRAPHKNOWS_EMBED_DIMENSIONS")
 
-    # Entity extraction. The relex model itself is set with GRAPHKNOWS_RELEX_MODEL
-    # (see ingestion/extraction/entities/gliner_model.py).
+    # Entity extraction.
     spacy_model: str = Field(default="en_core_web_lg", alias="GRAPHKNOWS_SPACY_MODEL")
+    # The relex model and its three score floors. What each floor defends, and
+    # the measurements behind the numbers, are at the use sites —
+    # ingestion/extraction/entities/gliner_model.py and .../extractor.py.
+    relex_model: str = Field(
+        default="knowledgator/gliner-relex-large-v1.0", alias="GRAPHKNOWS_RELEX_MODEL"
+    )
+    relex_threshold: float = Field(default=0.35, alias="GRAPHKNOWS_RELEX_THRESHOLD")
+    relex_relation_threshold: float = Field(
+        default=0.3, alias="GRAPHKNOWS_RELEX_RELATION_THRESHOLD"
+    )
+    relex_adjacency: float = Field(default=0.6, alias="GRAPHKNOWS_RELEX_ADJACENCY")
+
+    # Definition-described entity typing — a SECOND, smaller model run per line so
+    # ontology definitions reach the extractor as label descriptions. Default off:
+    # it is another ~0.5B model resident per process and a forward pass per line.
+    # See ingestion/extraction/entities/typing_model.py.
+    definition_typing: bool = Field(default=False, alias="GRAPHKNOWS_DEFINITION_TYPING")
+    # base, not large. Measured on eight conversational lines against the same
+    # 13-label CCO schema: base is 784 ms/line to large's 2574 (3.3x), types MORE
+    # surfaces (19 vs 17), and wins the two clearest semantic calls outright —
+    # "charity race" as an Act (0.93) where large says Organization (0.46), and
+    # "fashion internship" as an Occupation Role (0.78) where large says
+    # Organization (0.42). Large is better on a couple ("dance studio" as a
+    # Facility) but not enough to buy at triple the ingest cost, and the
+    # prototype's 22/26 typing result was measured on base too. Both are baked
+    # into the image.
+    typing_model: str = Field(default="fastino/gliner2-base-v1", alias="GRAPHKNOWS_TYPING_MODEL")
+    # Device override for that model ("" = let the library choose).
+    typing_device: str = Field(default="", alias="GRAPHKNOWS_TYPING_DEVICE")
+
+    # Order the properties offered inside one (domain, range) group by chunk fit.
+    # Ordering, never filtering — the offered set is identical. Default off until
+    # its A/B arm decides. See ingestion/stm/ingest.py.
+    relation_group_ranking: bool = Field(default=False, alias="GRAPHKNOWS_RELATION_GROUP_RANKING")
 
     # Relation verifier — semantic gate that drops relex false positives before
     # they merge into the graph (co-occurring spans relex confidently pairs but
@@ -381,6 +444,33 @@ class GraphKnowsSettings(BaseSettings):
     # type veto itself can be A/B'd independently before it gates real writes.
     enable_fe_type_gate: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_FE_TYPE_GATE")
 
+    # Saturation ceilings for the two tag-driven channels (channels/frames.py,
+    # channels/ontology.py). A tag covering more than this fraction of a
+    # session's chunks is dropped from the join: like the conversation
+    # participants (see the entity-saturation drop), a generic frame such as
+    # ``Activity_ongoing`` — or the class ``Person`` in a personal-conversation
+    # corpus — matches nearly every chunk, so returning its chunks floods recall
+    # with the whole conversation and carries no discriminative signal.
+    frame_saturation_ratio: float = Field(default=0.5, alias="GRAPHKNOWS_FRAME_SATURATION_RATIO")
+    class_saturation_ratio: float = Field(default=0.5, alias="GRAPHKNOWS_CLASS_SATURATION_RATIO")
+
+    # Frame-aware re-ranking of the fused pool (ranking/frame_boost.py), where
+    # the alpha is sized to the observed probe-to-context gap.
+    frame_rerank: bool = Field(default=True, alias="GRAPHKNOWS_FRAME_RERANK")
+    frame_rerank_alpha: float = Field(default=0.5, alias="GRAPHKNOWS_FRAME_RERANK_ALPHA")
+    frame_rerank_top_k: int = Field(default=8, alias="GRAPHKNOWS_FRAME_RERANK_TOP_K")
+
+    # Pool shape and post-cut expansion (retrieval/retriever.py): retrieve wide,
+    # return narrow, and — off by default — stitch each result's seq-adjacent
+    # siblings back in for long-document corpora.
+    pool_factor: int = Field(default=4, alias="GRAPHKNOWS_POOL_FACTOR")
+    min_pool: int = Field(default=100, alias="GRAPHKNOWS_MIN_POOL")
+    neighbor_radius: int = Field(default=0, alias="GRAPHKNOWS_NEIGHBOR_RADIUS")
+
+    # The structured fact sheet handed to the generator, and its size cap.
+    fact_context: bool = Field(default=True, alias="GRAPHKNOWS_FACT_CONTEXT")
+    max_facts: int = Field(default=40, alias="GRAPHKNOWS_MAX_FACTS")
+
     # The LLM decoder's knobs. Only read on the ``llm`` decoder; inert under the
     # local stack, which has its own (relex, verifier, frames) switches above.
     #
@@ -505,9 +595,9 @@ class GraphKnowsSettings(BaseSettings):
             ConfigurationError: When production env is detected with the default
                 password, or with an LLM-using capability enabled but no API key.
         """
-        if self.graphknows_env != "production":
+        if self.graphknows_env is not Env.production:
             return
-        if self.arcadedb_password == "changeme":
+        if self.arcadedb_password.get_secret_value() == "changeme":
             raise ConfigurationError(
                 "GRAPHKNOWS_ARCADEDB_PASSWORD is still the development default."
             )
@@ -523,3 +613,18 @@ class GraphKnowsSettings(BaseSettings):
         """Fail fast at construction when production secrets are unsafe."""
         self.check_production_secrets()
         return self
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> GraphKnowsSettings:
+    """The process's settings, constructed once.
+
+    Construction costs ~140 ms (env + ``.env`` parsing, validation), so hot paths
+    read it through here rather than rebuilding per message or per chunk. Code
+    that is *handed* a settings instance keeps using that one: an explicit
+    ``Memory(settings=s)`` must win over the environment.
+
+    Tests that patch the environment call ``get_settings.cache_clear()``; the
+    autouse fixture in ``tests/conftest.py`` does it for every test.
+    """
+    return GraphKnowsSettings()

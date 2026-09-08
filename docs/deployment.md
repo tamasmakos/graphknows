@@ -86,3 +86,44 @@ Nothing is dropped automatically; the deletion is yours to run. Where a
 rebuild is unacceptable, keep the old version running against that graph and
 re-ingest into a second namespace on the new one
 ([multi-tenancy.md](multi-tenancy.md)).
+
+## Backup and restore
+
+The graph lives entirely in the `arcadedb_data` volume declared in
+`deploy/compose.yaml`; nothing else in the stack holds state. Back it up by
+archiving the volume through a throwaway container that mounts it, not by
+reaching into the host filesystem where Docker stores it.
+
+Stop `arcadedb` first — ArcadeDB writes its own files underneath the running
+server, and archiving them while it writes is how you get a backup that
+fails to restore.
+
+```bash
+docker compose -f deploy/compose.yaml stop arcadedb
+
+docker run --rm \
+  --volumes-from "$(docker compose -f deploy/compose.yaml ps -a -q arcadedb)" \
+  -v "$(pwd)":/backup alpine \
+  tar czf "/backup/arcadedb_data-$(date +%Y%m%d).tar.gz" -C /home/arcadedb/databases .
+
+docker compose -f deploy/compose.yaml start arcadedb
+```
+
+Restore is the same trick in reverse: stop the server, wipe the volume's
+contents, untar the archive back in, start the server.
+
+```bash
+docker compose -f deploy/compose.yaml stop arcadedb
+
+docker run --rm \
+  --volumes-from "$(docker compose -f deploy/compose.yaml ps -a -q arcadedb)" \
+  -v "$(pwd)":/backup alpine \
+  sh -c 'rm -rf /home/arcadedb/databases/* && tar xzf "/backup/$1" -C /home/arcadedb/databases' \
+  -- "arcadedb_data-YYYYMMDD.tar.gz"
+
+docker compose -f deploy/compose.yaml start arcadedb
+```
+
+A restored volume still carries whatever schema version it was backed up
+with — the same `SchemaVersionMismatchError` check above applies when you
+restore an older backup underneath a newer image.

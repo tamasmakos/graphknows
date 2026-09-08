@@ -404,7 +404,7 @@ class TestRelationGate:
             text="Melanie attended Pride fest on 8 May, 2023.",
         )
         assert store.write_relation.await_count == 1
-        assert store.write_relation.await_args.args[2] == "Pride fest"
+        assert store.write_relation.await_args.args[0].dst_name == "Pride fest"
 
 
 def test_speaker_parameter_reaches_the_schema_when_the_text_omits_it() -> None:
@@ -601,7 +601,7 @@ class TestRelationEndpointProvenance:
         return None
 
     async def test_endpoints_get_mentions_but_speaker_does_not(self) -> None:
-        from graphknows.storage.arcadedb.graph_store import GraphStore
+        from graphknows.storage.arcadedb.graph_store import GraphStore, RelationWrite
 
         calls: list[tuple[str, dict]] = []
 
@@ -613,13 +613,15 @@ class TestRelationEndpointProvenance:
                 calls.append((sql, kwargs))
                 return []
 
-        await _Store().write_relation("Gina", "HAS", "collection", chunk_id="c1", speaker="Gina")
+        await _Store().write_relation(
+            RelationWrite("Gina", "HAS", "collection", chunk_id="c1", speaker="Gina")
+        )
         assert self._norms_written(calls) == ["collection"], (
             "the speaker must not gain a MENTIONS edge from its own chunk"
         )
 
     async def test_both_endpoints_when_neither_is_the_speaker(self) -> None:
-        from graphknows.storage.arcadedb.graph_store import GraphStore
+        from graphknows.storage.arcadedb.graph_store import GraphStore, RelationWrite
 
         calls: list[tuple[str, dict]] = []
 
@@ -631,11 +633,13 @@ class TestRelationEndpointProvenance:
                 calls.append((sql, kwargs))
                 return []
 
-        await _Store().write_relation("Maria", "HAS", "lease", chunk_id="c1", speaker="Gina")
+        await _Store().write_relation(
+            RelationWrite("Maria", "HAS", "lease", chunk_id="c1", speaker="Gina")
+        )
         assert self._norms_written(calls) == ["maria", "lease"]
 
     async def test_no_chunk_id_writes_no_mentions(self) -> None:
-        from graphknows.storage.arcadedb.graph_store import GraphStore
+        from graphknows.storage.arcadedb.graph_store import GraphStore, RelationWrite
 
         calls: list[tuple[str, dict]] = []
 
@@ -647,7 +651,7 @@ class TestRelationEndpointProvenance:
                 calls.append((sql, kwargs))
                 return []
 
-        await _Store().write_relation("Maria", "HAS", "lease", speaker="Gina")
+        await _Store().write_relation(RelationWrite("Maria", "HAS", "lease", speaker="Gina"))
         assert self._norms_written(calls) is None
 
 

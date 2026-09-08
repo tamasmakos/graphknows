@@ -19,10 +19,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Tag-triggered release workflow** (`.github/workflows/release.yml`). Pushing
   a `vX.Y.Z` tag reuses `ci.yml` by reference (Sonar skipped, since a tag has
   no PR context), then refuses to publish unless the tag matches the
-  `__version__` literal in `graphknows/_version.py`, and uploads the wheel and
-  sdist CI itself built to PyPI via the Trusted Publisher OIDC flow — no API
-  token stored anywhere. The one-time Trusted Publisher registration is
-  out-of-repo maintainer configuration; see `docs/versioning.md`.
+  `__version__` literal in `graphknows/_version.py`, and attaches the wheel CI
+  itself built, plus a deployment bundle, as assets on this private
+  repository's GitHub Release for the tag — nowhere public, no PyPI publish,
+  no Trusted Publisher OIDC, no stored API token; see `docs/versioning.md`.
 
 ### Removed
 

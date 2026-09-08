@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from graphknows.storage.arcadedb.client import ArcadeDBClient
@@ -53,6 +54,14 @@ class ArcadeStoreBase:
     async def drop_database(self) -> None:
         """Drop this store's entire ArcadeDB database (destructive)."""
         await self._c.drop_database(self._db)
+
+    def transaction(self) -> AbstractAsyncContextManager[None]:
+        """Group the enclosed writes into one ArcadeDB transaction.
+
+        Commits on a clean exit, rolls back and re-raises on any exception —
+        so a caller that writes a vertex and then fails leaves neither behind.
+        """
+        return self._c.transaction(self._db)
 
     async def query(self, cypher: str, **params: Any) -> list[dict]:
         """Run a read-only statement against this store's database."""

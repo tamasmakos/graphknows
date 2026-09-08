@@ -285,10 +285,6 @@ literals because LIST params conflict with the `LSM_VECTOR` index; openCypher ha
 no `IN $list`, so every interpolated string goes through
 `graphknows/storage/arcadedb/_sql.py`.
 
-`ArcadeDBSTMStore` and `ArcadeDBLTMStore` still exist in
-`graphknows/storage/arcadedb/` and back the read-only browsing helpers and the
-web server's graph views; the ingest and retrieval paths use `GraphStore` only.
-
 ## Embeddings
 
 `graphknows/storage/embedder.py` provides `embed` / `embed_one` (LRU-cached),
@@ -346,10 +342,7 @@ ranks. A failure in any channel raises loudly rather than silently degrading
 recall.
 
 Candidates are fused by **RRF** (`graphknows/ranking/rrf.py`, `rrf_score`,
-`RRF_K = 60`), then shaped by community boost (`community_boost` over
-`GraphStore.chunk_community_weights`, derived from Louvain `community_id` on
-`MENTIONS`-linked entities) and memory-class weighting (`shape_score`) before
-sorting. Cosine ordering of the fused pool is the final rank: the cross-encoder
+`RRF_K = 60`). The fused score is the final rank: the cross-encoder
 reranker was removed after measurement (evidence_recall 0.636 → 0.692 without
 it).
 

@@ -23,8 +23,8 @@ from typing import Any
 
 from graphknows.channels._shared import session_chunk_count
 from graphknows.channels.base import Channel, ChannelContext, CollectResult
-from graphknows.channels.frames import _FRAME_SATURATION_RATIO
 from graphknows.ranking.rrf import rrf_score
+from graphknows.settings import get_settings
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class FrameFactChannel(Channel):
         # frame — "what did she give him" is Giving, the chunk may be Receiving
         # or Commerce_pay under a shared parent.
         frames = sorted(parse.get("expanded") or parse.get("q_frames") or ())
-        norms = await rt.store.resolve_query_entities(ctx.words_graph)
+        norms = await ctx.resolve_entities(rt.store)
         if not frames and not norms:
             return {}
 
@@ -115,7 +115,8 @@ class FrameFactChannel(Channel):
         if not total:
             return frames
         cover = await _instance_coverage(rt, frames, ctx.session_id, ctx.state)
-        kept = [f for f in frames if cover.get(f, 0) / total <= _FRAME_SATURATION_RATIO]
+        ratio = get_settings().frame_saturation_ratio
+        kept = [f for f in frames if cover.get(f, 0) / total <= ratio]
         if len(kept) != len(frames):
             log.debug("frame_fact dropping saturated frames: %s", sorted(set(frames) - set(kept)))
         return kept
