@@ -110,11 +110,10 @@ matter to a pack author:
   materialise a large ontology into a dict (audit Y4).
 - `entity_labels()` replaces the extraction label set. There is no core inventory to union
   with (FR-022).
-- `channel()` is optional, and a channel that only `populate()`s is incomplete by
-  construction: the dead-weight check fails the run when a pack writes a plane no retrieval
-  path reads, and such a pack does not ship (FR-024).
-- `expand()` feeds **candidate generation**, not only the re-ranker — top-down activation
-  must reach retrieval, per FR-002.
+- `lexicon()`, `channel()`, `expand()` and `retrieval_profile()` are deferred to the
+  dialogue-pack specification and are not declared in this slice (FR-022). When they arrive:
+  a channel that only `populate()`s is incomplete by construction (FR-024), and `expand()`
+  feeds candidate generation, not only the re-ranker (FR-002).
 - Frames are expressed as concepts with role predicates. There is no frame symbol kind and
   no frame-specific stored type (FR-023).
 

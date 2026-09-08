@@ -404,13 +404,16 @@ metrics shape as the other rows.
   is unchanged; the evaluation harness and read-tracking instrumentation of the store MAY
   be added before the baseline, since the dead-weight check needs them on the baseline
   itself. The baseline MUST record a per-row limit, and every gate run MUST use the same
-  limit.
+  limit. A row introduced after the baseline is gated against its own first recorded run,
+  named as such.
 - **FR-042**: Merging MUST require no regression beyond recorded run noise on any panel row
   that runs on the new core, and no drop in identity precision. No single row is the
   headline. Until the dialogue pack exists, the dialogue rows (LoCoMo, LongMemEval, BEAM)
   report not-run on the new core and their old-core baseline stays as the reference for the
-  dialogue-pack specification; this slice's gate is the repository row, identity precision,
-  the dead-weight check, and the two-pack, schema-refusal and concurrent-ingest scenarios.
+  dialogue-pack specification; this slice's cutover gate is identity precision, the dead-weight
+  check, and the two-pack, schema-refusal and concurrent-ingest scenarios; the repository
+  row joins the gate once it exists (FR-044), gated against its own first recorded run and
+  named as such.
 - **FR-043**: The panel MUST report the local extraction path and the language-model
   extraction path as separate columns, both behind one extractor contract, with all
   vocabulary supplied by packs rather than module constants. Both paths stay first-class in

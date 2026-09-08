@@ -27,7 +27,7 @@ table (A → B → B′ → C → D → E → F); US1 blocks everything by const
 
 - [ ] T001 Extend the dispatcher in `evaluation/__main__.py` with the `baseline`, `panel`, `deadweight`, `identity`, `scenario` and `download` subcommands routing to `evaluation/common/` entry points
   - Verify: `pytest -q tests/evaluation/test_dispatcher.py`
-- [ ] T002 [P] Define the per-row and internal-metric report shape (`row`, `feeding_mode`, `extractor`, `accuracy`, `evidence_recall`, `by_category`, `n`, `not_run`, and `median`/`band`/`runs`/`commit`) in `evaluation/common/reporting.py`
+- [ ] T002 [P] Define the per-row and internal-metric report shape (`row`, `feeding_mode`, `extractor`, `accuracy`, `evidence_recall`, `by_category`, `n`, `not_run`, and `median`/`band`/`runs`/`commit`) and the per-run internal-metrics object (`identity`, `fact_precision`, `dead_weight`) from contracts/panel-report.md in `evaluation/common/reporting.py`
   - Verify: `pytest -q tests/evaluation/test_report_shape.py`
 
 ---
@@ -44,13 +44,15 @@ result file per row plus the internal metrics.
   - Verify: `pytest -q tests/evaluation/test_feeding_mode.py`
 - [ ] T012 [P] [US1] Implement pairwise identity precision/recall over a labelled sample in `evaluation/identity.py`
   - Verify: `pytest -q tests/evaluation/test_identity_metric.py`
-- [ ] T013 [P] [US1] Implement the written-minus-read type diff in `evaluation/deadweight.py`, failing the run on a non-empty `unread_types`
+- [ ] T013 [P] [US1] Implement the written-minus-read type diff in `evaluation/deadweight.py`: `deadweight` and `panel --compare` exit non-zero on a non-empty `unread_types`, while `baseline` records `passed: false` and continues (FR-041)
   - Verify: `pytest -q tests/evaluation/test_deadweight.py`
+- [ ] T058 [P] [US1] Generalise the triplet audit in `evaluation/audit/` beyond dialogue so fact precision is reported on every run (FR-040)
+  - Verify: `pytest -q tests/evaluation/test_audit_generalised.py`
 - [ ] T014 [US1] Declare the touched types per store read method and accumulate them into a per-connection `read_types` set in `graphknows/storage/arcadedb/graph_store.py`
   - Verify: `pytest -q tests/storage/test_read_types.py`
 - [ ] T015 [US1] Implement `python -m evaluation baseline --rows … --repeats 3` writing `median`/`band`/`runs`/`commit` per row and metric under `evaluation/results/baseline/`
   - Verify: `pytest -q tests/evaluation/test_baseline_cli.py`
-- [ ] T016 [P] [US1] Add the hand-labelled identity sample of at least 200 clusters, not from LoCoMo, at `evaluation/data/identity/labelled.jsonl`
+- [ ] T016 [P] [US1] Add the hand-labelled identity sample of at least 200 clusters, not from LoCoMo, at `evaluation/data/identity/labelled.jsonl`: the corpus is this repository's own Claude Code transcripts and source tree, a cluster is the set of mentions (names, paths, symbols) referring to one real referent, labelled by hand, with the procedure recorded beside the file
   - Verify: `pytest -q tests/evaluation/test_identity_sample.py`
 - [ ] T017 [US1] Record and commit the baseline files for every row and internal metric under `evaluation/results/baseline/` against the unmodified core
   - Verify: `pytest -q tests/evaluation/test_baseline_committed.py`
@@ -95,11 +97,17 @@ domain branch anywhere in the core.
 **Independent Test**: load two packs into one namespace, ingest one source per pack, recall a
 symbol from each, and confirm both return facts with evidence.
 
+- [ ] T034 Delete `graphknows/topics/`, `graphknows/cli/topics.py` and the `topics_*` MCP tools, with their tests
+  - Verify: `pytest -q tests/test_dropped_plane_topics.py`
+- [ ] T035 Delete `graphknows/ingestion/stm/` and the closed `Role` enum in `graphknows/models/message.py`; a session is a `Source`, a turn is a `Segment`
+  - Verify: `pytest -q tests/test_dropped_plane_stm.py`
+- [ ] T036 Stop declaring and writing the frame-element mirror, frame-specific types, graph-ranking columns and free-string relations, reducing `graphknows/symbolic/framenet/` to a concept+predicate emitter
+  - Verify: `pytest -q tests/test_dropped_plane_frames.py`
 - [ ] T018 [US2] Replace the DDL wholesale with the golden schema in `graphknows/storage/arcadedb/_schema.py`, keeping the `SCHEMA_STAMP` mechanism verbatim
   - Verify: `pytest -q tests/storage/test_golden_schema.py`
 - [ ] T019 [US2] Define the single `state <> 'forgotten'` fragment in `graphknows/storage/arcadedb/_sql.py` and assert every read query text composes it
   - Verify: `pytest -q tests/storage/test_tombstone_filter.py`
-- [ ] T020 [US2] Split `graphknows/storage/arcadedb/graph_store.py` into source, segment, fact, entity and symbol writers
+- [ ] T020 [US2] Split `graphknows/storage/arcadedb/graph_store.py` into source, segment, fact, entity and symbol writers, rejecting at write any fact without an `ASSERTED_IN` edge (FR-008)
   - Verify: `pytest -q tests/storage/test_writers.py`
 - [ ] T021 [P] [US2] Add the `Parser` protocol and the MIME-keyed registry in `graphknows/ingestion/parsers/registry.py`, and strip the dialogue heuristics from `graphknows/ingestion/parsers/text.py`
   - Verify: `pytest -q tests/ingestion/parsers/test_registry.py`
@@ -107,19 +115,19 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/extraction/test_protocol.py`
 - [ ] T023 [P] [US2] Add the predicate index in `graphknows/symbolic/predicates.py`, replacing free-string relations in `graphknows/ingestion/extraction/relations/`
   - Verify: `pytest -q tests/ontology/test_predicate_index.py`
-- [ ] T024 [US2] Implement the Source → Segment → Mention/Fact orchestration in `graphknows/ingestion/pipeline.py`
+- [ ] T024 [US2] Implement the Source → Segment → Mention/Fact orchestration in `graphknows/ingestion/pipeline.py`, including bottom-up concept labelling from the loaded packs: `SEGMENT-[EVOKES]->CONCEPT` and `ENTITY-[INSTANCE_OF]->CONCEPT` (FR-002)
   - Verify: `pytest -q tests/ingestion/test_pipeline.py`
 - [ ] T025 [US2] Deduplicate on `Source.content_hash` before any model runs and report `sources_deduplicated` in `graphknows/ingestion/pipeline.py`
   - Verify: `pytest -q tests/ingestion/test_dedup.py`
 - [ ] T026 [US2] Implement the functional-predicate currency rule (supersede newer/older, contradict on equal times) in `graphknows/ingestion/pipeline.py`
   - Verify: `pytest -q tests/ingestion/test_supersede.py`
-- [ ] T027 [US2] Rewrite `graphknows/retrieval/retriever.py` as symbol-keyed recall returning facts with evidence under an explicit budget, with `no_evidence` and `truncated_by`
+- [ ] T027 [US2] Rewrite `graphknows/retrieval/retriever.py` as symbol-keyed recall returning facts with evidence under an explicit budget, with `no_evidence` and `truncated_by`, and top-down activation reading `EVOKES` and `INSTANCE_OF` for candidate generation (FR-002)
   - Verify: `pytest -q tests/retrieval/test_symbol_recall.py`
 - [ ] T028 [P] [US2] Add the `RetrievalProfile` value object with core defaults in `graphknows/retrieval/profile.py`; pack supply arrives with the dialogue pack (FR-022)
   - Verify: `pytest -q tests/retrieval/test_profile.py`
 - [ ] T029 [US2] Rewrite `graphknows/channels/registry.py` as the fixed core collectors with no `enable_x` flags; pack channels arrive with the dialogue pack (FR-022)
   - Verify: `pytest -q tests/channels/test_registry_packs.py`
-- [ ] T030 [US2] Rewrite the facade in `graphknows/memory.py` as `Memory(packs=[...])` with `ingest`/`recall`/`forget` and a per-namespace `asyncio.Lock` reporting `ingest_queue_wait_ms`
+- [ ] T030 [US2] Rewrite the facade in `graphknows/memory.py` as `Memory(packs=[...])` with `ingest`/`recall`/`forget` and a per-namespace `asyncio.Lock` reporting `ingest_queue_wait_ms`, and the `graphknows.cli` `ingest`/`recall` commands on that facade
   - Verify: `pytest -q tests/memory/test_facade_packs.py`
 - [ ] T031 [US2] Implement forget as a tombstone in the store, cascading from a forgotten `Segment` to the facts it evidences and counting `facts_excluded_tombstoned`, and expose the `memory_forget` tool in `graphknows/server/mcp/`
   - Verify: `pytest -q tests/mcp_server/test_forget_tool.py`
@@ -134,20 +142,19 @@ symbol from each, and confirm both return facts with evidence.
 
 ## Phase 5: Cutover (FR-045, FR-046)
 
-**Purpose**: one change — the old core and its dropped planes go, nothing routes to two write
-paths. Tests are deleted only in the change that deletes the module they import.
+**Purpose**: one change — what is left of the old core goes and the interim identity state
+is recorded. The dropped planes were already deleted at the head of Phase 4 so the tree never
+writes a type the schema no longer declares. Tests are deleted only in the change that deletes
+the module they import.
 
-- [ ] T034 Delete `graphknows/topics/`, `graphknows/cli/topics.py` and the `topics_*` MCP tools, with their tests
-  - Verify: `pytest -q tests/test_dropped_plane_topics.py`
-- [ ] T035 Delete `graphknows/ingestion/stm/` and the closed `Role` enum in `graphknows/models/message.py`; a session is a `Source`, a turn is a `Segment`
-  - Verify: `pytest -q tests/test_dropped_plane_stm.py`
-- [ ] T036 Stop declaring and writing the frame-element mirror, frame-specific types, graph-ranking columns and free-string relations, reducing `graphknows/symbolic/framenet/` to a concept+predicate emitter
-  - Verify: `pytest -q tests/test_dropped_plane_frames.py`
-- [ ] T037 Route `graphknows/memory.py` to the new core and delete the remaining old core modules in one change
+- [ ] T037 Delete the remaining old core modules in one change; `graphknows/memory.py` was rewritten in place at T030 and nothing routes to two write paths (FR-045)
   - Verify: `pytest -q tests/memory/test_cutover.py`
+- [ ] T063 Implement exact-key-only identity on the cut-over core — no `MERGED_INTO` and no `SAME_AS` edge is written — and the cutover-report line that states it (FR-048)
+  - Verify: `pytest -q tests/ingestion/consolidation/test_exact_key_interim.py`
 
-**Checkpoint**: SC-004 and SC-005 — repository row, identity precision and dead weight hold;
-dialogue rows report not-run (FR-042); identity is exact-key only until Phase 6 (FR-048).
+**Checkpoint**: SC-004 and SC-005 — identity precision and dead weight hold and the three
+scenarios pass; dialogue rows report not-run and the repository row joins the gate in Phase 9
+(FR-042); identity is exact-key only until Phase 6 (FR-048).
 
 ---
 
@@ -194,6 +201,8 @@ known function and a known decision with correct evidence ranges.
   - Verify: `pytest -q tests/test_packaging.py -k pack_data`
 - [ ] T048 [US4] Implement the `transcript-drift` scenario in `evaluation/scenarios.py`, proving a drifted record is counted and never fatal
   - Verify: `pytest -q tests/evaluation/test_transcript_drift.py`
+- [ ] T060 Assert every command in `quickstart.md` exists and is dispatchable
+  - Verify: `pytest -q tests/test_quickstart_commands.py`
 
 **Checkpoint**: SC-014 holds; the phase diff touches packs and parsers only.
 
@@ -218,7 +227,7 @@ end.
   - Verify: `pytest -q tests/evaluation/test_forget_roundtrip.py`
 - [ ] T053 [P] [US5] Ship the record-versus-retrieve guidance skill and the hook settings block with `graphknows/integrations/claude_code/`
   - Verify: `pytest -q tests/integrations/claude_code/test_guidance_shipped.py`
-- [ ] T062 [US5] Implement the `hook-latency` scenario in `evaluation/scenarios.py`, measuring recall-verb p95 against the 1 s budget and the 5 s ceiling (SC-010)
+- [ ] T062 [US5] Implement the `hook-latency` scenario in `evaluation/scenarios.py`, measuring recall-verb p95 against the 1 s budget and the 5 s ceiling over 200 samples against a warm service (SC-010)
   - Verify: `pytest -q tests/evaluation/test_hook_latency.py`
 
 **Checkpoint**: SC-009, SC-010 and SC-012 hold.
@@ -247,12 +256,8 @@ same way as every other row.
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [ ] T058 [P] Generalise the triplet audit in `evaluation/audit/` beyond dialogue
-  - Verify: `pytest -q tests/evaluation/test_audit_generalised.py`
 - [ ] T059 [P] Document the packs layer, the hook integration and the merge gate in `docs/` and `README.md`
   - Verify: `pytest -q tests/test_docs_packs.py`
-- [ ] T060 Assert every command in `quickstart.md` exists and is dispatchable
-  - Verify: `pytest -q tests/test_quickstart_commands.py`
 
 ---
 
@@ -266,7 +271,7 @@ same way as every other row.
   read-tracking instrumentation (T014) are not core code (FR-041).
 - **Foundational (Phase 3)**: depends on the committed baseline. Blocks every later user story.
 - **US2 (Phase 4)**: depends on Phase 2 and Phase 3.
-- **Cutover (Phase 5)**: depends on Phase 4 passing against the Phase 3 baseline.
+- **Cutover (Phase 5)**: depends on Phase 4; its gate is identity precision, dead weight and the three scenarios (FR-042).
 - **US3 (Phase 6)**, **US4 (Phase 7)**: depend on Cutover; independent of each other.
 - **US5 (Phase 8)**: depends on US4 (transcript parser, code pack).
 - **US6 (Phase 9)**: depends on US4 and the panel harness from US1.

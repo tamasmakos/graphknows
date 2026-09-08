@@ -35,8 +35,8 @@
   materialisation, FR-043 both extraction paths) were resolved in the 2026-09-08
   clarification session, together with two further decisions: per-namespace ingest
   serialisation (FR-047) and forget as tombstone (FR-037). All five were chosen unattended
-  as the recommended answers and are marked `(auto: recommended, unconfirmed)` in
-  `## Clarifications` so the owner can overrule any of them.
+  as the recommended answers and were confirmed by the owner on 2026-09-08; `## Clarifications`
+  marks them `(owner confirmed 2026-09-08)`.
 - Content-quality items pass with one caveat: the feature *is* infrastructure, so the
   "non-technical stakeholder" bar is read as "no module names, no file paths, no code" —
   which holds. Named existing components appear only in Assumptions, as the record of

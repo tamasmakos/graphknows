@@ -20,10 +20,14 @@ line of new core code exists, and every later change is gated on the whole panel
 identity precision plus a dead-weight check that fails the run when a written type has no
 reader.
 
-The technical approach is deliberately additive-then-subtractive: the new core is built
-under new module names beside the old one, and the old core is deleted in a single cutover
-change once the new core's acceptance passes. At no point do two write paths ship — which
-is what FR-045's "no shims, no flags, no migration" actually requires.
+The rewrite is in place. The dropped planes (topics, the STM buffer, the frame mirror) are
+deleted first, with their tests, so the tree never writes a type the schema no longer
+declares; the remaining modules (schema, store, retriever, channel registry, facade) are
+then rewritten under their current names; the cutover phase deletes whatever old core is
+left and records the interim exact-key-only identity state (FR-048). At no point do two
+write paths ship — which is what FR-045's "no shims, no flags, no migration" actually
+requires. The tree is not green between the first in-place rewrite and cutover; the gate
+sits at cutover.
 
 ## Technical Context
 
@@ -84,7 +88,7 @@ new repository-transcript row. Identity ground truth: one hand-labelled sample o
 | **IV. Build Only What Was Asked For** | Ladder: needed at all → already here → stdlib → installed dep → one line. | PASS — code parser is stdlib `ast`, not tree-sitter; candidate search is the store's existing `LSM_VECTOR` index, not a new ANN library; schema refusal already exists and is reused verbatim. | PASS — `DomainPack` has two shipped implementations plus a third specified next slice, so it is not an abstraction with one caller. |
 | **V. Errors Never Pass Silently** | Every gate, fallback and lookup raises or increments a named counter surfaced in the result. | PASS — counters enumerated in [research.md](./research.md) §R9 and carried on the ingest/recall result contracts. | PASS — `IngestReport` and `RecallResult` in [data-model.md](./data-model.md) carry the counter set; no path returns a bare empty list. |
 | **VI. Evidence Over Vibes** | Change justified by a metric named before the change. | PASS — US1 (baseline) blocks every other story by construction; SC-003 is the gate. | PASS — dead-weight check is a first-class panel output, not a review habit. |
-| **VII. A Package Installed by Strangers** | Every third-party import declared with a lower bound; shipped non-`.py` declared; extras enforced. | PASS — this slice adds no third-party import. | PASS — pack data files (`graphknows/packs/**/*.json`) must be added to the build backend's package data and asserted by `tests/test_packaging.py`. |
+| **VII. A Package Installed by Strangers** | Every third-party import declared with a lower bound; shipped non-`.py` declared; extras enforced. | PASS — this slice adds no third-party import. | PASS — pack data files (`graphknows/packs/data/**/*.json`) must be added to the build backend's package data and asserted by `tests/test_packaging.py`. |
 
 **Principle II note (recorded, not waived).** FR-045 deletes the old core, and tests that
 exercise deleted modules go with them. That is not weakening a check: a test removed *in
@@ -255,17 +259,17 @@ the phase before it.
 |---|---|---|
 | **A — Baseline** | US1 (P1) | A committed result file per panel row and per internal metric exists against the unmodified core (the harness and the store's read-tracking instrumentation may already exist), with a noise band from three repeats at a committed per-row limit. No new core code exists. (SC-003) |
 | **B — Domain-neutral core** | US2 (P1) | Two packs load into one namespace, both recall facts with evidence, `lint-imports` proves the core imports no pack, and the grep test finds no dialogue term in core modules. (SC-001, SC-002, SC-005, SC-008, SC-013, SC-015) |
-| **B′ — Cutover** | FR-045, FR-046 | Single change: old core modules deleted, their tests deleted with them, dropped planes no longer written or declared. Repository row, identity precision and dead weight hold; dialogue rows report not-run and keep the Phase A numbers as the reference for the dialogue-pack spec (SC-004). Identity is exact-key only until Phase C (FR-048). |
+| **B′ — Cutover** | FR-045, FR-046 | Single change: old core modules deleted, their tests deleted with them, dropped planes no longer written or declared. Identity precision and dead weight hold and the two-pack, schema-refusal and concurrent-ingest scenarios pass; dialogue rows report not-run and keep the Phase A numbers as the reference for the dialogue-pack spec; the repository row joins the gate at Phase F against its own first recorded run (SC-004). Identity is exact-key only until Phase C (FR-048). |
 | **C — Identity** | US3 (P2) | Pairwise precision/recall reported on the labelled sample, no full-table scan, every merge replayable and undoable from its log. (SC-006, SC-007) |
 | **D — Repo as memory** | US4 (P2) | Repository source and one transcript ingest into one namespace; a known function and a known decision both recall with correct evidence ranges. (SC-014) |
 | **E — Agent loop** | US5 (P3) | Hooks inject only on resolved symbols, inject nothing otherwise, ingest the session at Stop, and load no ML dependency. (SC-009, SC-010, SC-012) |
 | **F — Repo panel row** | US6 (P3) | The new row runs end to end with the same metric shape and at least three question kinds. (SC-011) |
 
-**Why B′ is its own phase.** Building the new core beside the old one is the only sequence
-in which the tree is green at every commit *and* no shim ships: new modules carry new names,
-nothing routes to them until cutover, and cutover is one commit that flips `memory.py` and
-deletes the old path. The alternative — editing the old core in place — is exactly the
-migration FR-045 forbids.
+**Why B′ is its own phase.** Phase B deletes the dropped planes first and rewrites the
+remaining modules in place; B′ is the single change that deletes what is left of the old
+core and records that identity is exact-key only until Phase C (FR-048). Nothing routes to
+two write paths at any point, and no old database is migrated — which is what FR-045
+forbids; an in-place rewrite of a module is not a migration of its data.
 
 ## Complexity Tracking
 

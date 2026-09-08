@@ -80,7 +80,9 @@ LLM-judge path is the dominant variance source and is expensive.
 
 A change merges only when **all** of the following hold:
 
-1. No panel row falls below `median − band` on accuracy or evidence recall.
+1. No panel row falls below `median − band` on accuracy or evidence recall. A row
+   introduced after the baseline is gated against its own first recorded run, named as
+   such (FR-041); a row that cannot run yet reports `not_run` and is not gated (FR-042).
 2. Identity pairwise precision is greater than or equal to the baseline median. No band —
    SC-004 says it must not drop.
 3. `dead_weight.passed` is true.
