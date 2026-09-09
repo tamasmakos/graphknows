@@ -111,7 +111,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/extraction/test_protocol.py`
 - [X] T065 [US2] Wire `pack.entity_labels()` (replacing, never unioning), `pack.prompt_addendum()`, `pack.hygiene()` and `pack.thresholds()` into `LocalExtractor` and `LLMExtractor` under `graphknows/ingestion/extraction/`, deleting the core's conversational label inventory and hygiene defaults and moving `linguistics.py` vocabularies into pack guidance (FR-022)
   - Verify: `pytest -q tests/extraction/test_pack_guidance.py`
-- [ ] T023 [P] [US2] Add the predicate index in `graphknows/symbolic/predicates.py`, replacing free-string relations in `graphknows/ingestion/extraction/relations/`
+- [X] T023 [P] [US2] Add the predicate index in `graphknows/symbolic/predicates.py`, replacing free-string relations in `graphknows/ingestion/extraction/relations/`
   - Verify: `pytest -q tests/ontology/test_predicate_index.py`
 - [ ] T024 [US2] Implement the Source → Segment → Mention/Fact orchestration in `graphknows/ingestion/pipeline.py`, including bottom-up concept labelling from the loaded packs: `SEGMENT-[EVOKES]->CONCEPT` and `ENTITY-[INSTANCE_OF]->CONCEPT` (FR-002)
   - Verify: `pytest -q tests/ingestion/test_pipeline.py`

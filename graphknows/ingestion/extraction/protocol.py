@@ -14,6 +14,7 @@ from typing import Any, Protocol, runtime_checkable
 from graphknows.models.fact import Fact, Mention
 from graphknows.models.segment import Segment
 from graphknows.models.symbols import PredicateRef
+from graphknows.symbolic.predicates import PredicateIndex
 
 
 @runtime_checkable
@@ -97,9 +98,9 @@ class _DecoderExtractor:
 
     def __init__(self, decoder: Any) -> None:
         self._decoder = decoder
-        # Predicate labels resolve to ids by scanning the pack once per pack,
-        # not once per segment: `predicates()` is a lazy iterable by contract.
-        self._predicate_ids: dict[str, dict[str, str]] = {}
+        # A pack's predicate index is built once per pack, not once per
+        # segment: `predicates()` is a lazy iterable by contract.
+        self._indexes: dict[str, PredicateIndex] = {}
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self._decoder!r})"
@@ -166,12 +167,11 @@ class _DecoderExtractor:
 
     def _predicate_id(self, pack: PackGuidance, label: str) -> str | None:
         """The pack's predicate id for *label*; a relation it does not name is dropped."""
-        by_label = self._predicate_ids.get(pack.name)
-        if by_label is None:
-            by_label = self._predicate_ids[pack.name] = {
-                predicate.label: predicate.id for predicate in pack.predicates()
-            }
-        return by_label.get(label)
+        index = self._indexes.get(pack.name)
+        if index is None:
+            index = self._indexes[pack.name] = PredicateIndex(pack.predicates())
+        predicate = index.resolve(label)
+        return predicate.id if predicate is not None else None
 
 
 class LocalExtractor(_DecoderExtractor):
