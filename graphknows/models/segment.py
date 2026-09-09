@@ -7,7 +7,7 @@ from enum import StrEnum
 from hashlib import sha256
 from typing import Any
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SegmentKind(StrEnum):
@@ -45,6 +45,8 @@ class Segment(BaseModel, frozen=True):
             time was used instead.
         extractor_version: Version of the extractor that produced this
             segment's annotations.
+        meta: Parser-supplied extras about the span - a transcript record's
+            working directory, branch and side-chain flag.
     """
 
     source_id: str
@@ -56,6 +58,7 @@ class Segment(BaseModel, frozen=True):
     observed_at: datetime | None = None
     observed_at_inferred: bool = False
     extractor_version: str = ""
+    meta: dict[str, str] = Field(default_factory=dict)
 
     @property
     def id(self) -> str:

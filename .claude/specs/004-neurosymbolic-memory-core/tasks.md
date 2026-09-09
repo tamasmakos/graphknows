@@ -133,7 +133,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/ingestion/parsers/test_code.py`
 - [ ] T044 [US2] Ship the code pack — concepts, predicates (calls, imports, defines, tests), `CodeExtractor` with no model, a veto rule (a function and a module symbol with the same normalised name never merge, FR-019), and its data — under `graphknows/packs/code/` and `graphknows/packs/data/`
   - Verify: `pytest -q tests/packs/test_code_pack.py`
-- [ ] T045 [P] [US2] Implement the tolerant, versioned agent-transcript parser in `graphknows/ingestion/parsers/transcript.py`, counting unknown record and block types and retaining timestamp, `cwd`, `gitBranch` and `isSidechain`
+- [X] T045 [P] [US2] Implement the tolerant, versioned agent-transcript parser in `graphknows/ingestion/parsers/transcript.py`, counting unknown record and block types and retaining timestamp, `cwd`, `gitBranch` and `isSidechain`
   - Verify: `pytest -q tests/ingestion/parsers/test_transcript.py`
 - [ ] T046 [US2] Link tool results as citable `Source`s rather than segments in `graphknows/ingestion/parsers/transcript.py`, and assert recall survives a citation to a tool result that was never ingested
   - Verify: `pytest -q tests/ingestion/parsers/test_transcript_tool_results.py`
