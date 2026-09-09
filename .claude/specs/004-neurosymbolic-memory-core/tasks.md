@@ -46,7 +46,7 @@ result file per row plus the internal metrics.
   - Verify: `pytest -q tests/evaluation/test_identity_metric.py`
 - [X] T013 [P] [US1] Implement the written-minus-read type diff in `evaluation/deadweight.py`: `deadweight` and `panel --compare` exit non-zero on a non-empty `unread_types`, while `baseline` records `passed: false` and continues (FR-041)
   - Verify: `pytest -q tests/evaluation/test_deadweight.py`
-- [ ] T058 [P] [US1] Generalise the triplet audit in `evaluation/audit/` beyond dialogue so fact precision is reported on every run (FR-040)
+- [X] T058 [P] [US1] Generalise the triplet audit in `evaluation/audit/` beyond dialogue so fact precision is reported on every run (FR-040)
   - Verify: `pytest -q tests/evaluation/test_audit_generalised.py`
 - [ ] T014 [US1] Declare the touched types per store read method and accumulate them into a per-connection `read_types` set in `graphknows/storage/arcadedb/graph_store.py`
   - Verify: `pytest -q tests/storage/test_read_types.py`

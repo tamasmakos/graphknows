@@ -286,6 +286,7 @@ def _report(args: argparse.Namespace) -> int:
         tiers,
         {
             "sheet": args.sheet.name,
+            "row": (manifest or {}).get("namespace") or (manifest or {}).get("database", ""),
             "database": (manifest or {}).get("database", "unknown"),
             "seed": (manifest or {}).get("seed", "unknown"),
             "generated_at": datetime.now(UTC).isoformat(),
