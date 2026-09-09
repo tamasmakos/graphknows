@@ -28,3 +28,11 @@ class SourceWriter(_Writer):
             meta=source.meta,
         )
         return source.id
+
+    async def exists(self, content_hash: str) -> bool:
+        """Whether these bytes are already stored, under any uri (FR-007)."""
+        rows = await self._store.query(
+            "MATCH (s:SOURCE {content_hash: $content_hash}) RETURN s.id AS id LIMIT 1",
+            content_hash=content_hash,
+        )
+        return bool(rows)

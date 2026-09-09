@@ -14,7 +14,7 @@ from collections.abc import Sequence
 
 from graphknows.ingestion.extraction.protocol import Extractor, PackGuidance
 from graphknows.models.fact import Fact, Mention
-from graphknows.models.report import IngestReport
+from graphknows.models.report import Counters, IngestReport
 from graphknows.models.segment import Segment
 from graphknows.models.source import Source
 from graphknows.models.symbols import ConceptRef
@@ -70,7 +70,16 @@ class IngestPipeline:
         return f"{type(self).__name__}({self._extractor.name!r}, {len(self._packs)} packs)"
 
     async def ingest(self, source: Source, segments: Sequence[Segment]) -> IngestReport:
-        """Write *source* and *segments* with everything the extractors read in them."""
+        """Write *source* and *segments* with everything the extractors read in them.
+
+        Content already stored is dropped here, before any extractor runs
+        (FR-007): re-ingesting the same bytes costs one query, not a model pass.
+        """
+        if await self._sources.exists(source.content_hash):
+            return IngestReport(
+                source_id=source.id,
+                counters=Counters(sources_deduplicated=1),
+            )
         await self._sources.write(source)
         entities: set[str] = set()
         facts_written = 0

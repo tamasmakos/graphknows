@@ -115,7 +115,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/ontology/test_predicate_index.py`
 - [X] T024 [US2] Implement the Source → Segment → Mention/Fact orchestration in `graphknows/ingestion/pipeline.py`, including bottom-up concept labelling from the loaded packs: `SEGMENT-[EVOKES]->CONCEPT` and `ENTITY-[INSTANCE_OF]->CONCEPT` (FR-002)
   - Verify: `pytest -q tests/ingestion/test_pipeline.py`
-- [ ] T025 [US2] Deduplicate on `Source.content_hash` before any model runs and report `sources_deduplicated` in `graphknows/ingestion/pipeline.py`
+- [X] T025 [US2] Deduplicate on `Source.content_hash` before any model runs and report `sources_deduplicated` in `graphknows/ingestion/pipeline.py`
   - Verify: `pytest -q tests/ingestion/test_dedup.py`
 - [ ] T026 [US2] Implement the functional-predicate currency rule (supersede newer/older, contradict on equal times) in `graphknows/ingestion/pipeline.py`
   - Verify: `pytest -q tests/ingestion/test_supersede.py`
