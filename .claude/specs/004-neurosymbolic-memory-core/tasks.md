@@ -113,7 +113,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/extraction/test_pack_guidance.py`
 - [X] T023 [P] [US2] Add the predicate index in `graphknows/symbolic/predicates.py`, replacing free-string relations in `graphknows/ingestion/extraction/relations/`
   - Verify: `pytest -q tests/ontology/test_predicate_index.py`
-- [ ] T024 [US2] Implement the Source → Segment → Mention/Fact orchestration in `graphknows/ingestion/pipeline.py`, including bottom-up concept labelling from the loaded packs: `SEGMENT-[EVOKES]->CONCEPT` and `ENTITY-[INSTANCE_OF]->CONCEPT` (FR-002)
+- [X] T024 [US2] Implement the Source → Segment → Mention/Fact orchestration in `graphknows/ingestion/pipeline.py`, including bottom-up concept labelling from the loaded packs: `SEGMENT-[EVOKES]->CONCEPT` and `ENTITY-[INSTANCE_OF]->CONCEPT` (FR-002)
   - Verify: `pytest -q tests/ingestion/test_pipeline.py`
 - [ ] T025 [US2] Deduplicate on `Source.content_hash` before any model runs and report `sources_deduplicated` in `graphknows/ingestion/pipeline.py`
   - Verify: `pytest -q tests/ingestion/test_dedup.py`

@@ -56,6 +56,8 @@ class Mention(BaseModel, frozen=True):
         entity_id: The entity the surface refers to.
         surface: The text as written.
         span: ``(start, end)`` byte offsets of the surface within the segment.
+        label: The extractor's type for the surface, named in the pack's label
+            set; it is what resolves the entity's concept at labelling time.
         confidence: How sure the extractor is of the reference.
         extractor: Identity of the extractor that produced the mention.
     """
@@ -64,6 +66,7 @@ class Mention(BaseModel, frozen=True):
     entity_id: str
     surface: str
     span: tuple[int, int]
+    label: str = ""
     confidence: float = 1.0
     extractor: str = ""
 

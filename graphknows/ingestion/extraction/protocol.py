@@ -13,13 +13,13 @@ from typing import Any, Protocol, runtime_checkable
 
 from graphknows.models.fact import Fact, Mention
 from graphknows.models.segment import Segment
-from graphknows.models.symbols import PredicateRef
+from graphknows.models.symbols import ConceptRef, PredicateRef
 from graphknows.symbolic.predicates import PredicateIndex
 
 
 @runtime_checkable
 class PackGuidance(Protocol):
-    """The whole of what an extractor asks a pack for.
+    """The whole of what the write path asks a pack for.
 
     Declared here rather than imported: ``graphknows.packs`` sits above the core
     and the core must not know it (``core-knows-no-domain``). Every ``DomainPack``
@@ -29,6 +29,9 @@ class PackGuidance(Protocol):
     @property
     def name(self) -> str:
         """Pack name; the key its predicate index is memoised under."""
+
+    def concepts(self) -> Iterable[ConceptRef]:
+        """The concepts a segment or entity from this pack may be labelled with."""
 
     def predicates(self) -> Iterable[PredicateRef]:
         """The predicates a fact from this pack may name."""
@@ -145,6 +148,7 @@ class _DecoderExtractor:
             entity_id=_entity_id(surface),
             surface=surface,
             span=span,
+            label=str(entity.get("type") or ""),
             confidence=float(entity.get("score", 1.0) or 0.0),
             extractor=self.name,
         )

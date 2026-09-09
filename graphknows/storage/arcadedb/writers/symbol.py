@@ -27,6 +27,31 @@ class SymbolWriter(_Writer):
         )
         return concept.uri
 
+    async def write_evokes(self, segment_id: str, concept_uri: str, confidence: float) -> None:
+        """MERGE the SEGMENT-[EVOKES]->CONCEPT edge of bottom-up labelling (FR-002)."""
+        await self._store.command(
+            "MATCH (g:SEGMENT {id: $segment_id}), (c:CONCEPT {uri: $uri}) "
+            "MERGE (g)-[e:EVOKES]->(c) SET e.confidence = $confidence",
+            segment_id=segment_id,
+            uri=concept_uri,
+            confidence=confidence,
+        )
+
+    async def write_instance_of(self, entity_id: str, concept: ConceptRef, score: float) -> None:
+        """MERGE the ENTITY-[INSTANCE_OF]->CONCEPT edge typing one entity (FR-002).
+
+        The owning pack is carried on the edge: two packs may type the same
+        entity, and a reader must be able to tell whose judgement it is.
+        """
+        await self._store.command(
+            "MATCH (e:ENTITY {id: $entity_id}), (c:CONCEPT {uri: $uri}) "
+            "MERGE (e)-[i:INSTANCE_OF]->(c) SET i.score = $score, i.pack = $pack",
+            entity_id=entity_id,
+            uri=concept.uri,
+            score=score,
+            pack=concept.pack,
+        )
+
     async def write_predicate(self, predicate: PredicateRef) -> str:
         """MERGE the PREDICATE vertex and return its id."""
         await self._store.command(
