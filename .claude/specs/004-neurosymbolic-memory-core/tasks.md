@@ -48,7 +48,7 @@ result file per row plus the internal metrics.
   - Verify: `pytest -q tests/evaluation/test_deadweight.py`
 - [X] T058 [P] [US1] Generalise the triplet audit in `evaluation/audit/` beyond dialogue so fact precision is reported on every run (FR-040)
   - Verify: `pytest -q tests/evaluation/test_audit_generalised.py`
-- [ ] T014 [US1] Declare the touched types per store read method and accumulate them into a per-connection `read_types` set in `graphknows/storage/arcadedb/graph_store.py`
+- [X] T014 [US1] Declare the touched types per store read method and accumulate them into a per-connection `read_types` set in `graphknows/storage/arcadedb/graph_store.py`
   - Verify: `pytest -q tests/storage/test_read_types.py`
 - [X] T015 [US1] Implement `python -m evaluation baseline --rows … --repeats 3` writing `median`/`band`/`runs`/`commit` per row and metric under `evaluation/results/baseline/`
   - Verify: `pytest -q tests/evaluation/test_baseline_cli.py`

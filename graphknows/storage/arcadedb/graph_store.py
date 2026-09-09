@@ -27,10 +27,11 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from functools import wraps
+from typing import Any, TypeVar, cast
 
 from graphknows.exceptions import SchemaVersionMismatchError, StoreError
 from graphknows.storage.arcadedb._base import ArcadeStoreBase
@@ -108,6 +109,34 @@ _VERTEX_LABELS = (
     "ENTITY",
     "SESSION",
 )
+
+
+_ReadMethod = TypeVar("_ReadMethod", bound=Callable[..., Any])
+
+
+def reads(*types: str) -> Callable[[_ReadMethod], _ReadMethod]:
+    """Declare the vertex/edge types a store read method touches (FR-040).
+
+    The decorated method records them in the store's per-connection
+    ``read_types`` set as it runs, so the dead-weight check diffs what a run
+    actually read against what it wrote. Deliberately a runtime observation:
+    the SQL is built as strings, so a static scan would both miss types and
+    invent them. The declaration is also readable as a registry — the
+    ``read_types`` attribute on the method itself.
+    """
+    declared = frozenset(types)
+
+    def decorate(method: _ReadMethod) -> _ReadMethod:
+        @wraps(method)
+        async def wrapper(self: GraphStore, *args: Any, **kwargs: Any) -> Any:
+            # Lazy: test doubles subclass GraphStore and skip __init__.
+            self.__dict__.setdefault("_read_types", set()).update(declared)
+            return await method(self, *args, **kwargs)
+
+        wrapper.read_types = declared  # type: ignore[attr-defined]
+        return cast(_ReadMethod, wrapper)
+
+    return decorate
 
 
 def _emb_sql(emb: list[float]) -> str:
@@ -468,6 +497,15 @@ class GraphStore(ArcadeStoreBase):
         # database and the ontology is reference data written once, so a cold
         # cache just re-queries once more.
         self._functional_predicates_cache: set[str] | None = None
+        # Types read over this connection so far, accumulated by @reads as
+        # queries execute; the panel harness snapshots it for the dead-weight
+        # check (FR-040).
+        self._read_types: set[str] = set()
+
+    @property
+    def read_types(self) -> frozenset[str]:
+        """Vertex/edge types this connection has read back so far (FR-040)."""
+        return frozenset(getattr(self, "_read_types", ()))
 
     # ------------------------------------------------------------------
     # Schema
@@ -666,6 +704,7 @@ class GraphStore(ArcadeStoreBase):
                 if c.get("embedding"):
                     await self._set_embedding("CHUNK", "chunk_id", c["chunk_id"], c["embedding"])
 
+    @reads("CHUNK", "FILE", "PART_OF")
     async def max_chunk_seq(self, file_id: str) -> int | None:
         """Highest ``CHUNK.seq`` written for this file; ``None`` when it has none.
 
@@ -729,6 +768,7 @@ class GraphStore(ArcadeStoreBase):
         )
         return turn_id
 
+    @reads("TURN")
     async def next_turn_seq(self, session_id: str) -> int:
         """Next 1-based sequence number for this session's buffer (1 when empty)."""
         rows = await self.query(
@@ -738,6 +778,7 @@ class GraphStore(ArcadeStoreBase):
         m = rows[0].get("m") if rows else None
         return int(m or 0) + 1
 
+    @reads("TURN")
     async def list_turns(
         self, session_id: str, *, state: str = "raw", limit: int = 30
     ) -> list[dict[str, Any]]:
@@ -871,6 +912,7 @@ class GraphStore(ArcadeStoreBase):
             rows=rows,
         )
 
+    @reads("ONTOLOGY_PROPERTY")
     async def _functional_predicates(self) -> set[str]:
         """Labels of ontology properties declared ``owl:FunctionalProperty``.
 
@@ -1980,6 +2022,7 @@ class GraphStore(ArcadeStoreBase):
         )
         return source_id
 
+    @reads("SOURCE")
     async def sources(self, channel: str = "") -> list[dict[str, Any]]:
         """Enumerate SOURCE rows, newest ``imported_at`` first.
 
@@ -1992,6 +2035,7 @@ class GraphStore(ArcadeStoreBase):
             match += f" WHERE s.channel = {quote(channel)}"
         return await self.query(f"{match} RETURN s ORDER BY s.imported_at DESC")
 
+    @reads("CHUNK", "MATCHES_CLASS", "ONTOLOGY_CLASS")
     async def search_ontology_classes(
         self,
         embedding: list[float],
@@ -2062,6 +2106,7 @@ class GraphStore(ArcadeStoreBase):
                 )
         return out
 
+    @reads("ENTITY")
     async def _known_frame_fillers(self, instances: list[dict[str, Any]]) -> set[str] | None:
         """Which role fillers already exist as ENTITY vertices, by name_norm.
 
@@ -2595,6 +2640,7 @@ class GraphStore(ArcadeStoreBase):
     # Read API — chunks
     # ------------------------------------------------------------------
 
+    @reads("CHUNK")
     async def search_chunks_ann(
         self,
         embedding: list[float],
@@ -2656,6 +2702,7 @@ class GraphStore(ArcadeStoreBase):
             parts.append(f"{alias}state = {quote(state)}")
         return (" AND " + " AND ".join(parts)) if parts else ""
 
+    @reads("CHUNK", "ENTITY", "MENTIONS")
     async def query_entity_chunks(
         self,
         entity_names: list[str],
@@ -2695,6 +2742,7 @@ class GraphStore(ArcadeStoreBase):
         )
         return [{"chunk_id": r["chunk_id"], "text": r.get("text", "")} for r in rows]
 
+    @reads("CHUNK")
     async def full_text_search_chunks(
         self,
         terms: list[str],
@@ -2744,6 +2792,7 @@ class GraphStore(ArcadeStoreBase):
         )
         return [{"chunk_id": r["chunk_id"], "text": r.get("text", "")} for r in rows]
 
+    @reads("CHUNK", "MENTIONS_DATE", "TEMPORAL")
     async def query_temporal_chunks(
         self,
         iso_dates: list[str],
@@ -2781,6 +2830,7 @@ class GraphStore(ArcadeStoreBase):
             for r in rows
         ]
 
+    @reads("CHUNK", "ENTITY", "MENTIONS", "MENTIONS_DATE", "TEMPORAL")
     async def query_dated_chunks_by_entities(
         self,
         entity_names: list[str],
@@ -2832,6 +2882,7 @@ class GraphStore(ArcadeStoreBase):
             for r in rows
         ]
 
+    @reads("CHUNK", "FILE", "PART_OF")
     async def neighbor_chunks(
         self, chunk_ids: list[str], radius: int = 1
     ) -> dict[str, list[dict[str, Any]]]:
@@ -2892,6 +2943,7 @@ class GraphStore(ArcadeStoreBase):
                 out[cid] = sibs
         return out
 
+    @reads("CHUNK")
     async def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Fetch chunks by id. Returns {chunk_id: {text, session_id, ...}}."""
         ids = [c for c in chunk_ids if c]
@@ -2919,6 +2971,7 @@ class GraphStore(ArcadeStoreBase):
                 }
         return result
 
+    @reads("CHUNK")
     async def failed_decode_chunks(self, session_id: str) -> list[dict[str, Any]]:
         """CHUNK rows in this session whose last decode failed, for the re-drive."""
         if not session_id:
@@ -2948,6 +3001,7 @@ class GraphStore(ArcadeStoreBase):
     # Read API — topics / frames / entity graph
     # ------------------------------------------------------------------
 
+    @reads("CHUNK", "EVOKED_BY", "FRAME")
     async def query_frames_by_embedding(
         self,
         embedding: list[float],
@@ -3023,6 +3077,7 @@ class GraphStore(ArcadeStoreBase):
             )
         return out
 
+    @reads("BROADER")
     async def _narrower_scores(
         self, vertex: str, key: str, matched: dict[str, float]
     ) -> dict[str, tuple[float, str]]:
@@ -3068,6 +3123,7 @@ class GraphStore(ArcadeStoreBase):
             logger.debug("%s query expanded to %d narrower nodes", vertex, len(out))
         return out
 
+    @reads("ENTITY", "REL")
     async def verifier_coverage(self) -> dict[str, dict[str, Any]]:
         """Per-tier audit: which relation tiers the verifier is able to score.
 
@@ -3088,6 +3144,7 @@ class GraphStore(ArcadeStoreBase):
         )
         return verifier_coverage_rows(rows)
 
+    @reads("ENTITY", "FRAME_INSTANCE", "PLAYS_ROLE", "REL")
     async def entity_coverage(self) -> dict[str, int]:
         """Whole-namespace audit: how many ENTITY nodes carry no semantic edge.
 
@@ -3131,6 +3188,7 @@ class GraphStore(ArcadeStoreBase):
     # Read API — structured fact context (fact-sheet for the generator)
     # ------------------------------------------------------------------
 
+    @reads("ENTITY")
     async def resolve_query_entities(self, words: list[str], cap: int = 6) -> list[str]:
         """Resolve query tokens to ENTITY surface names for the fact-sheet.
 
@@ -3180,6 +3238,7 @@ class GraphStore(ArcadeStoreBase):
         )
         return [r["name"] for r in ranked[: int(cap)]]
 
+    @reads("CHUNK", "ENTITY", "FRAME_EVOKED_IN", "FRAME_INSTANCE", "PLAYS_ROLE")
     async def query_chunks_by_frame_facts(
         self,
         frames: list[str],
@@ -3233,6 +3292,7 @@ class GraphStore(ArcadeStoreBase):
         ranked = sorted(score.items(), key=lambda kv: (-kv[1], kv[0]))[: int(top_k)]
         return [{"chunk_id": cid, "score": s} for cid, s in ranked]
 
+    @reads("CHUNK", "ENTITY", "FRAME_EVOKED_IN", "FRAME_INSTANCE", "PLAYS_ROLE")
     async def frame_rank_signals(
         self,
         chunk_ids: list[str],
@@ -3312,6 +3372,7 @@ class GraphStore(ArcadeStoreBase):
         total = int(total_rows[0]["n"]) if total_rows else 0
         return out, df, total
 
+    @reads("ENTITY", "FRAME_INSTANCE", "FRAME_NESTS", "PLAYS_ROLE", "REL")
     async def entity_fact_context(self, entity_names: list[str], max_facts: int = 40) -> list[str]:
         """Compact structured fact-sheet for the given entities (for the generator).
 
@@ -3484,6 +3545,7 @@ class GraphStore(ArcadeStoreBase):
             self._db, f"REBUILD GRAPH ANALYTICAL VIEW {_OLAP_VIEW}", language="sql"
         )
 
+    @reads("ENTITY", "REL")
     async def _entity_degree_map(self) -> dict[str, int]:
         """Total (in+out) semantic-relation degree per ENTITY, keyed by ``name_norm``.
 
@@ -3703,6 +3765,7 @@ class GraphStore(ArcadeStoreBase):
     # Entity resolution primitives (consolidation / flush path)
     # ------------------------------------------------------------------
 
+    @reads("CHUNK", "ENTITY", "MENTIONS")
     async def list_entities(self) -> list[dict[str, Any]]:
         """List every ENTITY with its incoming-MENTIONS count (namespace-wide).
 
@@ -3727,6 +3790,7 @@ class GraphStore(ArcadeStoreBase):
             if r.get("name_norm")
         ]
 
+    @reads("CHUNK")
     async def distinct_speakers(self) -> list[str]:
         """Casefolded distinct CHUNK.speaker values (the known session speakers)."""
         rows = await self.query(
