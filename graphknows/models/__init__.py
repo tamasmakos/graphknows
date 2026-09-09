@@ -23,6 +23,14 @@ from graphknows.models.ingest import IngestResult
 from graphknows.models.ingest_options import IngestOptions
 from graphknows.models.memory_class import MemoryClass
 from graphknows.models.message import Message, MessageInput, Role, normalize_messages
+from graphknows.models.report import (
+    Counters,
+    Evidence,
+    FactWithEvidence,
+    IngestReport,
+    RecallBudget,
+    RecallResult,
+)
 from graphknows.models.scope import MemoryScope
 from graphknows.models.source import Source
 from graphknows.models.symbols import ConceptRef, PredicateRef, SymbolKind
@@ -30,10 +38,14 @@ from graphknows.models.symbols import ConceptRef, PredicateRef, SymbolKind
 __all__ = [
     "MAX_CONTEXT_CHARS",
     "ConceptRef",
+    "Counters",
+    "Evidence",
     "Fact",
     "FactState",
+    "FactWithEvidence",
     "Hit",
     "IngestOptions",
+    "IngestReport",
     "IngestResult",
     "MemoryClass",
     "MemoryScope",
@@ -43,6 +55,8 @@ __all__ = [
     "Modality",
     "Polarity",
     "PredicateRef",
+    "RecallBudget",
+    "RecallResult",
     "RenderedMemories",
     "Role",
     "Source",

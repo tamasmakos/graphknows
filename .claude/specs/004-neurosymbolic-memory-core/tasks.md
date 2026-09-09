@@ -76,7 +76,7 @@ rules that every user story below depends on.
   - Verify: `pytest -q tests/models/test_fact.py`
 - [X] T006 [P] Create `ConceptRef`, `PredicateRef` and `SymbolKind` (concept, predicate, episode) in `graphknows/models/symbols.py`
   - Verify: `pytest -q tests/models/test_symbols.py`
-- [ ] T007 [P] Create `IngestReport`, `RecallResult`, `RecallBudget`, `FactWithEvidence` and the `Counters` set from research.md R9 in `graphknows/models/report.py`
+- [X] T007 [P] Create `IngestReport`, `RecallResult`, `RecallBudget`, `FactWithEvidence` and the `Counters` set from research.md R9 in `graphknows/models/report.py`
   - Verify: `pytest -q tests/models/test_report.py`
 - [ ] T008 [P] Add `PackConflictError` to `graphknows/exceptions.py`
   - Verify: `python -c "from graphknows.exceptions import PackConflictError"`
