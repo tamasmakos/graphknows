@@ -79,41 +79,33 @@ def test_distinct_options_get_distinct_pipelines(monkeypatch: pytest.MonkeyPatch
     )
 
 
-def test_every_call_site_shares_at_most_two_pipelines(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The two configurations in use (full pipeline, and disable=['ner']) must
-    resolve to exactly two resident pipelines, not one per call site."""
+def test_call_sites_share_one_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The one configuration left in use must resolve to one resident pipeline.
+
+    The ``disable=['ner']`` configuration went with the frame plane's parser;
+    every remaining call site asks for the plain pipeline.
+    """
     calls = _install_fake_load(monkeypatch)
     monkeypatch.setenv("GRAPHKNOWS_SPACY_MODEL", "gk_fake_model")
 
     from graphknows.ingestion.extraction.entities.extractor import _SpacySchemaMiner
     from graphknows.ingestion.extraction.entities.hygiene import _parser
-    from graphknows.symbolic.framenet.framenet import _spacy
     from graphknows.symbolic.ontology.skos import _lemmatise
 
     hygiene_pipeline = _parser()
     miner_pipeline = _SpacySchemaMiner(model_name="gk_fake_model").nlp
     _lemmatise({"dog"})
-    framenet_pipeline = _spacy()
 
     no_option_calls = [c for c in calls if c[1] == {}]
-    disable_ner_calls = [c for c in calls if c[1] == {"disable": ["ner"]}]
 
-    assert len(calls) == 2, (
-        f"expected 2 resident spaCy pipelines (one plain, one disable=['ner']), "
-        f"but {len(calls)} pipelines were loaded: {calls}"
+    assert len(calls) == 1, (
+        f"expected 1 resident spaCy pipeline, but {len(calls)} were loaded: {calls}"
     )
     assert len(no_option_calls) == 1, (
         f"expected 1 spacy.load call with no options, got {len(no_option_calls)}: {calls}"
     )
-    assert len(disable_ner_calls) == 1, (
-        f"expected 1 spacy.load call with disable=['ner'], got {len(disable_ner_calls)}: {calls}"
-    )
-
     assert hygiene_pipeline is miner_pipeline, (
         "hygiene._parser() and _SpacySchemaMiner.nlp must share the same plain pipeline instance"
-    )
-    assert framenet_pipeline is not hygiene_pipeline, (
-        "framenet._spacy() uses disable=['ner'] and must not share the plain pipeline"
     )
 
 

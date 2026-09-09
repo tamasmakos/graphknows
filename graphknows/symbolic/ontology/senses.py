@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -72,19 +73,51 @@ def _wordnet() -> Any:
     return wn
 
 
+_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _sentences(text: str) -> list[tuple[int, str]]:
+    """``(offset, sentence)`` pairs, offsets into *text*."""
+    out: list[tuple[int, str]] = []
+    pos = 0
+    for part in _SPLIT.split(text.strip()):
+        if not part:
+            continue
+        start = text.index(part, pos)
+        out.append((start, part))
+        pos = start + len(part)
+    return out
+
+
+def _marked_line(text: str, offset: int, word: str) -> str:
+    """The sentence containing *offset*, with the trigger at *offset* starred.
+
+    Sentence-scoped, not line-scoped (issue #161): a line can state several
+    events ("Tom got fired... Caroline got hired..."), so a line-wide context
+    let one event pull in the other's entities.
+
+    The star still separates two triggers of one word inside one sentence ("I
+    gave a book and gave a pen"): naming the trigger cannot, since both are
+    'gave', but marking it in the TEXT gives each mention its own input.
+    """
+    sent_start, sent = next(s for s in _sentences(text) if s[0] <= offset < s[0] + len(s[1]))
+    local = offset - sent_start
+    return f"{sent[:local]}*{sent[local : local + len(word)]}*{sent[local + len(word) :]}"
+
+
 def sense_lemmas(word: str, pos: str, text: str, offset: int, surface: str) -> frozenset[str]:
     """The lemma names of the synset this mention of *word* actually uses.
 
     *word* is the LEMMA (used to look up WordNet synsets); *surface* is the
     actual inflected token at *offset* ("rushed", not "rush") and is what gets
-    starred in the mention line — ``marked_line`` slices by character length,
+    starred in the mention line — ``_marked_line`` slices by character length,
     so starring with the lemma corrupts every inflected mention ("rush*ed*"
     instead of "*rushed*").
 
     Empty when the corpus is missing, *word* has no synsets of *pos*, or the
     embedding choice is not confident enough — abstention is always the safe
     direction (see the module docstring). The mention's own sentence, with the
-    trigger starred (:func:`graphknows.symbolic.framenet.srl.marked_line`), is
+    trigger starred (:func:`_marked_line`), is
     embedded and ranked against each candidate synset's gloss (definition plus
     examples plus lemma names, since a bare definition is often too short to
     embed well); the winner is accepted only above both a similarity floor and
@@ -98,11 +131,10 @@ def sense_lemmas(word: str, pos: str, text: str, offset: int, surface: str) -> f
         return frozenset()
 
     from graphknows.storage.embedder import embed_one
-    from graphknows.symbolic.framenet.srl import marked_line
     from graphknows.symbolic.index import match
 
     try:
-        mention = marked_line(text, offset, surface)
+        mention = _marked_line(text, offset, surface)
     except StopIteration:
         log.debug("sense_lemmas: offset %d for %r falls outside every sentence span", offset, word)
         return frozenset()

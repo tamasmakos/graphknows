@@ -1,14 +1,10 @@
-"""frames — FrameNet extraction and the frame-definition embedding index.
+"""framenet — FrameNet as pack vocabulary, and nothing else.
 
-Shared infrastructure, not a channel: :mod:`graphknows.symbolic.framenet.framenet` parses
-text (a chunk at flush time, a question at query time) into frames, and
-:mod:`graphknows.symbolic.framenet.index` cosine-matches an embedding against the ~1221
-FrameNet frame definitions. Both paths use it — ``ingestion`` writes the FRAME
-layer, ``channels.frames`` reads it back — which is why it sits below both
-rather than inside the plugin folder. :mod:`graphknows.symbolic.framenet.fe` is the
-frame-element plane: coreness, Requires/Excludes validity, CoreSet fillability
-and the semantic-type veto.
+:mod:`graphknows.symbolic.framenet.emitter` turns the shipped corpus into
+concepts and role predicates a pack can declare (FR-023). The frame plane the
+old core wrote — the frame-element mirror, frame-specific vertex and edge
+types, frame parsing and the frame-definition matching index — is gone.
 
-No re-exports: consumers import from the specific module, so nothing pulls
-spaCy/NLTK just by touching the package.
+No re-exports: consumers import from the specific module, so nothing pulls the
+corpus just by touching the package.
 """

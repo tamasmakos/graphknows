@@ -35,15 +35,12 @@ PENDING_CUTOVER = frozenset(
         "ingestion/extraction/llm/schema.py",
         "ingestion/extraction/protocol.py",
         "ingestion/extraction/relations/_lingfeatures.py",
-        "ingestion/extraction/relations/frame_srl.py",
         "ingestion/parsers/text.py",
         "integrations/langgraph/_session.py",
         "memory.py",
         "models/hit.py",
         "models/ingest_options.py",
         "storage/arcadedb/graph_store.py",
-        "symbolic/framenet/framenet.py",
-        "symbolic/framenet/srl.py",
     }
 )
 

@@ -105,8 +105,6 @@ def test_build_retriever_appends_caller_channels() -> None:
     from graphknows.settings import GraphKnowsSettings
 
     ch = _RecordingChannel()
-    retriever = build_retriever(
-        GraphKnowsSettings(enable_frames=False), store=MagicMock(), extra_channels=[ch]
-    )
+    retriever = build_retriever(GraphKnowsSettings(), store=MagicMock(), extra_channels=[ch])
 
     assert ch in retriever._channels

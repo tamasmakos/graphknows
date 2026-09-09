@@ -3,8 +3,7 @@
 Chunks are class-tagged at ingest by cosine-matching their embedding to the
 ontology's class DEFINITIONS (see ``graphknows.symbolic.ontology.catalog``); each
 ONTOLOGY_CLASS node carries that definition's embedding, so this channel matches
-the query with a namespace-local graph vector search over them, exactly as
-:class:`~graphknows.channels.frames.FrameChannel` does over FRAME nodes.
+the query with a namespace-local graph vector search over them.
 
 A matched class reaches chunks by one path:
 
@@ -17,10 +16,10 @@ cosine-reranked, and removed — see the comment in ``graph_store.py``'s
 ``search_ontology_classes``. The INSTANCE_OF writer that fed it was itself a
 write-only layer and has since been removed (FR-035).
 
-Where frames give abstract questions a route by the situation a chunk evokes,
-classes give them a route by the KIND of thing a chunk is about — "where did
-they go" reaches chunks through their Place-typed entities without the word
-"place" appearing anywhere. Fully embedding-based, so valid in both profiles.
+Classes give abstract questions a route by the KIND of thing a chunk is about
+— "where did they go" reaches chunks through their Place-typed entities
+without the word "place" appearing anywhere. Fully embedding-based, so valid
+in both profiles.
 
 Additive to the RRF fusion rather than a re-rank: re-ranking the fused list on a
 graph signal has regressed retrieval here before (see the community-detection

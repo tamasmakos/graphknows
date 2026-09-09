@@ -152,10 +152,6 @@ _NEIGHBOR_RADIUS: int = get_settings().neighbor_radius
 # answer. Measured on conv-30 evidence_recall@25 without a reranker: pool=25
 # gives 0.589, pool=100 gives 0.692.
 _POOL_FACTOR: int = get_settings().pool_factor
-# Query frames considered by the frame re-rank, before the 1-hop expansion. The
-# query's own cosine ranking is noisy past a handful, and every extra frame
-# widens the IN-list of the pool lookup.
-_FRAME_RERANK_TOP_K: int = get_settings().frame_rerank_top_k
 _MIN_POOL: int = get_settings().min_pool
 
 
@@ -184,7 +180,7 @@ class DETRetriever:
     ) -> None:
         self.store = store
         self.embed_model = embed_model
-        # OPTIONAL channels only (frames, ontology) — the four baseline
+        # OPTIONAL channels only (ontology) — the four baseline
         # collectors are methods on this class and always run. This spine fuses
         # + ranks whatever they return and is otherwise signal-blind.
         self._channels = channels or []
@@ -241,13 +237,6 @@ class DETRetriever:
         # this pool and was measured WORSE at every depth a caller uses
         # (evidence_recall@25 0.567 against 0.692 without it) at 3.5x the wall
         # clock; see tests/retrieval/test_no_cross_encoder.py.
-        #
-        # Frame re-ranking is not that: it reorders the pool by a signal the
-        # other channels cannot see (frame specificity + role binding) instead of
-        # re-scoring the text, it only ever promotes, and it costs three indexed
-        # reads. It exists because the measured loss is between the probe and the
-        # cut — recall 0.948 there, 0.765 here.
-        combined = await self._frame_rerank(ctx, combined)
         fused = (await self._shape_and_rank(combined))[:top_k]
         fused = await self._expand_neighbors(fused)
         for i, item in enumerate(fused):
@@ -260,46 +249,6 @@ class DETRetriever:
             search_type="DET",
             facts=await self._fact_sheet(ctx),
         )
-
-    async def _frame_rerank(
-        self, ctx: Any, combined: dict[str, tuple[float, dict[str, Any]]]
-    ) -> dict[str, tuple[float, dict[str, Any]]]:
-        """Promote pool chunks whose frame instances match the query specifically.
-
-        Soft-fails to the unchanged pool: a ranking hint must never be able to
-        break retrieval.
-        """
-        from graphknows.ranking import frame_boost
-
-        if not frame_boost.enabled() or not combined:
-            return combined
-        try:
-            # Frames from the query EMBEDDING, which the vector channel already
-            # computed — a dot product against the cached definition matrix.
-            # NOT ctx.frame_parse(): that is spaCy plus a sentence-transformers
-            # encode of the query and every candidate frame definition, and it is
-            # lazy precisely so a non-frame run never pays it. Putting it on the
-            # ranking path made every query in the suite load and run those models.
-            #
-            # It also matches how a chunk is frame-tagged at ingest, so both sides
-            # speak one vocabulary; expand_frames is a dict walk over the
-            # hierarchy, because question and statement rarely evoke one frame.
-            from graphknows.symbolic.framenet.framenet import expand_frames
-            from graphknows.symbolic.framenet.index import match_frames
-
-            matched = {f for f, _ in match_frames(ctx.emb, top_k=_FRAME_RERANK_TOP_K)}
-            frames = sorted(expand_frames(matched, hops=1)) if matched else []
-            if not frames:
-                return combined
-            anchors = await ctx.resolve_entities(self.store)
-            rows, df, total = await self.store.frame_rank_signals(
-                list(combined), frames, anchors, ctx.session_id or None, ctx.state
-            )
-            scores = frame_boost.score_chunks(rows, df, total)
-            return frame_boost.apply(combined, scores)
-        except Exception as exc:  # pragma: no cover - defensive soft-fail
-            log.debug("frame rerank skipped (soft): %s", exc)
-            return combined
 
     async def _expand_neighbors(self, fused: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Merge each result's seq-adjacent same-file chunks INTO its own text.

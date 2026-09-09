@@ -24,12 +24,11 @@ class ChannelContext:
     """Per-query shared state passed to every channel.
 
     Eager fields are computed by the retriever spine before fan-out;
-    ``frame_parse`` is lazy (only frame-aware channels trigger it, so non-frame
-    runs never load spaCy/FrameNet).
+    ``resolve_entities`` is lazy, so a run whose channels never ask for entity
+    names never touches the store.
     """
 
     __slots__ = (
-        "_frame_parse",
         "_resolved_entities",
         "emb",
         "emb2",
@@ -59,31 +58,18 @@ class ChannelContext:
         self.emb2 = emb2
         self.words = words
         self.words_graph = words_graph
-        self._frame_parse: dict[str, Any] | None = None
         self._resolved_entities: list[str] | None = None
 
     async def resolve_entities(self, store: Any) -> list[str]:
         """Entity names the query tokens resolve to (cached per query).
 
-        Three consumers ask for the same names from the same ``words_graph``
-        (fact sheet, frame re-rank, frame-fact channel); the graph read is
-        issued once and shared. Lazy like ``frame_parse``: a run where none of
-        them is enabled never touches the store.
+        Consumers ask for the same names from the same ``words_graph``; the
+        graph read is issued once and shared, and a run where nothing asks
+        never touches the store.
         """
         if self._resolved_entities is None:
             self._resolved_entities = await store.resolve_query_entities(self.words_graph)
         return self._resolved_entities
-
-    def frame_parse(self) -> dict[str, Any]:
-        """Parse the query into frames/anchors (cached).
-
-        Loads spaCy+FrameNet on first use — only invoked by frame-aware channels.
-        """
-        if self._frame_parse is None:
-            from graphknows.symbolic.framenet.framenet import parse_query
-
-            self._frame_parse = parse_query(self.query)
-        return self._frame_parse
 
 
 # Collector return type: chunk_id -> (fused_score, info_dict).
