@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import time
 import uuid
 from collections import defaultdict
@@ -30,11 +29,13 @@ from graphknows.exceptions import ConfigurationError
 from graphknows.ingestion.parsers.text import PlainTextParser, strip_content_heading
 from graphknows.models.fact import FactState
 from graphknows.models.hit import Hit
+from graphknows.models.message import Message
 from graphknows.models.report import IngestReport, RecallBudget, RecallResult
 from graphknows.models.segment import Segment, SegmentKind
 from graphknows.models.source import Source
 from graphknows.packs import DomainPack, load_packs
 from graphknows.settings import Decoder, GraphKnowsSettings, MemoryMode, get_settings
+from graphknows.storage.arcadedb.writers import WRITTEN_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def _redact_store_error(exc: Exception, *, where: str) -> str:
 
     ArcadeDB failures carry the request host and the raw server response body
     (see ``ArcadeDBClient._raise_for_status``), and ``doctor``, ``purge_memory``
-    and ``flush_memory`` hand their errors straight to an MCP caller — that
+    and ``flush`` hand their errors straight to an MCP caller — that
     detail must not cross the boundary verbatim (FR-031). The correlation id
     ties the redacted message back to the full one in the log, so redacting
     for the caller does not blind the operator (Constitution V).
@@ -120,50 +121,12 @@ def _format_fused_hits(fused_results: list[dict[str, Any]], session_id: str) -> 
     ]
 
 
-_WORD_RE = re.compile(r"[a-z0-9']+")
-
-
 def _turn_anchor(ts: object) -> datetime | None:
-    """A buffered turn's time anchor, or ``None`` so ``Segment`` marks it inferred."""
+    """A turn's own time anchor, or ``None`` so ``Segment`` marks it inferred."""
     try:
         return datetime.fromisoformat(str(ts))
     except ValueError:
         return None
-
-
-def _format_stm_hits(
-    turns: list[dict[str, Any]], query: str, top_k: int, session_id: str
-) -> list[Hit]:
-    """Rank buffered TURN rows by cheap word-overlap against ``query``.
-
-    Deliberately no embeddings: the STM buffer is meant to stay free (no
-    extraction, no vectors) until ``flush`` runs it through the real pipeline.
-    Ranked by (overlap desc, seq desc) so ties favour the most recent turn;
-    zero-overlap turns are dropped entirely.
-    """
-    q_terms = set(_WORD_RE.findall(query.lower()))
-    if not q_terms:
-        return []
-    scored: list[tuple[int, int, dict[str, Any]]] = []
-    for t in turns:
-        words = set(_WORD_RE.findall(str(t.get("text", "")).lower()))
-        overlap = len(q_terms & words)
-        if overlap:
-            scored.append((overlap, int(t.get("seq", 0) or 0), t))
-    scored.sort(key=lambda x: (-x[0], -x[1]))
-    return [
-        Hit(
-            text=strip_content_heading(str(t.get("text", ""))),
-            speaker=str(t.get("speaker", "") or ""),
-            ts=str(t.get("ts", "") or ""),
-            score=float(overlap),
-            sources="stm",
-            session_id=session_id,
-            chunk_id=str(t.get("turn_id", "") or ""),
-            metadata={"role": t.get("role", ""), "seq": t.get("seq", 0)},
-        )
-        for overlap, _seq, t in scored[:top_k]
-    ]
 
 
 class Memory:
@@ -206,14 +169,6 @@ class Memory:
         self._pipeline: Any = None
         self._store: Any = None
         self._connect_lock = asyncio.Lock()
-        # One lock per session: allocating the next TURN sequence and writing at
-        # it is a read-then-write, so two concurrent add() calls on one session
-        # would otherwise read the same max(seq) and overwrite each other's
-        # turn_id. Per-session, not global, so unrelated sessions still ingest
-        # in parallel.
-        # ponytail: in-process only — a second worker on the same session needs
-        # a store-side sequence.
-        self._turn_seq_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def __aenter__(self) -> Memory:
         return self
@@ -361,29 +316,12 @@ class Memory:
                     "RETURN count(n) AS c",
                     params={"sid": sid},
                 )
-                raw_turns = await c.query(
-                    db,
-                    "MATCH (n:TURN {session_id: $sid}) WHERE n.state = 'raw' RETURN count(n) AS c",
-                    params={"sid": sid},
-                )
-                cons_turns = await c.query(
-                    db,
-                    "MATCH (n:TURN {session_id: $sid}) WHERE n.state = 'consolidated' "
-                    "RETURN count(n) AS c",
-                    params={"sid": sid},
-                )
             else:
                 raw_chunks = await c.query(
                     db, "MATCH (n:CHUNK) WHERE n.state = 'raw' RETURN count(n) AS c"
                 )
                 cons_chunks = await c.query(
                     db, "MATCH (n:CHUNK) WHERE n.state = 'consolidated' RETURN count(n) AS c"
-                )
-                raw_turns = await c.query(
-                    db, "MATCH (n:TURN) WHERE n.state = 'raw' RETURN count(n) AS c"
-                )
-                cons_turns = await c.query(
-                    db, "MATCH (n:TURN) WHERE n.state = 'consolidated' RETURN count(n) AS c"
                 )
 
             entities = await c.query(db, "MATCH (n:ENTITY) RETURN count(n) AS c")
@@ -403,7 +341,6 @@ class Memory:
                 "relations": _n(relations),
                 "topics": _n(topics),
                 "chunks": {"raw": _n(raw_chunks), "consolidated": _n(cons_chunks)},
-                "turns": {"raw": _n(raw_turns), "consolidated": _n(cons_turns)},
                 # SOURCE rows: which (channel, version) this namespace holds —
                 # the reader that keeps SOURCE from being write-only (#145).
                 # Wraps the already-connected client rather than opening a
@@ -426,17 +363,12 @@ class Memory:
         metadata: dict[str, Any] | None = None,
         text: str = "",
     ) -> dict[str, Any]:
-        """Ingest text or messages into memory — two DIFFERENT lifecycles, same method.
+        """Ingest text or messages into memory — one lifecycle, two shapes.
 
-        - **Conversation turns** (a list, or a dict with a ``"role"`` key): land as
-          cheap ``TURN`` vertices — no NER, no embedding, no CHUNK nodes. They are
-          NOT retrievable via LTM/graph search and NOT counted in ``entities``
-          until :meth:`flush_memory` drains the buffer through the real pipeline.
-          Only :meth:`recall_memory` with ``scope="stm"``/``"both"`` sees them.
-        - **A plain string / document** (no ``"role"`` key): runs the full
-          extraction pipeline (GLiNER + embeddings) immediately and is graph-
-          searchable right away. Unchanged from before — web upload,
-          ``corpus_ingest``, and the eval harness depend on this staying eager.
+        Both shapes run the same pipeline eagerly and are graph-searchable when
+        the call returns (FR-045): a conversation is one ``Source`` whose turns
+        are ``turn`` segments, a document is one ``Source`` whose chunks are
+        ``prose`` segments. There is no buffer to drain any more.
         """
         if text and not messages:
             messages = text
@@ -461,10 +393,8 @@ class Memory:
             isinstance(messages, dict) and "role" in messages
         )
 
+        started = time.monotonic()
         if is_conversation:
-            import time
-
-            t0 = time.monotonic()
             msgs = normalize_messages(messages)
             if not msgs:
                 return {
@@ -472,43 +402,20 @@ class Memory:
                     "chunks": 0,
                     "entities": 0,
                     "turns": 0,
-                    "elapsed_s": round(time.monotonic() - t0, 3),
+                    "elapsed_s": round(time.monotonic() - started, 3),
                     "errors": [],
                 }
-            await self._get_retriever()  # connects the store + ensures schema
-            store = self._store
-            sid = scope.to_session_id()
-            # Held across the writes, not just the read: next_turn_seq derives
-            # the sequence from the turns already written, so releasing before
-            # they land would hand the same number to the next caller.
-            async with self._turn_seq_locks[sid]:
-                await store.ensure_session(sid)
-                seq = await store.next_turn_seq(sid)
-                for m in msgs:
-                    # The message's own timestamp, when it carries one, becomes the
-                    # TURN's ts — and flush() feeds it back as the temporal anchor.
-                    # Defaulting to write time would date every relative expression
-                    # in the turn to whenever the buffer happened to be written.
-                    await store.write_turn(
-                        sid,
-                        m.role,
-                        m.content,
-                        seq,
-                        m.timestamp or "",
-                        speaker=m.name or "",
-                        infer=infer,
-                    )
-                    seq += 1
+            source, segments = self._session_as_source(scope.to_session_id(), msgs)
+            report = await self.ingest(source, segments)
             return {
-                "file_id": "",
-                "chunks": 0,
-                "entities": 0,
+                "file_id": source.id,
+                "chunks": report.segments_written,
+                "entities": report.entities_touched,
                 "turns": len(msgs),
-                "elapsed_s": round(time.monotonic() - t0, 3),
+                "elapsed_s": round(time.monotonic() - started, 3),
                 "errors": [],
             }
 
-        started = time.monotonic()
         source, segments = self._document_as_source(str(messages), title)
         report = await self.ingest(source, segments)
         return {
@@ -538,24 +445,15 @@ class Memory:
         :func:`~graphknows.models.hit.render_memories`; transports that cannot
         carry the type call :meth:`~graphknows.models.hit.Hit.to_dict`.
 
-        ``scope`` has real meaning: ``"stm"`` searches ONLY the session's
-        buffered ``TURN`` rows (cheap word-overlap, no embeddings — see
-        :func:`_format_stm_hits`); ``"ltm"`` searches ONLY the graph via the
-        configured retriever; ``"both"`` returns STM hits first, then graph
-        hits, truncated to ``top_k`` total.
+        ``scope`` selects the segment lifecycle the retriever filters on:
+        ``"ltm"`` reads consolidated segments only, ``"both"`` (the default)
+        applies no state filter. The buffer that ``"stm"`` used to name is
+        gone — every ingest is eager now — so it normalises to ``"both"``.
 
-        It defaults to ``"both"`` — the same default as :meth:`search`, the
-        LangGraph nodes and the MCP tool. It used to default to ``"stm"`` here
-        alone, which means a caller who omitted it searched only the unflushed
-        buffer: empty immediately after a flush, and empty for every session
-        that ingested through any other one. Four surfaces, one default.
-
-        ``cross_session``, when True, makes the GRAPH half namespace-wide
+        ``cross_session``, when True, makes the search namespace-wide
         (``session_id=""`` to the retriever, which treats that as "no session
-        filter"). The STM buffer stays session-scoped regardless — a caller
-        cannot cross-session-read another session's unflushed turns. Defaults
-        to False so the MCP server and web UI keep today's session-scoped graph
-        behaviour unless they opt in.
+        filter"). Defaults to False so the MCP server and web UI keep today's
+        session-scoped behaviour unless they opt in.
         """
         # Bounded at the trust boundary (FR-030), not silently clamped: a
         # top_k above MAX_TOP_K is rejected. It used to have no ceiling at all
@@ -568,36 +466,23 @@ class Memory:
         check_scope_id(session_id, "session_id")
         check_top_k(top_k)
         top_k = max(1, top_k)
-        if scope not in {"stm", "ltm", "both"}:
+        if scope not in {"ltm", "both"}:
             scope = "both"
 
-        stm_hits: list[Hit] = []
-        graph_hits: list[Hit] = []
-        facts: list[Any] = []
-
-        if scope in ("stm", "both"):
-            await self._get_retriever()  # connects the store + ensures schema
-            store = self._store
-            turns = await store.list_turns(session_id, state="raw", limit=30)
-            stm_hits = _format_stm_hits(turns, query, top_k, session_id)
-
-        if scope in ("ltm", "both"):
-            retriever = await self._get_retriever()
-            graph_session_id = "" if cross_session else session_id
-            # "both" here means "no chunk-state filter" inside the retriever —
-            # the raw/consolidated split is orthogonal now that it no longer
-            # doubles as the stm/ltm switch (the TURN buffer is that switch).
-            graph_scope = "ltm" if scope == "ltm" else "both"
-            ctx = await retriever.retrieve(
-                query, session_id=graph_session_id, top_k=top_k, scope=graph_scope
-            )
-            graph_hits = _format_fused_hits(ctx.fused_results, session_id)
-            facts = list(getattr(ctx, "facts", []) or [])
+        retriever = await self._get_retriever()
+        ctx = await retriever.retrieve(
+            query,
+            session_id="" if cross_session else session_id,
+            top_k=top_k,
+            scope=scope,
+        )
+        hits = _format_fused_hits(ctx.fused_results, session_id)
+        facts = list(getattr(ctx, "facts", []) or [])
 
         # ``scope`` is echoed back POST-normalisation so a caller reports what
         # was actually searched rather than what it asked for — and so no
         # transport has to reimplement the fallback rule to say so.
-        return {"hits": (stm_hits + graph_hits)[:top_k], "facts": facts, "scope": scope}
+        return {"hits": hits[:top_k], "facts": facts, "scope": scope}
 
     def _document_as_source(self, text: str, title: str) -> tuple[Source, list[Segment]]:
         """One document as a ``Source``, each heading-aligned chunk a ``prose`` ``Segment``."""
@@ -622,15 +507,15 @@ class Memory:
         return source, segments
 
     def _session_as_source(
-        self, session_id: str, turns: Sequence[dict[str, Any]]
+        self, session_id: str, turns: Sequence[Message]
     ) -> tuple[Source, list[Segment]]:
         """One session as a ``Source``, each of its turns as a ``turn`` ``Segment``.
 
         The joined transcript is the source's content and every turn addresses
-        its own byte range of it, so both identities are derived: re-draining a
+        its own byte range of it, so both identities are derived: re-ingesting a
         session rewrites the same segments in place instead of forking a set.
         """
-        transcript = "\n".join(str(turn.get("text", "")) for turn in turns)
+        transcript = "\n".join(turn.content for turn in turns)
         source = Source(
             uri=f"session:{session_id}",
             content_hash=sha256(transcript.encode()).hexdigest(),
@@ -639,226 +524,52 @@ class Memory:
         )
         segments: list[Segment] = []
         start = 0
-        for turn in turns:
-            text = str(turn.get("text", ""))
-            end = start + len(text.encode())
+        for index, turn in enumerate(turns):
+            end = start + len(turn.content.encode())
             segments.append(
                 Segment(
                     source_id=source.id,
-                    text=text,
+                    text=turn.content,
                     kind=SegmentKind.turn,
-                    path=str(turn.get("turn_id", "") or ""),
+                    path=str(index),
                     byte_range=(start, end),
                     # Free string, not a closed role vocabulary: a session may
                     # name speakers no four-value enum has a member for.
-                    role=str(turn.get("role", "") or ""),
+                    role=turn.role,
                     # The turn's own time anchor, carried through so relative
                     # dates in it resolve against when it was said rather than
                     # against ingestion time.
-                    observed_at=_turn_anchor(turn.get("ts")),
+                    observed_at=_turn_anchor(turn.timestamp or ""),
                 )
             )
             start = end + 1  # the newline this join put after the turn
         return source, segments
 
-    async def _ingest_buffered_turns(
-        self, session_id: str, raw_turns: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        """Run the session's buffered ``TURN`` rows through the ingest pipeline.
+    async def flush(self) -> dict[str, Any]:
+        """Report how identity resolved and what this run wrote but never read.
 
-        This is the expensive step (extraction + embeddings) that the buffer
-        exists to defer. ``raw_turns`` is newest-first (as returned by
-        ``list_turns``); it is reversed to oldest-first so segment order in the
-        graph matches the order the turns actually happened.
+        The write path is eager — a source is extracted, labelled and asserted
+        as it is ingested — so there is nothing left to promote (FR-045). What
+        flush still answers is the two questions no single ingest can:
 
-        ``abstentions`` and ``errors`` come back empty: the pipeline raises
-        rather than swallowing a failed turn, so :meth:`flush_memory` records
-        it through its own ``step()`` wrapper.
+        1. **Identity**: exact-key only until the identity story lands, so no
+           merge is committed and no candidate is proposed (FR-048).
+        2. **Dead weight**: the golden types the write path writes, minus the
+           ones this connection has actually read back (FR-040). A plane that
+           is written on every ingest and read by nothing is cost with no
+           retrieval to show for it.
         """
-        source, segments = self._session_as_source(session_id, list(reversed(raw_turns)))
-        report = await self.ingest(source, segments)
-        return {
-            "turns": len(segments),
-            "chunks": report.segments_written,
-            "abstentions": {},
-            "errors": [],
-        }
-
-    async def flush_memory(self, session_id: str) -> dict[str, Any]:
-        """Consolidate a session in place.
-
-        Flush now does two things where it used to do one, in order:
-
-        1. **Drains the TURN buffer**: every buffered turn for this session is
-           run through the real ingestion pipeline (GLiNER extraction +
-           embeddings — this is the materially slower call now, not the
-           analytics below), producing CHUNK/ENTITY nodes, then the buffer is
-           marked ``consolidated`` so it is not drained again.
-        2. **Consolidates the graph**: resolves duplicate/junk ENTITY nodes
-           (layered resolver: junk-hub filter, name-standardization merge,
-           person-nickname merge), then recomputes PageRank/node2vec
-           embeddings/communities over the *merged* entity graph (native
-           ArcadeDB algos, each with its own soft-fail — see
-           ``GraphStore.compute_and_persist_pagerank`` et al.), flips the
-           session's CHUNK lifecycle ``state`` raw ->
-           consolidated in place, and runs ``GraphStore.consolidate_relations``
-           (issue #140) over the merged graph: duplicate REL edges under
-           different predicate surfaces collapse with a raised ``support``
-           counter, polarity contradictions are linked (not deleted), and a
-           functional-property collision tombstones every edge but the newest.
-
-        The result's ``verifier_coverage`` reports, per relation tier, how many
-        REL edges carry a relation-verifier score and their mean: the verifier
-        only ever sees the tiers routed through its gate, so per-tier coverage
-        is what makes an unverified tier visible instead of silent.
-
-        The result's ``entity_coverage`` reports the whole-namespace count of
-        ENTITY nodes with no semantic edge (issue #160). Isolation is a
-        property of the finished graph, not of one chunk — a relation written
-        by a later chunk can connect an entity an earlier chunk minted — so
-        flush, not per-chunk ingest, is the only place this can be measured.
-        """
-        import time
-
-        t0 = time.monotonic()
         errors: list[str] = []
-        pagerank_updated = 0
-        graph_embeddings_computed = 0
-        communities_computed = 0
-        chunks_flipped = 0
-        turns_ingested = 0
-        turn_chunks = 0
-        abstentions: dict[str, int] = {}
-        rel_consolidation = {"deduped": 0, "contradictions": 0, "invalidated": 0}
-        verifier_coverage: dict[str, dict[str, Any]] = {}
-        entity_coverage: dict[str, int] = {}
-        # Seconds per named stage, so the slow one is identifiable without a profiler.
-        stage_s: dict[str, float] = {}
-
-        async def step(name: str, coro: Any, default: Any) -> Any:
-            """Await one pipeline step, recording a named error instead of aborting.
-
-            Each step is independently recoverable: an analytics failure must not
-            skip ``consolidate_session``, which is the state flip that makes the
-            flush meaningful. The step name is kept in the error so a caller can
-            tell which stage degraded.
-
-            Timed, because ``flush_elapsed_s`` covers drain, consolidation, pagerank,
-            node2vec and louvain together — a 50-minute flush said nothing
-            about WHICH of those took the 50 minutes, so every conversation about
-            ingest cost started by guessing. A failed step is timed too: how long
-            a stage took before it fell over is exactly what you want to know.
-            """
-            started = time.monotonic()
-            try:
-                return await coro
-            except Exception as exc:
-                errors.append(f"{name}: {_redact_store_error(exc, where=f'flush_memory:{name}')}")
-                return default
-            finally:
-                stage_s[name] = round(time.monotonic() - started, 2)
-
+        unread: tuple[str, ...] = ()
         try:
-            await self._get_retriever()  # ensures the store is connected + schema'd
-            store = self._store
+            await self._get_retriever()  # connects the store + ensures schema
+            unread = tuple(sorted(WRITTEN_TYPES - self._store.read_types))
         except Exception as exc:
-            # Without a connected store no step below can run.
-            errors.append(f"connect: {_redact_store_error(exc, where='flush_memory:connect')}")
-            store = None
-
-        if store is not None:
-            raw_turns = await step(
-                "list_turns", store.list_turns(session_id, state="raw", limit=10000), []
-            )
-            if raw_turns:
-                drained = await step(
-                    "drain_turns",
-                    self._ingest_buffered_turns(session_id, raw_turns),
-                    {"turns": 0, "chunks": 0, "abstentions": {}, "errors": []},
-                )
-                turns_ingested = drained["turns"]
-                turn_chunks = drained["chunks"]
-                abstentions = drained.get("abstentions") or {}
-                # A drain that reports per-turn failures rather than raising
-                # leaves `step()` above seeing a clean return, which would hide
-                # them — surface them here so a graph that failed on every write
-                # is not indistinguishable from an empty one.
-                for turn_error in drained.get("errors") or []:
-                    errors.append(f"drain_turns: {turn_error}")
-            await step("mark_turns_consolidated", store.mark_turns_consolidated(session_id), 0)
-
-            # Caller-supplied structure goes in HERE: the buffer has drained, so
-            # this session's CHUNK vertices exist and custom edges have
-            # something to attach to; the analytics below have not run, so
-            # the channels see the finished graph.
-            # Each channel soft-fails under its own name — one broken extension
-            # must not cost the consolidation the rest of the flush does.
-            #
-            # The core collectors go through the same loop as
-            # caller-supplied channels: core_channels() is also what
-            # build_retriever() uses for the read side (see
-            # ``_build_retriever``), so a channel registered there is active
-            # on both paths from one registration. None of the core
-            # collectors implements ``populate`` today; they inherit the no-op
-            # default, so this loop adds no write work for them yet.
-            from graphknows.channels.registry import core_channels
-
-            for channel in [*core_channels(), *self._channels]:
-                await step(
-                    f"populate:{getattr(channel, 'name', type(channel).__name__)}",
-                    channel.populate(store, session_id),
-                    None,
-                )
-
-            rel_consolidation = await step(
-                "consolidate_relations",
-                store.consolidate_relations(),
-                rel_consolidation,
-            )
-            # Rebuild the analytical view once and share it across all three
-            # algos below (each is skip_view_ensure=True) — rebuilding is not
-            # free. A failure here is non-fatal and deliberately not recorded in
-            # errors: each algo call still runs and handles its own failure
-            # (all three soft-fail to 0 with a log line), it
-            # just retries the (already-failed) view.
-            try:
-                await store._ensure_analytical_view()
-            except Exception as exc:
-                logger.warning("flush_memory: analytical view ensure failed: %s", exc)
-            pagerank_updated = await step(
-                "pagerank", store.compute_and_persist_pagerank(skip_view_ensure=True), 0
-            )
-            graph_embeddings_computed = await step(
-                "graph_embeddings", store.compute_graph_embeddings(skip_view_ensure=True), 0
-            )
-            communities_computed = await step(
-                "communities", store.compute_communities(skip_view_ensure=True), 0
-            )
-            chunks_flipped = await step(
-                "consolidate_session", store.consolidate_session(session_id), 0
-            )
-            verifier_coverage = await step("verifier_coverage", store.verifier_coverage(), {})
-            entity_coverage = await step("entity_coverage", store.entity_coverage(), {})
-
+            errors.append(f"connect: {_redact_store_error(exc, where='flush:connect')}")
         return {
-            "nodes": pagerank_updated,
-            "edges": 0,
-            "chunks": chunks_flipped,
-            "turns": turns_ingested,
-            "turn_chunks": turn_chunks,
-            # What the write path declined to write, per gate. Reported so an
-            # empty graph can be told apart from a graph whose gates ate it.
-            "abstentions": abstentions,
-            # Seconds per stage. `elapsed_s` is their sum plus the untimed glue.
-            "stage_s": stage_s,
-            "graph_embeddings_computed": graph_embeddings_computed,
-            "communities_computed": communities_computed,
-            "rel_consolidation": rel_consolidation,
-            "verifier_coverage": verifier_coverage,
-            # A graph whose entities are all isolated and a graph with no
-            # entities look identical to every other number in this report.
-            "entity_coverage": entity_coverage,
-            "elapsed_s": round(time.monotonic() - t0, 3),
+            "identity": "exact-key",
+            "merges": 0,
+            "unread_types": list(unread),
             "errors": errors,
         }
 
@@ -928,24 +639,6 @@ class Memory:
             query, session_id=sid, top_k=top_k, scope=scope, cross_session=True
         )
 
-    async def flush(
-        self,
-        *,
-        user_id: str = "",
-        agent_id: str = "",
-        run_id: str = "",
-        session_id: str = "",
-    ) -> dict[str, Any]:
-        """Promote a user/agent/run scope (or an explicit session) from STM to LTM.
-
-        Ingests the session's buffered ``TURN`` rows into the graph (real
-        extraction + embeddings), marks them consolidated, then runs the usual
-        analytics consolidation pass. See
-        :meth:`flush_memory` for the full step order.
-        """
-        sid = self._scoped_session_id(user_id, agent_id, run_id, session_id)
-        return await self.flush_memory(sid)
-
     async def purge_memory(self, session_id: str = "") -> dict[str, Any]:
         """Purge memory for this namespace (golden layer, single database).
 
@@ -1007,9 +700,9 @@ class Memory:
         documents: list[dict[str, Any]],
         session_id: str | None = None,
     ) -> dict[str, Any]:
-        """Ingest a batch of documents into one session, then consolidate it.
+        """Ingest a batch of documents into one session, then report on the run.
 
-        Runs the same golden-layer path as ``ingest_memory`` + ``flush_memory``.
+        Runs the same golden-layer path as ``ingest_memory`` + ``flush``.
         It previously delegated to ``CorpusIngestWorkflow``, which was still
         wired for the retired three-store (stm/ltm/vector) split: it called
         ``STMService`` with removed keyword arguments, so every invocation
@@ -1047,7 +740,7 @@ class Memory:
             entities += int(res.get("entities", 0) or 0)
             errors.extend(res.get("errors", []) or [])
 
-        flushed = await self.flush_memory(sid)
+        flushed = await self.flush()
         errors.extend(flushed.get("errors", []) or [])
 
         return {
@@ -1055,7 +748,7 @@ class Memory:
             "documents_processed": processed,
             "entities_extracted": entities,
             "chunks_written": chunks,
-            "chunks_consolidated": flushed.get("chunks", 0),
+            "unread_types": flushed["unread_types"],
             "elapsed_s": round(time.monotonic() - t0, 3),
             "errors": errors,
         }

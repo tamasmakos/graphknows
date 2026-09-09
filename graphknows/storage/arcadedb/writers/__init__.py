@@ -13,7 +13,37 @@ from graphknows.storage.arcadedb.writers.segment import SegmentWriter
 from graphknows.storage.arcadedb.writers.source import SourceWriter
 from graphknows.storage.arcadedb.writers.symbol import SymbolWriter
 
+WRITTEN_TYPES = frozenset(
+    {
+        # Vertices, one per writer family.
+        "SOURCE",
+        "SEGMENT",
+        "ENTITY",
+        "CONCEPT",
+        "PREDICATE",
+        "FACT",
+        # The edges those families are written with.
+        "PART_OF",
+        "MENTIONS",
+        "EVOKES",
+        "INSTANCE_OF",
+        "SUBJECT_OF",
+        "OBJECT_IS",
+        "USES",
+        "ASSERTED_IN",
+        "SUPERSEDES",
+        "CONTRADICTS",
+    }
+)
+"""Every type the write path writes — the written half of the dead-weight diff.
+
+Declared beside the writers rather than in the reader that reports it, so a new
+writer and its entry here move together: the read half is observed at runtime by
+``GraphStore.read_types``, and ``Memory.flush`` reports the difference (FR-040).
+"""
+
 __all__ = [
+    "WRITTEN_TYPES",
     "EntityWrite",
     "EntityWriter",
     "Evidence",

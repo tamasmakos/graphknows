@@ -9,7 +9,7 @@ entrypoint for all memory operations::
     mem = Memory()                                    # builds from env / .env
     await mem.add(messages, user_id="u1", run_id="r7")
     hits = await mem.search("what did she decide?", user_id="u1")
-    await mem.flush(user_id="u1")                      # STM -> LTM promotion
+    await mem.flush()                                  # identity + dead-weight report
 
 The same class backs the MCP stdio server, so every transport sees identical
 behaviour. For out-of-process use over MCP, see

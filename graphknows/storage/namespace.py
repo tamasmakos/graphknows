@@ -7,8 +7,7 @@ another's data.
 The golden layer is SINGLE-database: :func:`db_name` maps a namespace to one database
 (``mem_<ns>``, or ``mem`` for the default namespace), and that is what every in-package
 caller uses — ``memory.py`` and ``storage/__init__.py``. Short-term and long-term memory
-are not separate databases; they are the ``state`` lifecycle (``raw`` -> ``consolidated``)
-on one graph, flipped in place by ``GraphStore.consolidate_session``.
+are not separate databases: one ingest pipeline writes one graph per namespace.
 """
 
 from __future__ import annotations

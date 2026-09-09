@@ -204,7 +204,7 @@ class GraphKnowsMemory:
 
     async def flush(self) -> dict[str, Any]:
         """Ingest this session's buffered turns and consolidate the graph."""
-        result = await self._memory.flush(session_id=self._session_id)
+        result = await self._memory.flush()
         self._unflushed = 0
         return result
 

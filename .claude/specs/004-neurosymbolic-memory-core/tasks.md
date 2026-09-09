@@ -172,7 +172,7 @@ longer has. -->
   - Verify: `pytest -q tests/storage/test_read_types.py`
 - [ ] T067 [Cutover] Rewrite the collectors in `graphknows/retrieval/retriever.py` and `graphknows/channels/base.py` over SEGMENT and FACT through the store's golden reads; no chunk-plane read remains (FR-002, FR-045)
   - Verify: `pytest -q tests/retrieval/test_no_chunk_reads.py tests/retrieval/test_symbol_recall.py`
-- [ ] T068 [Cutover] Route `graphknows/memory.py` through `graphknows/ingestion/pipeline.py` only: drop the TURN buffer, the flush-time analytics (pagerank, communities, graph embeddings) and session consolidation; `flush` becomes identity resolution plus the dead-weight report; update `graphknows/storage/namespace.py`, `graphknows/ingestion/extraction/relations/verifier.py` and `graphknows/symbolic/ontology/rdf/store.py` callers (FR-045, FR-046)
+- [X] T068 [Cutover] Route `graphknows/memory.py` through `graphknows/ingestion/pipeline.py` only: drop the TURN buffer, the flush-time analytics (pagerank, communities, graph embeddings) and session consolidation; `flush` becomes identity resolution plus the dead-weight report; update `graphknows/storage/namespace.py`, `graphknows/ingestion/extraction/relations/verifier.py` and `graphknows/symbolic/ontology/rdf/store.py` callers (FR-045, FR-046)
   - Verify: `pytest -q tests/memory/test_no_old_core_paths.py tests/memory/test_facade_packs.py`
 
 **Checkpoint**: SC-004 and SC-005 — identity precision and dead weight hold and the three
