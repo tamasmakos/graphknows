@@ -251,6 +251,17 @@ class _Progress:
             return self._done
 
 
+def feeding_mode(units: list[IngestUnit]) -> str:
+    """How the run fed its data, for the panel report (contracts/panel-report.md).
+
+    ``turn_by_turn`` as soon as any unit carries turns: those units buffer TURN
+    rows and let the pipeline's own sliding window chunk them, which is the mode
+    the panel row must state.
+    """
+    turn_fed = any(doc.turns for unit in units for doc in unit.documents)
+    return "turn_by_turn" if turn_fed else "document"
+
+
 async def _ingest_unit(
     unit: IngestUnit,
     *,
@@ -529,5 +540,5 @@ async def run_units(
         benchmark=adapter.name,
         config=config.model_dump(mode="json"),
         cases=cases,
-        summary=summarize(cases),
+        summary=summarize(cases) | {"feeding_mode": feeding_mode(units)},
     )

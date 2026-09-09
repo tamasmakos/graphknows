@@ -17,7 +17,7 @@ from dateparser import parse as _parse_date
 
 from evaluation.beam.config import BeamConfig
 from evaluation.common.datamodels import EvalCase, EvalDocument, IngestUnit
-from evaluation.common.dataset import clip, reference_date
+from evaluation.common.dataset import clip, message_turns, reference_date
 
 # Category → the field holding its gold answer.
 _GOLD_FIELD = {
@@ -102,9 +102,13 @@ def _session_anchor(session: list[dict[str, Any]]) -> str:
 
 
 def build_documents(
-    record: dict[str, Any], *, max_documents: int, max_chars: int
+    record: dict[str, Any], *, max_documents: int, max_chars: int, turn_fed: bool = False
 ) -> list[EvalDocument]:
-    """User-profile document + chat sessions split into bounded ingest documents."""
+    """User-profile document + chat sessions split into bounded ingest documents.
+
+    ``turn_fed`` keeps each message separate — one turn-fed document per session,
+    chunked by the pipeline's own sliding window instead of by ``max_chars``.
+    """
     documents: list[EvalDocument] = []
 
     profile = record.get("user_profile") or {}
@@ -120,6 +124,14 @@ def build_documents(
         if not isinstance(session, list):
             continue
         anchor = _session_anchor(session)
+        if turn_fed:
+            if len(documents) >= max_documents:
+                return documents
+            if turns := message_turns(session, timestamp=anchor):
+                documents.append(
+                    EvalDocument(title=f"session-{index}", text="", anchor_date=anchor, turns=turns)
+                )
+            continue
         blocks = _split_session(session, max_chars)
         for part, block in enumerate(blocks):
             if len(documents) >= max_documents:
@@ -243,6 +255,7 @@ def load_units(config: BeamConfig, *, limit: int, offset: int) -> list[IngestUni
             record,
             max_documents=config.max_documents,
             max_chars=config.max_chars_per_document,
+            turn_fed=config.turn_fed,
         )
         cases = _build_cases(record, conv_id)
         if not cases:

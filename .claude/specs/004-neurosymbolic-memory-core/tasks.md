@@ -40,7 +40,7 @@ core, so every later change is judged against a record.
 **Independent Test**: run the panel harness on the untouched checkout and get a committed
 result file per row plus the internal metrics.
 
-- [ ] T011 [US1] Feed rows turn by turn in `evaluation/common/pipeline.py` and report `feeding_mode` per row, updating the LongMemEval and BEAM adapters in `evaluation/longmem/` and `evaluation/beam/`
+- [X] T011 [US1] Feed rows turn by turn in `evaluation/common/pipeline.py` and report `feeding_mode` per row, updating the LongMemEval and BEAM adapters in `evaluation/longmem/` and `evaluation/beam/`
   - Verify: `pytest -q tests/evaluation/test_feeding_mode.py`
 - [ ] T012 [P] [US1] Implement pairwise identity precision/recall over a labelled sample in `evaluation/identity.py`
   - Verify: `pytest -q tests/evaluation/test_identity_metric.py`

@@ -16,7 +16,7 @@ from typing import Any
 from dateparser import parse as _parse_date
 
 from evaluation.common.datamodels import EvalCase, EvalDocument, IngestUnit
-from evaluation.common.dataset import clip, reference_date
+from evaluation.common.dataset import clip, message_turns, reference_date
 from evaluation.longmem.config import LongMemConfig
 
 # LongMemEval dates look like "2023/05/30 (Tue) 23:40"; strip the weekday
@@ -82,9 +82,14 @@ def _evidence_turns(record: dict[str, Any]) -> list[str]:
 
 
 def build_documents(
-    record: dict[str, Any], *, max_documents: int, max_chars: int
+    record: dict[str, Any], *, max_documents: int, max_chars: int, turn_fed: bool = False
 ) -> list[EvalDocument]:
-    """Zip the parallel haystack arrays into ingestable per-session documents."""
+    """Zip the parallel haystack arrays into ingestable per-session documents.
+
+    ``turn_fed`` keeps each message separate so ingestion runs through the
+    buffer-then-flush path a live agent uses; otherwise the session is joined
+    into one document, as the original harness did.
+    """
     ids = record.get("haystack_session_ids") or []
     dates = record.get("haystack_dates") or []
     sessions = record.get("haystack_sessions") or []
@@ -92,12 +97,13 @@ def build_documents(
     for index, session in enumerate(sessions[:max_documents]):
         if not isinstance(session, list):
             continue
+        anchor = _parse_iso(dates[index]) if index < len(dates) else ""
         text = clip(_session_text(session), max_chars)
-        if not text:
+        turns = message_turns(session, timestamp=anchor) if turn_fed else []
+        if not (text or turns):
             continue
         title = str(ids[index]) if index < len(ids) else f"session-{index}"
-        anchor = _parse_iso(dates[index]) if index < len(dates) else ""
-        documents.append(EvalDocument(title=title, text=text, anchor_date=anchor))
+        documents.append(EvalDocument(title=title, text=text, anchor_date=anchor, turns=turns))
     return documents
 
 
@@ -118,6 +124,7 @@ def load_units(config: LongMemConfig, *, limit: int, offset: int) -> list[Ingest
             record,
             max_documents=config.max_documents,
             max_chars=config.max_chars_per_document,
+            turn_fed=config.turn_fed,
         )
         case = EvalCase(
             case_id=qid,
