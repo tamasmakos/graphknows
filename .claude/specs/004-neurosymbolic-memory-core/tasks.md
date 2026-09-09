@@ -78,7 +78,7 @@ rules that every user story below depends on.
   - Verify: `pytest -q tests/models/test_symbols.py`
 - [X] T007 [P] Create `IngestReport`, `RecallResult`, `RecallBudget`, `FactWithEvidence` and the `Counters` set from research.md R9 in `graphknows/models/report.py`
   - Verify: `pytest -q tests/models/test_report.py`
-- [ ] T008 [P] Add `PackConflictError` to `graphknows/exceptions.py`
+- [X] T008 [P] Add `PackConflictError` to `graphknows/exceptions.py`
   - Verify: `python -c "from graphknows.exceptions import PackConflictError"`
 - [ ] T009 Create the packs layer: `DomainPack` protocol in `graphknows/packs/protocol.py` and the all-or-nothing loader with concept-URI/predicate-id conflict detection in `graphknows/packs/loader.py`
   - Verify: `pytest -q tests/packs/test_loader.py`
