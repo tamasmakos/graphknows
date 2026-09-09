@@ -139,7 +139,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/ingestion/parsers/test_transcript_tool_results.py`
 - [X] T064 [US2] Ship the agent pack under `graphknows/packs/agent/` and `graphknows/packs/data/`: concepts session, prompt, decision, file, tool; predicates asked_in, touched, changed, decided_in and the functional decision_status; a deterministic `AgentExtractor` emitting facts from tool_use/tool_result blocks; extraction guidance labelling `decision` from user and assistant text; an open decision is one with no superseding `decision_status` fact (FR-004, FR-032)
   - Verify: `pytest -q tests/packs/test_agent_pack.py`
-- [ ] T033 [US2] Implement the `two-packs`, `schema-refusal` and `concurrent-ingest` scenarios in `evaluation/scenarios.py`
+- [X] T033 [US2] Implement the `two-packs`, `schema-refusal` and `concurrent-ingest` scenarios in `evaluation/scenarios.py`
   - Verify: `pytest -q tests/evaluation/test_scenarios.py`
 
 **Checkpoint**: SC-001, SC-002, SC-008, SC-013, SC-015 demonstrable on the new core.
