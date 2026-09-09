@@ -11,14 +11,15 @@ repository. Three seams get a neutral data model — **Source → Segment** at i
 **Mention / Fact** at extraction, **DomainPack** at domain knowledge — and everything the
 core currently knows about dialogue moves out of code and into pack data. Identity
 resolution gets a mention layer, blocking, a vector-index candidate step and a replayable
-merge log. Two packs ship: a code pack (deterministic, no model) and an agent-transcript
-input; recall re-enters the agent's loop through stdlib-only hooks talking to the running
+merge log. Two packs ship: a code pack (deterministic, no model) and an agent pack (session, prompt,
+decision, file and tool concepts, fed by the transcript parser); recall re-enters the agent's loop through stdlib-only hooks talking to the running
 memory service.
 
 Nothing is judged by feel: a baseline is recorded against the current core before the first
 line of new core code exists, and every later change is gated on the whole panel plus
 identity precision plus a dead-weight check that fails the run when a written type has no
-reader.
+reader. FR-001's representation half — the embedder and the fused candidate set from rank
+fusion — is carried over unchanged; only the symbolic half is rebuilt.
 
 The rewrite is in place. The dropped planes (topics, the STM buffer, the frame mirror) are
 deleted first, with their tests, so the tree never writes a type the schema no longer
@@ -85,7 +86,7 @@ new repository-transcript row. Identity ground truth: one hand-labelled sample o
 | **I. Acceptance Is a Runnable Command** | Every task carries one runnable `## Verify` that fails at tip and passes after. | PASS — [quickstart.md](./quickstart.md) defines the runnable scenario per user story; `/speckit-tasks` inherits them. | PASS — each contract in `contracts/` names the command that exercises it. |
 | **II. Never Weaken a Check** | No test deleted, retargeted, skipped, or loosened to go green. | **Tension, resolved — see note below.** | PASS with the recorded rule. |
 | **III. Fix the Defect, Not the Symptom** | Corpora, models, services, credentials fixed in image/compose/setup, never in library code. | PASS — LongMemEval and BEAM datasets are provisioned by `evaluation/common/download.py` from the setup script and the image, never lazily by a code path under test. | PASS — no contract permits a library-side fetch. |
-| **IV. Build Only What Was Asked For** | Ladder: needed at all → already here → stdlib → installed dep → one line. | PASS — code parser is stdlib `ast`, not tree-sitter; candidate search is the store's existing `LSM_VECTOR` index, not a new ANN library; schema refusal already exists and is reused verbatim. | PASS — `DomainPack` has two shipped implementations plus a third specified next slice, so it is not an abstraction with one caller. |
+| **IV. Build Only What Was Asked For** | Ladder: needed at all → already here → stdlib → installed dep → one line. | PASS — code parser is stdlib `ast`, not tree-sitter; candidate search is the store's existing `LSM_VECTOR` index, not a new ANN library; schema refusal already exists and is reused verbatim. | PASS — `DomainPack` has two shipped implementations (code pack, agent pack) plus a third specified next slice, so it is not an abstraction with one caller. |
 | **V. Errors Never Pass Silently** | Every gate, fallback and lookup raises or increments a named counter surfaced in the result. | PASS — counters enumerated in [research.md](./research.md) §R9 and carried on the ingest/recall result contracts. | PASS — `IngestReport` and `RecallResult` in [data-model.md](./data-model.md) carry the counter set; no path returns a bare empty list. |
 | **VI. Evidence Over Vibes** | Change justified by a metric named before the change. | PASS — US1 (baseline) blocks every other story by construction; SC-003 is the gate. | PASS — dead-weight check is a first-class panel output, not a review habit. |
 | **VII. A Package Installed by Strangers** | Every third-party import declared with a lower bound; shipped non-`.py` declared; extras enforced. | PASS — this slice adds no third-party import. | PASS — pack data files (`graphknows/packs/data/**/*.json`) must be added to the build backend's package data and asserted by `tests/test_packaging.py`. |
@@ -152,7 +153,7 @@ graphknows/
 │   ├── predicates.py             # NEW  predicate index (no free-string relations)
 │   ├── ontology/                 # kept (loader + semantic-web stack)
 │   ├── framenet/                 # REDUCED  becomes a concept+predicate emitter for a pack
-│   └── wordnet.py                # kept only if a pack reads it; else deleted at cutover
+│   └── wordnet.py                # deleted at cutover (T037); returns as the dialogue pack's lexicon
 ├── channels/
 │   ├── base.py  registry.py      # REPLACED  registry takes packs, not `if enable_x`
 │   └── ontology.py  _shared.py                                           # kept
@@ -190,7 +191,7 @@ graphknows/
 ├── server/mcp/                   # + memory_forget tool; topics tools deleted
 ├── cli/                          # topics.py DELETED
 ├── topics/                       # DELETED at cutover
-├── bounds.py  worth.py  linguistics.py  nlp.py                           # audited at cutover
+├── bounds.py  linguistics.py  nlp.py                                     # kept (linguistics vocabularies become pack guidance, T065); worth.py deleted at cutover (T037)
 
 evaluation/
 ├── scenarios.py                  # NEW  two-packs, schema-refusal, concurrent-ingest, merge-replay, resolve-scaling, transcript-drift, forget-roundtrip, hook-latency

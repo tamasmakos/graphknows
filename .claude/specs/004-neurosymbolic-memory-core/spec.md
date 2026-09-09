@@ -378,7 +378,9 @@ metrics shape as the other rows.
   symbols that resolve, through the same identity path used at ingest, and nothing is
   injected when nothing resolves. A per-prompt fuzzy budget MUST NOT be used.
 - **FR-032**: Session start MUST inject a working-context block for the working directory
-  containing open decisions and current values of functional predicates.
+  containing open decisions and current values of functional predicates. An open decision
+  is a decision fact with no superseding fact on the agent pack's functional
+  `decision_status` predicate.
 - **FR-033**: Prompt submission MUST inject facts attached to symbols resolved from the
   prompt, newest first.
 - **FR-034**: An edit or write MUST inject facts about the target path before it runs; a
@@ -455,8 +457,14 @@ metrics shape as the other rows.
 - **Fact**: the atom of recall. Subject entity, predicate, object entity, polarity,
   modality, confidence, validity, current-ness, extractor identity and version, and links to
   the evidence segments with spans. Related to other facts by contradicts and supersedes.
-- **Domain pack**: the unit of domain knowledge as data — concepts, predicates, lexicon,
-  extraction guidance, optional parser, optional channel, optional symbol expansion.
+- **Domain pack**: the unit of domain knowledge as data — concepts, predicates, extraction
+  guidance, an identity veto rule, optional parser, optional deterministic extractor.
+  Lexicon, channel, symbol expansion and retrieval profile arrive with the dialogue pack
+  (FR-022). Two packs ship in this slice: the code pack and the agent pack.
+- **Decision**: a concept of the agent pack — a stated choice in a user or assistant
+  segment, extracted under the pack's `decision` label and linked to its session, file and
+  symbol entities. It carries the functional `decision_status` predicate; an open decision
+  is one with no superseding `decision_status` fact.
 - **Panel**: the yardstick — one harness over several evaluation rows plus the internal
   metrics, with a recorded baseline and a merge gate.
 
@@ -480,7 +488,8 @@ metrics shape as the other rows.
   least one retrieval path; the run fails otherwise.
 - **SC-006**: Identity resolution compares only blocked and vector-neighbour candidates;
   resolution time per batch does not grow linearly with total entity count over at least a
-  tenfold increase in namespace size.
+  tenfold increase in namespace size: per-batch time at ten times the namespace size is
+  under twice the base.
 - **SC-007**: Every merge performed at ingest can be reconstructed and undone from its log
   alone.
 - **SC-008**: Re-ingesting an unchanged source or an already-seen transcript record adds no

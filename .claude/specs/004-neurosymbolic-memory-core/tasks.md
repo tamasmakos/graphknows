@@ -14,7 +14,7 @@ table (A → B → B′ → C → D → E → F); US1 blocks everything by const
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: Which user story this task belongs to (US1…US6)
+- **[Story]**: Which user story this task belongs to (US1…US6); Cutover and Polish tasks carry `[Cutover]` / `[Polish]` instead
 - Each task is followed by one `- Verify:` sub-bullet with a single runnable command that
   fails on the tree now and passes once the task is done. Commands run at `/app` in the
   workspace container.
@@ -97,11 +97,11 @@ domain branch anywhere in the core.
 **Independent Test**: load two packs into one namespace, ingest one source per pack, recall a
 symbol from each, and confirm both return facts with evidence.
 
-- [ ] T034 Delete `graphknows/topics/`, `graphknows/cli/topics.py` and the `topics_*` MCP tools, with their tests
+- [ ] T034 [US2] Delete `graphknows/topics/`, `graphknows/cli/topics.py` and the `topics_*` MCP tools, with their tests
   - Verify: `pytest -q tests/test_dropped_plane_topics.py`
-- [ ] T035 Delete `graphknows/ingestion/stm/` and the closed `Role` enum in `graphknows/models/message.py`; a session is a `Source`, a turn is a `Segment`
+- [ ] T035 [US2] Delete `graphknows/ingestion/stm/` and the closed `Role` enum in `graphknows/models/message.py`; a session is a `Source`, a turn is a `Segment`
   - Verify: `pytest -q tests/test_dropped_plane_stm.py`
-- [ ] T036 Stop declaring and writing the frame-element mirror, frame-specific types, graph-ranking columns and free-string relations, reducing `graphknows/symbolic/framenet/` to a concept+predicate emitter
+- [ ] T036 [US2] Stop declaring and writing the frame-element mirror, frame-specific types, graph-ranking columns and free-string relations, reducing `graphknows/symbolic/framenet/` to a concept+predicate emitter
   - Verify: `pytest -q tests/test_dropped_plane_frames.py`
 - [ ] T018 [US2] Replace the DDL wholesale with the golden schema in `graphknows/storage/arcadedb/_schema.py`, keeping the `SCHEMA_STAMP` mechanism verbatim
   - Verify: `pytest -q tests/storage/test_golden_schema.py`
@@ -113,6 +113,8 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/ingestion/parsers/test_registry.py`
 - [ ] T022 [P] [US2] Add the `Extractor` protocol in `graphknows/ingestion/extraction/protocol.py` and put `LocalExtractor` and `LLMExtractor` behind it
   - Verify: `pytest -q tests/extraction/test_protocol.py`
+- [ ] T065 [US2] Wire `pack.entity_labels()` (replacing, never unioning), `pack.prompt_addendum()`, `pack.hygiene()` and `pack.thresholds()` into `LocalExtractor` and `LLMExtractor` under `graphknows/ingestion/extraction/`, deleting the core's conversational label inventory and hygiene defaults and moving `linguistics.py` vocabularies into pack guidance (FR-022)
+  - Verify: `pytest -q tests/extraction/test_pack_guidance.py`
 - [ ] T023 [P] [US2] Add the predicate index in `graphknows/symbolic/predicates.py`, replacing free-string relations in `graphknows/ingestion/extraction/relations/`
   - Verify: `pytest -q tests/ontology/test_predicate_index.py`
 - [ ] T024 [US2] Implement the Source → Segment → Mention/Fact orchestration in `graphknows/ingestion/pipeline.py`, including bottom-up concept labelling from the loaded packs: `SEGMENT-[EVOKES]->CONCEPT` and `ENTITY-[INSTANCE_OF]->CONCEPT` (FR-002)
@@ -129,10 +131,18 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/channels/test_registry_packs.py`
 - [ ] T030 [US2] Rewrite the facade in `graphknows/memory.py` as `Memory(packs=[...])` with `ingest`/`recall`/`forget` and a per-namespace `asyncio.Lock` reporting `ingest_queue_wait_ms`, and the `graphknows.cli` `ingest`/`recall` commands on that facade
   - Verify: `pytest -q tests/memory/test_facade_packs.py`
-- [ ] T031 [US2] Implement forget as a tombstone in the store, cascading from a forgotten `Segment` to the facts it evidences and counting `facts_excluded_tombstoned`, and expose the `memory_forget` tool in `graphknows/server/mcp/`
-  - Verify: `pytest -q tests/mcp_server/test_forget_tool.py`
 - [ ] T032 [P] [US2] Add the grep test asserting no benchmark, dialogue, speaker or turn-regex term appears in core modules, at `tests/test_core_domain_neutral.py`
   - Verify: `pytest -q tests/test_core_domain_neutral.py`
+- [ ] T043 [P] [US2] Implement the stdlib-`ast` code parser emitting one segment per function and class with the qualified symbol as `path`, in `graphknows/ingestion/parsers/code.py`
+  - Verify: `pytest -q tests/ingestion/parsers/test_code.py`
+- [ ] T044 [US2] Ship the code pack — concepts, predicates (calls, imports, defines, tests), `CodeExtractor` with no model, a veto rule (a function and a module symbol with the same normalised name never merge, FR-019), and its data — under `graphknows/packs/code/` and `graphknows/packs/data/`
+  - Verify: `pytest -q tests/packs/test_code_pack.py`
+- [ ] T045 [P] [US2] Implement the tolerant, versioned agent-transcript parser in `graphknows/ingestion/parsers/transcript.py`, counting unknown record and block types and retaining timestamp, `cwd`, `gitBranch` and `isSidechain`
+  - Verify: `pytest -q tests/ingestion/parsers/test_transcript.py`
+- [ ] T046 [US2] Link tool results as citable `Source`s rather than segments in `graphknows/ingestion/parsers/transcript.py`, and assert recall survives a citation to a tool result that was never ingested
+  - Verify: `pytest -q tests/ingestion/parsers/test_transcript_tool_results.py`
+- [ ] T064 [US2] Ship the agent pack under `graphknows/packs/agent/` and `graphknows/packs/data/`: concepts session, prompt, decision, file, tool; predicates asked_in, touched, changed, decided_in and the functional decision_status; a deterministic `AgentExtractor` emitting facts from tool_use/tool_result blocks; extraction guidance labelling `decision` from user and assistant text; an open decision is one with no superseding `decision_status` fact (FR-004, FR-032)
+  - Verify: `pytest -q tests/packs/test_agent_pack.py`
 - [ ] T033 [US2] Implement the `two-packs`, `schema-refusal` and `concurrent-ingest` scenarios in `evaluation/scenarios.py`
   - Verify: `pytest -q tests/evaluation/test_scenarios.py`
 
@@ -147,9 +157,9 @@ is recorded. The dropped planes were already deleted at the head of Phase 4 so t
 writes a type the schema no longer declares. Tests are deleted only in the change that deletes
 the module they import.
 
-- [ ] T037 Delete the remaining old core modules in one change; `graphknows/memory.py` was rewritten in place at T030 and nothing routes to two write paths (FR-045)
+- [ ] T037 [Cutover] Delete the remaining old core modules in one change — `graphknows/symbolic/wordnet.py`, `graphknows/worth.py`, `graphknows/ingestion/extraction/entities/hygiene.py`'s dialogue-only rules, the old `entity_resolution.py` layers replaced at T063, and every test that imports them; `bounds.py`, `nlp.py` and `linguistics.py` stay. `graphknows/memory.py` was rewritten in place at T030 and nothing routes to two write paths (FR-045)
   - Verify: `pytest -q tests/memory/test_cutover.py`
-- [ ] T063 Implement exact-key-only identity on the cut-over core — no `MERGED_INTO` and no `SAME_AS` edge is written — and the cutover-report line that states it (FR-048)
+- [ ] T063 [Cutover] Implement exact-key-only identity on the cut-over core — no `MERGED_INTO` and no `SAME_AS` edge is written — and the cutover-report line that states it (FR-048)
   - Verify: `pytest -q tests/ingestion/consolidation/test_exact_key_interim.py`
 
 **Checkpoint**: SC-004 and SC-005 — identity precision and dead weight hold and the three
@@ -175,7 +185,7 @@ pairwise precision and recall against the labels, and replay every merge from it
   - Verify: `pytest -q tests/ingestion/consolidation/test_merge_replay.py`
 - [ ] T061 [US3] Resolve `SAME_AS` candidate edges at recall time in `graphknows/retrieval/retriever.py`: a recalled entity's candidates are unified into one committed entity and the commitment is reported (FR-018)
   - Verify: `pytest -q tests/retrieval/test_candidate_commit.py`
-- [ ] T042 [US3] Implement the `resolve-scaling` scenario reporting per-batch wall clock at two namespace sizes in `evaluation/scenarios.py`
+- [ ] T042 [US3] Implement the `resolve-scaling` scenario in `evaluation/scenarios.py`, failing when per-batch wall clock at ten times the namespace size is not under twice the base (SC-006)
   - Verify: `pytest -q tests/evaluation/test_resolve_scaling.py`
 
 **Checkpoint**: SC-006 and SC-007 hold.
@@ -189,20 +199,10 @@ pairwise precision and recall against the labels, and replay every merge from it
 **Independent Test**: ingest the repository and one transcript into one namespace and recall a
 known function and a known decision with correct evidence ranges.
 
-- [ ] T043 [P] [US4] Implement the stdlib-`ast` code parser emitting one segment per function and class with the qualified symbol as `path`, in `graphknows/ingestion/parsers/code.py`
-  - Verify: `pytest -q tests/ingestion/parsers/test_code.py`
-- [ ] T044 [US4] Ship the code pack — concepts, predicates (calls, imports, defines, tests), `CodeExtractor` with no model, and its data — under `graphknows/packs/code/` and `graphknows/packs/data/`
-  - Verify: `pytest -q tests/packs/test_code_pack.py`
-- [ ] T045 [P] [US4] Implement the tolerant, versioned agent-transcript parser in `graphknows/ingestion/parsers/transcript.py`, counting unknown record and block types and retaining timestamp, `cwd`, `gitBranch` and `isSidechain`
-  - Verify: `pytest -q tests/ingestion/parsers/test_transcript.py`
-- [ ] T046 [US4] Link tool results as citable `Source`s rather than segments in `graphknows/ingestion/parsers/transcript.py`, and assert recall survives a citation to a tool result that was never ingested
-  - Verify: `pytest -q tests/ingestion/parsers/test_transcript_tool_results.py`
 - [ ] T047 [P] [US4] Declare `graphknows/packs/data/**/*.json` to the build backend in `pyproject.toml` and assert it in `tests/test_packaging.py`
   - Verify: `pytest -q tests/test_packaging.py -k pack_data`
 - [ ] T048 [US4] Implement the `transcript-drift` scenario in `evaluation/scenarios.py`, proving a drifted record is counted and never fatal
   - Verify: `pytest -q tests/evaluation/test_transcript_drift.py`
-- [ ] T060 Assert every command in `quickstart.md` exists and is dispatchable
-  - Verify: `pytest -q tests/test_quickstart_commands.py`
 
 **Checkpoint**: SC-014 holds; the phase diff touches packs and parsers only.
 
@@ -223,6 +223,8 @@ end.
   - Verify: `pytest -q tests/integrations/claude_code/test_checkpoint.py`
 - [ ] T051 [P] [US5] Add the subprocess test asserting `torch`, `transformers`, `spacy`, `sentence_transformers` and `gliner` are absent from `sys.modules` after importing the hook module, at `tests/integrations/claude_code/test_no_ml_imports.py`
   - Verify: `pytest -q tests/integrations/claude_code/test_no_ml_imports.py`
+- [ ] T031 [US5] Implement forget as a tombstone in the store, cascading from a forgotten `Segment` to the facts it evidences and counting `facts_excluded_tombstoned`, and expose the `memory_forget` tool in `graphknows/server/mcp/`
+  - Verify: `pytest -q tests/mcp_server/test_forget_tool.py`
 - [ ] T052 [US5] Implement the `forget-roundtrip` scenario in `evaluation/scenarios.py`, proving a forgotten record vanishes from recall while its tombstone and merge log stay readable
   - Verify: `pytest -q tests/evaluation/test_forget_roundtrip.py`
 - [ ] T053 [P] [US5] Ship the record-versus-retrieve guidance skill and the hook settings block with `graphknows/integrations/claude_code/`
@@ -256,8 +258,10 @@ same way as every other row.
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [ ] T059 [P] Document the packs layer, the hook integration and the merge gate in `docs/` and `README.md`
+- [ ] T059 [P] [Polish] Document the packs layer, the hook integration and the merge gate in `docs/` and `README.md`
   - Verify: `pytest -q tests/test_docs_packs.py`
+- [ ] T060 [Polish] Assert every command in `quickstart.md` exists and is dispatchable, skipping `<...>` operator placeholders
+  - Verify: `pytest -q tests/test_quickstart_commands.py`
 
 ---
 
@@ -273,7 +277,7 @@ same way as every other row.
 - **US2 (Phase 4)**: depends on Phase 2 and Phase 3.
 - **Cutover (Phase 5)**: depends on Phase 4; its gate is identity precision, dead weight and the three scenarios (FR-042).
 - **US3 (Phase 6)**, **US4 (Phase 7)**: depend on Cutover; independent of each other.
-- **US5 (Phase 8)**: depends on US4 (transcript parser, code pack).
+- **US5 (Phase 8)**: depends on Cutover (parsers and packs land in Phase 4).
 - **US6 (Phase 9)**: depends on US4 and the panel harness from US1.
 - **Polish (Phase 10)**: last.
 
@@ -288,7 +292,7 @@ Models → storage → parsers/extractors → pipeline → retrieval → facade 
 - T012, T013, T016 in parallel within US1.
 - T021, T022, T023, T028, T032 in parallel within US2.
 - T038 and T039 in parallel within US3.
-- T043, T045, T047 in parallel within US4.
+- T043, T045 in parallel within Phase 4 before T033; T047 alone in US4.
 - US3 and US4 can run in parallel after Cutover.
 
 ---
