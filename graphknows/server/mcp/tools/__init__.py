@@ -22,22 +22,19 @@ from graphknows.server.mcp.tools.admin import (
     memory_purge as memory_purge,
 )
 from graphknows.server.mcp.tools.corpus import corpus_ingest
-from graphknows.server.mcp.tools.ltm import ltm_entities, ltm_entity, ltm_topics
+from graphknows.server.mcp.tools.ltm import ltm_entities, ltm_entity
 from graphknows.server.mcp.tools.query import memory_query
 from graphknows.server.mcp.tools.stm import memory_flush, memory_ingest
-from graphknows.server.mcp.tools.topics import memory_topics
 
 __all__ = [
     "corpus_ingest",
     "ltm_entities",
     "ltm_entity",
-    "ltm_topics",
     "memory_doctor",
     "memory_flush",
     "memory_ingest",
     "memory_query",
     "memory_stats",
-    "memory_topics",
 ]
 
 # The destructive tools join the inventory only when they were registered, so

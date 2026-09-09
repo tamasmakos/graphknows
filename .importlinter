@@ -12,7 +12,7 @@ layers =
     graphknows.ingestion | graphknows.retrieval
     graphknows.channels
     graphknows.symbolic
-    graphknows.ranking | graphknows.topics
+    graphknows.ranking
     graphknows.storage
     graphknows.models | graphknows.settings | graphknows.llm | graphknows.temporal
     graphknows.exceptions

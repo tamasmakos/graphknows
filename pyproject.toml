@@ -160,7 +160,6 @@ exclude = ["evaluation", "examples", "tests", "research", ".scratch", ".claude",
 
 [project.scripts]
 graphknows-mcp = "graphknows.server.mcp.stdio_server:main"
-graphknows-topics = "graphknows.cli.topics:main"
 
 # ── Dev tooling ────────────────────────────────────────────────────────────────
 

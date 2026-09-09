@@ -32,7 +32,7 @@ Async methods on the facade:
 | `doctor` | Backend connectivity check for the namespace database. |
 | `rebind_memory` | Re-ground a channel's stored mentions against the currently loaded resource: new groundings under the current version, old ones flagged `superseded` rather than deleted. |
 | `corpus_ingest` | Batch-ingest documents into one session, then consolidate it. |
-| `ltm_topics` / `ltm_entity` / `ltm_entities` | Read-only graph browsing helpers. |
+| `ltm_entity` / `ltm_entities` | Read-only graph browsing helpers. |
 
 A namespace-first SDK surface (`add`, `search`, `flush`) wraps the same verbs with
 mem0-style `user_id` / `agent_id` / `run_id` scoping (`Memory._scoped_session_id`).
@@ -257,8 +257,8 @@ aborting, so an analytics failure never skips the state flip:
 7. **Community quality** — `compute_community_quality`, writing modularity /
    conductance metrics onto `COMMUNITY` vertices.
 8. **State flip** — `consolidate_session(session_id)` moves the session's chunks
-   from `raw` to `consolidated`. Nothing is deleted; relation canonicalization and
-   topic summarization are not part of this path.
+   from `raw` to `consolidated`. Nothing is deleted; relation canonicalization is
+   not part of this path.
 9. **Entity coverage audit** — `GraphStore.entity_coverage()` counts, over the
    whole namespace, `ENTITY` nodes with no `REL` edge in either direction and no
    incoming `PLAYS_ROLE`; returned as `entity_coverage: {total, connected,
@@ -330,8 +330,7 @@ contributes no leg to the RRF fusion below and does not affect retrieval.
 A graph-traversal channel (`ppr`) and a
 `topic` channel both existed and were removed — `ppr` returned the worst
 gold-hit ratio of six channels, and nothing on the read path consumed what the
-topic stage wrote. See the `registry.py` docstring for the measurements,
-and [topics.md](topics.md) for what replaced the topic channel.
+topic stage wrote. See the `registry.py` docstring for the measurements.
 
 ### DETRetriever (llm_free)
 
@@ -365,12 +364,10 @@ it have all been removed.
 - **MCP stdio** — `graphknows/server/mcp/stdio_server.py` (console script
   `graphknows-mcp`) over the shared FastMCP app in `graphknows/server/mcp/_app.py`.
   `graphknows/server/mcp/tools/__init__.py` is the authoritative inventory:
-  `memory_ingest`, `memory_flush`, `memory_query`, `memory_topics`,
+  `memory_ingest`, `memory_flush`, `memory_query`,
   `memory_stats`, `memory_doctor`, `memory_purge`, `memory_drop_namespace`,
-  `corpus_ingest`, `ltm_topics`, `ltm_entity`, `ltm_entities`. A thin
+  `corpus_ingest`, `ltm_entity`, `ltm_entities`. A thin
   wrapper over one `Memory` instance.
-- **CLI** — `graphknows-topics` (`graphknows/cli/topics.py`) rebuilds or sweeps
-  the topic layer against a namespace. See [topics.md](topics.md).
 
 ## Ingest path
 

@@ -7,8 +7,6 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -113,32 +111,3 @@ def test_enabled_admin_tools_are_named_at_startup(
 
     assert "memory_drop_namespace" in caplog.text
     assert "memory_purge" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_topics_tool_has_no_export_path() -> None:
-    """``memory_topics`` takes no path; the payload it would have written comes back in-band."""
-    from graphknows.server.mcp._app import app
-    from graphknows.server.mcp.tools.topics import memory_topics
-
-    (topics_tool,) = [t for t in await app.list_tools() if t.name == "memory_topics"]
-    assert "export_path" not in topics_tool.inputSchema.get("properties", {})
-
-    calls: list[dict[str, Any]] = []
-    payload = {"namespace": "n", "config": {}, "metrics": {}, "topics": [{"topic_id": "t1"}]}
-
-    class _FakeRuntime:
-        async def build_topics(self, **kwargs: Any) -> dict[str, Any]:
-            calls.append(kwargs)
-            return {"topics": 1, "persisted": 1, "export": payload}
-
-    async def _get_runtime() -> _FakeRuntime:
-        return _FakeRuntime()
-
-    with patch("graphknows.server.mcp.tools.topics.get_runtime", _get_runtime):
-        out = await memory_topics(mode="extractive", min_size=2)
-
-    # No path reaches the facade, and the caller is handed the build instead.
-    assert "export_path" not in calls[0]
-    assert calls[0]["include_export"] is True
-    assert out["export"] == payload

@@ -541,117 +541,6 @@ class Memory:
         # transport has to reimplement the fallback rule to say so.
         return {"hits": (stm_hits + graph_hits)[:top_k], "facts": facts, "scope": scope}
 
-    def _topic_summarizer_for(self, mode: Any) -> Any:
-        """The LLM summarizer for ``mode``; ``None`` for every non-llm mode.
-
-        Returning ``None`` is what keeps the extractive topic layer free of any
-        network dependency, so it is valid under ``llm_free``.
-        """
-        from graphknows.settings import TopicMode
-
-        if mode is not TopicMode.llm:
-            return None
-        from graphknows.topics.summarize import TopicSummarizer
-
-        s = self.settings
-        return TopicSummarizer(
-            model=s.summarization_model or s.llm_model,
-            api_key=s.llm_api_key.get_secret_value(),
-            api_base=s.llm_api_base,
-        )
-
-    async def _flush_topics(self, store: Any) -> dict[str, Any]:
-        """The topic stage as invoked by a flush — opt-in only (FR-045).
-
-        Returns ``{"topics_created": int, "modularity": float | None}``. The
-        modularity is the topic stage's own Newman modularity over the entity
-        graph (``TopicSet.metrics["newman_modularity"]``) — the real, trusted
-        number, now that ArcadeDB's ``modularityScore``-derived reporting
-        (``compute_community_quality``) has been retired.
-
-        Topics have exactly one reader, the browse tool (``ltm_topics``), so a
-        flush no longer pays clustering + description just because
-        ``GRAPHKNOWS_MODE=llm_assisted`` prefers ``TopicMode.llm`` as a
-        preset — that read ``self.settings.topic_mode``, the preset-resolved
-        value. Here it reads the raw ``topics`` field instead: unset means no
-        one asked, same as an explicit ``none``. A caller who wants topics
-        sets ``GRAPHKNOWS_TOPICS`` explicitly, or rebuilds on demand through
-        :meth:`build_topics` / the ``memory_topics`` tool, which do keep
-        following the preset — calling either one is itself the opt-in.
-        """
-        from graphknows.settings import TopicMode
-        from graphknows.topics import TopicConfig, build_topics, persist_topics
-
-        mode = self.settings.topics
-        if mode is None or mode is TopicMode.none:
-            return {"topics_created": 0, "modularity": None}
-        cfg = TopicConfig(mode=mode)
-        topic_set = await build_topics(
-            store, cfg, self._topic_summarizer_for(mode), namespace=self.namespace
-        )
-        persisted = await persist_topics(store, topic_set)
-        return {
-            "topics_created": persisted,
-            "modularity": topic_set.metrics.get("newman_modularity"),
-        }
-
-    async def build_topics(
-        self,
-        *,
-        config: Any = None,
-        persist: bool = True,
-        export_path: str = "",
-        include_export: bool = False,
-        **overrides: Any,
-    ) -> dict[str, Any]:
-        """Rebuild the topic layer over the existing graph. Returns the metrics.
-
-        Standalone by design: this re-runs clustering, description and grading
-        **without** touching ingestion, entity resolution, PageRank or
-        consolidation, so topics can be swept at different settings over an
-        unchanged graph.
-
-        Args:
-            config: A :class:`~graphknows.topics.TopicConfig`; built from the
-                runtime defaults when omitted.
-            persist: Write the resulting TOPIC layer (replacing the previous one).
-            export_path: Optional path for a read-only JSON artifact.
-            include_export: Return the artifact payload in-band under
-                ``export`` — the same dict ``export_path`` would have written —
-                for callers that cannot be handed a file. Off by default: the
-                CLI prints every key it gets back.
-            **overrides: Field overrides applied to ``config`` (e.g.
-                ``min_size=3``).
-
-        Returns:
-            The build's metrics, plus ``persisted``, and ``export`` or
-            ``export_path`` when either was asked for.
-        """
-        from dataclasses import replace
-
-        from graphknows.topics import TopicConfig, build_topics, export_json, persist_topics
-
-        cfg = config or TopicConfig(mode=self.settings.topic_mode)
-        if overrides:
-            cfg = replace(cfg, **overrides)
-
-        await self._get_retriever()  # connects the store + ensures schema
-        store = self._store
-        summarizer = self._topic_summarizer_for(cfg.mode)
-        topic_set = await build_topics(store, cfg, summarizer, namespace=self.namespace)
-
-        persisted = await persist_topics(store, topic_set) if persist else 0
-        out: dict[str, Any] = {
-            **topic_set.metrics,
-            "persisted": persisted,
-            "config_fingerprint": cfg.fingerprint(),
-        }
-        if include_export:
-            out["export"] = topic_set.to_dict()
-        if export_path:
-            out["export_path"] = str(export_json(topic_set, export_path))
-        return out
-
     async def _ingest_buffered_turns(
         self, store: Any, session_id: str, raw_turns: list[dict[str, Any]]
     ) -> dict[str, Any]:
@@ -727,9 +616,8 @@ class Memory:
            person-nickname merge), then recomputes PageRank/node2vec
            embeddings/communities over the *merged* entity graph (native
            ArcadeDB algos, each with its own soft-fail — see
-           ``GraphStore.compute_and_persist_pagerank`` et al.), builds the
-           TOPIC layer over those communities when ``GRAPHKNOWS_TOPICS`` asks
-           for it, flips the session's CHUNK lifecycle ``state`` raw ->
+           ``GraphStore.compute_and_persist_pagerank`` et al.), flips the
+           session's CHUNK lifecycle ``state`` raw ->
            consolidated in place, and runs ``GraphStore.consolidate_relations``
            (issue #140) over the merged graph: duplicate REL edges under
            different predicate surfaces collapse with a raised ``support``
@@ -757,11 +645,9 @@ class Memory:
         graph_embeddings_computed = 0
         communities_computed = 0
         chunks_flipped = 0
-        topics_created = 0
         turns_ingested = 0
         turn_chunks = 0
         abstentions: dict[str, int] = {}
-        modularity: float | None = None
         resolution = {"dropped": 0, "merged": 0, "considered": 0}
         rel_consolidation = {"deduped": 0, "contradictions": 0, "invalidated": 0}
         verifier_coverage: dict[str, dict[str, Any]] = {}
@@ -778,7 +664,7 @@ class Memory:
             tell which stage degraded.
 
             Timed, because ``flush_elapsed_s`` covers drain, resolution, pagerank,
-            node2vec, louvain and topics together — a 50-minute flush said nothing
+            node2vec and louvain together — a 50-minute flush said nothing
             about WHICH of those took the 50 minutes, so every conversation about
             ingest cost started by guessing. A failed step is timed too: how long
             a stage took before it fell over is exactly what you want to know.
@@ -824,7 +710,7 @@ class Memory:
             # Caller-supplied structure goes in HERE: the buffer has drained, so
             # this session's CHUNK vertices exist and custom edges have
             # something to attach to; the analytics below have not run, so
-            # entity resolution and the topic build see the finished graph.
+            # entity resolution sees the finished graph.
             # Each channel soft-fails under its own name — one broken extension
             # must not cost the consolidation the rest of the flush does.
             #
@@ -874,17 +760,6 @@ class Memory:
             communities_computed = await step(
                 "communities", store.compute_communities(skip_view_ensure=True), 0
             )
-            # Topics run last of the analytics: the stage clusters over the
-            # node2vec embeddings and pagerank computed above. It is the SAME
-            # stage as Memory.build_topics — one implementation, so a rebuild at
-            # new settings is never a different code path from the flush. The
-            # topic build's own Newman modularity is the flush's reported
-            # "modularity" — ArcadeDB's untrustworthy modularityScore is gone.
-            topic_result = await step(
-                "topics", self._flush_topics(store), {"topics_created": 0, "modularity": None}
-            )
-            topics_created = topic_result["topics_created"]
-            modularity = topic_result["modularity"]
             chunks_flipped = await step(
                 "consolidate_session", store.consolidate_session(session_id), 0
             )
@@ -902,7 +777,6 @@ class Memory:
             "abstentions": abstentions,
             # Seconds per stage. `elapsed_s` is their sum plus the untimed glue.
             "stage_s": stage_s,
-            "topics_created": topics_created,
             "entities_dropped": resolution["dropped"],
             "merged_entities": resolution["merged"],
             # merges / entities considered for resolution, so a bare count is
@@ -914,8 +788,6 @@ class Memory:
             ),
             "graph_embeddings_computed": graph_embeddings_computed,
             "communities_computed": communities_computed,
-            "modularity": modularity,
-            "communities_scored": topics_created,
             "rel_consolidation": rel_consolidation,
             "verifier_coverage": verifier_coverage,
             # A graph whose entities are all isolated and a graph with no
@@ -1123,38 +995,6 @@ class Memory:
             "elapsed_s": round(time.monotonic() - t0, 3),
             "errors": errors,
         }
-
-    async def ltm_topics(self, min_entities: int = 3) -> dict[str, Any]:
-        """List golden-layer TOPIC nodes with their entity membership.
-
-        Entity membership is the direct ``ENTITY-[:IN_TOPIC]->TOPIC`` edge — the
-        actual output of the topic clustering, written by ``write_topics``.
-        """
-        from graphknows.storage import build_graph_store
-
-        store = build_graph_store(self.settings, self.namespace)
-        await store.connect()
-        try:
-            rows = await store.query(
-                "MATCH (e:ENTITY)-[:IN_TOPIC]->(t:TOPIC) "
-                "WITH t, count(DISTINCT e) AS entity_count, "
-                "collect(DISTINCT e.name) AS entity_names "
-                "WHERE entity_count >= $min "
-                "RETURN t.topic_id AS topic_id, t.title AS title, t.summary AS summary, "
-                "t.keywords AS keywords, t.coherence AS coherence, "
-                "entity_count AS entity_count, entity_names AS entity_names "
-                "ORDER BY entity_count DESC",
-                min=min_entities,
-            )
-        finally:
-            await store.close()
-        topics = []
-        for r in rows:
-            topic = {k: v for k, v in r.items() if not k.startswith("@")}
-            names = topic.get("entity_names") or []
-            topic["entity_names"] = list(names)[:20]
-            topics.append(topic)
-        return {"topics": topics}
 
     async def ltm_entity(self, name: str) -> dict[str, Any]:
         """Return one golden-layer ENTITY by case-insensitive name."""

@@ -42,8 +42,8 @@ adapters.
 
 The `graphknows.integrations.client` SDK (drive the server out-of-process) needs no extras.
 
-`pip install graphknows` gives you the library plus two console scripts,
-`graphknows-mcp` and `graphknows-topics` — no repo checkout needed for either.
+`pip install graphknows` gives you the library plus the `graphknows-mcp`
+console script — no repo checkout needed.
 
 It is not standalone-runnable, though: GraphKnows stores its graph in
 [ArcadeDB](https://arcadedb.com/), and every ingest or recall call needs a
@@ -197,7 +197,6 @@ Full index: **[docs/](https://github.com/tamasmakos/graphknows/blob/main/docs/RE
 - [docs/architecture.md](https://github.com/tamasmakos/graphknows/blob/main/docs/architecture.md) — lifecycle states, consolidation, RRF retrieval
 - [docs/modes.md](https://github.com/tamasmakos/graphknows/blob/main/docs/modes.md) — llm_free vs llm_assisted
 - [docs/ontology.md](https://github.com/tamasmakos/graphknows/blob/main/docs/ontology.md) — the bundled CCO ontology, and injecting your own
-- [docs/topics.md](https://github.com/tamasmakos/graphknows/blob/main/docs/topics.md) — the re-runnable topic stage
 - [docs/configuration.md](https://github.com/tamasmakos/graphknows/blob/main/docs/configuration.md) — full settings reference
 - [docs/integrations.md](https://github.com/tamasmakos/graphknows/blob/main/docs/integrations.md) — framework integration recipe
 - [docs/multi-tenancy.md](https://github.com/tamasmakos/graphknows/blob/main/docs/multi-tenancy.md) — namespaces, isolation and scaling

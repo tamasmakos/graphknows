@@ -97,12 +97,8 @@ domain branch anywhere in the core.
 **Independent Test**: load two packs into one namespace, ingest one source per pack, recall a
 symbol from each, and confirm both return facts with evidence.
 
-- [ ] T034 [US2] Delete `graphknows/topics/`, `graphknows/cli/topics.py` and the `topics_*` MCP tools, with their tests
+- [X] T034 [US2] Delete `graphknows/topics/`, `graphknows/cli/topics.py` and the `topics_*` MCP tools, with their tests
   - Verify: `pytest -q tests/test_dropped_plane_topics.py`
-- [ ] T035 [US2] Delete `graphknows/ingestion/stm/` and the closed `Role` enum in `graphknows/models/message.py`; a session is a `Source`, a turn is a `Segment`
-  - Verify: `pytest -q tests/test_dropped_plane_stm.py`
-- [ ] T036 [US2] Stop declaring and writing the frame-element mirror, frame-specific types, graph-ranking columns and free-string relations, reducing `graphknows/symbolic/framenet/` to a concept+predicate emitter
-  - Verify: `pytest -q tests/test_dropped_plane_frames.py`
 - [X] T018 [US2] Replace the DDL wholesale with the golden schema in `graphknows/storage/arcadedb/_schema.py`, keeping the `SCHEMA_STAMP` mechanism verbatim
   - Verify: `pytest -q tests/storage/test_golden_schema.py`
 - [X] T019 [US2] Define the single `state <> 'forgotten'` fragment in `graphknows/storage/arcadedb/_sql.py` and assert every read query text composes it
@@ -157,6 +153,13 @@ is recorded. The dropped planes were already deleted at the head of Phase 4 so t
 writes a type the schema no longer declares. Tests are deleted only in the change that deletes
 the module they import.
 
+<!-- T035/T036 moved here from Phase 4 on 2026-09-09: deleting the STM package before the new
+pipeline (T024) and facade (T030) exist breaks memory.py at import time, and dropping the
+frame types before T027/T029 leaves their readers dangling. They are cutover deletions. -->
+- [ ] T035 [Cutover] Delete `graphknows/ingestion/stm/` and the closed `Role` enum in `graphknows/models/message.py`; a session is a `Source`, a turn is a `Segment`
+  - Verify: `pytest -q tests/test_dropped_plane_stm.py`
+- [ ] T036 [Cutover] Stop declaring and writing the frame-element mirror, frame-specific types, graph-ranking columns and free-string relations, reducing `graphknows/symbolic/framenet/` to a concept+predicate emitter
+  - Verify: `pytest -q tests/test_dropped_plane_frames.py`
 - [ ] T037 [Cutover] Delete the remaining old core modules in one change — `graphknows/symbolic/wordnet.py`, `graphknows/worth.py`, `graphknows/ingestion/extraction/entities/hygiene.py`'s dialogue-only rules, the old `entity_resolution.py` layers replaced at T063, and every test that imports them; `bounds.py`, `nlp.py` and `linguistics.py` stay. `graphknows/memory.py` was rewritten in place at T030 and nothing routes to two write paths (FR-045)
   - Verify: `pytest -q tests/memory/test_cutover.py`
 - [ ] T063 [Cutover] Implement exact-key-only identity on the cut-over core — no `MERGED_INTO` and no `SAME_AS` edge is written — and the cutover-report line that states it (FR-048)

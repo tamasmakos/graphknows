@@ -47,14 +47,12 @@ Two extra contracts sharpen it:
 | `channels` | Optional memory signals with symmetric `ingest()` / `collect()` hooks, selected by `default_channels`. | `channels/base.py`, `channels/registry.py` |
 | `ontology` | Loading RDF/OWL terms and matching them by **definition embedding**. | `ontology/loader.py`, `ontology/catalog.py` |
 | `ranking` | RRF fusion constants and scoring. | `ranking/rrf.py` |
-| `topics` | The re-runnable clustering stage: cluster → describe → grade. Not a flush step. | `topics/builder.py` |
 | `storage` | The single golden-layer graph store per namespace, plus embeddings. | `storage/arcadedb/graph_store.py`, `storage/embedder.py` |
 | `models` | Layer-neutral vocabulary — `Hit`, `Message`, `MemoryScope`, `IngestResult`. | `models/` |
 | `settings` | `GraphKnowsSettings`; mode presets expanded into capability knobs. | `settings.py` |
 | `llm` | Provider-neutral LM construction. | `llm.py` |
 | `exceptions` | `GraphKnowsError` and friends, including `MissingExtraError`. | `exceptions.py` |
 | `server` | The MCP stdio server and its tool inventory. | `server/mcp/` |
-| `cli` | The `graphknows-topics` command. | `cli/topics.py` |
 | `integrations` | Framework adapters (LangGraph) and the stdlib-only MCP client SDK. | `integrations/` |
 
 ## The three paths
@@ -100,15 +98,13 @@ single in-process entry point.
 | Command | Does |
 | --- | --- |
 | `graphknows-mcp` | Runs the MCP stdio server. |
-| `graphknows-topics` | Rebuilds or sweeps the topic layer. |
 
-**MCP tools** — twelve, each taking an optional `namespace`:
+**MCP tools** — ten, each taking an optional `namespace`:
 
 | Group | Tools |
 | --- | --- |
 | Write | `memory_ingest`, `memory_flush`, `corpus_ingest` |
-| Read | `memory_query`, `ltm_topics`, `ltm_entity`, `ltm_entities` |
-| Stage | `memory_topics` |
+| Read | `memory_query`, `ltm_entity`, `ltm_entities` |
 | Admin | `memory_stats`, `memory_doctor`, `memory_purge`, `memory_drop_namespace` |
 
 There is **no HTTP API**. `graphknows/server/` contains only `mcp/`; MCP stdio

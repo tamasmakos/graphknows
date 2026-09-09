@@ -28,7 +28,6 @@ and benchmarks. This folder is the reference behind it.
 | Page | Answers |
 | --- | --- |
 | [ontology.md](ontology.md) | Injecting an RDF/OWL ontology so the graph speaks your domain's vocabulary. |
-| [topics.md](topics.md) | The re-runnable topic stage — clustering, grading, and why it does not reach retrieval. |
 
 ## Operate it
 

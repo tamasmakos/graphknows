@@ -28,9 +28,6 @@ def _memory(store: MagicMock) -> Memory:
     mem = Memory(settings=MagicMock(namespace=""), namespace="")
     mem._get_retriever = AsyncMock(return_value=MagicMock())
     mem._store = store
-    mem._flush_topics = AsyncMock(  # type: ignore[method-assign]
-        return_value={"topics_created": 6, "modularity": 0.5}
-    )
     return mem
 
 

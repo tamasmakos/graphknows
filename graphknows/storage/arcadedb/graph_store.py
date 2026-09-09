@@ -2601,8 +2601,7 @@ class GraphStore(ArcadeStoreBase):
         No ``TOPIC.embedding`` and no ``CHUNK-[:HAS_TOPIC]->TOPIC``: both were
         write-only. The topic retrieval channel that traversed HAS_TOPIC, and
         the vector search that would have used the embedding, were removed with
-        the rest of the topic read path (see ``channels/registry``); the only
-        reader left is ``Memory.ltm_topics``, which walks IN_TOPIC. The cluster
+        the rest of the topic read path (see ``channels/registry``). The cluster
         centroid is still computed — it is what ``coherence`` is measured
         against — it is just not persisted.
         """

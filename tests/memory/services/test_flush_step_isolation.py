@@ -38,13 +38,6 @@ def _memory(store: MagicMock) -> Memory:
     mem = Memory(settings=MagicMock(namespace=""), namespace="")
     mem._get_retriever = AsyncMock(return_value=MagicMock())
     mem._store = store
-    # Topics are their own stage now (Memory._flush_topics -> graphknows.topics),
-    # so stub the stage rather than a store method. This test is about step
-    # isolation in flush_memory, not about clustering. The stage also carries
-    # the real (Newman) modularity now that compute_community_quality is gone.
-    mem._flush_topics = AsyncMock(  # type: ignore[method-assign]
-        return_value={"topics_created": 6, "modularity": 0.5}
-    )
     return mem
 
 
@@ -61,11 +54,8 @@ async def test_happy_path_reports_every_step() -> None:
     assert out["nodes"] == 3
     assert out["graph_embeddings_computed"] == 4
     assert out["communities_computed"] == 5
-    assert out["topics_created"] == 6
     assert out["chunks"] == 7
     assert out["merged_entities"] == 2
-    assert out["modularity"] == 0.5
-    assert out["communities_scored"] == 6
     assert out["entity_coverage"] == {"total": 10, "connected": 8, "isolated": 2}
 
 
