@@ -174,6 +174,11 @@ SCENARIOS: dict[str, Callable[[str], Awaitable[ScenarioResult]]] = {
 }
 
 
+# The interim identity state, stated in the cutover report (FR-048): the merge
+# planes stay declared but unwritten until the identity story lands.
+EXACT_KEY_ONLY = "identity: exact-key only — no MERGED_INTO and no SAME_AS edge is written (FR-048)"
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="python -m evaluation scenario")
     parser.add_argument("scenario", choices=sorted(SCENARIOS))
@@ -181,4 +186,5 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     result = asyncio.run(SCENARIOS[args.scenario](args.namespace))
     print(f"{result.name}: {'pass' if result.passed else 'FAIL'} — {result.detail}")
+    print(EXACT_KEY_ONLY)
     result.gate()
