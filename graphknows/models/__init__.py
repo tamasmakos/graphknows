@@ -16,6 +16,7 @@ from graphknows.models.ingest_options import IngestOptions
 from graphknows.models.memory_class import MemoryClass
 from graphknows.models.message import Message, MessageInput, Role, normalize_messages
 from graphknows.models.scope import MemoryScope
+from graphknows.models.source import Source
 
 __all__ = [
     "MAX_CONTEXT_CHARS",
@@ -28,6 +29,7 @@ __all__ = [
     "MessageInput",
     "RenderedMemories",
     "Role",
+    "Source",
     "date_in",
     "normalize_messages",
     "render_memories",

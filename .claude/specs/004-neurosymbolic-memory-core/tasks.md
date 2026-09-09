@@ -68,7 +68,7 @@ rules that every user story below depends on.
 
 **⚠️ CRITICAL**: this phase MUST NOT start until the Phase 2 baseline is committed (SC-003, FR-041). No user story after US1 begins until this phase is complete.
 
-- [ ] T003 [P] Create `Source` in `graphknows/models/source.py` with `id` derived from `uri` + `content_hash`, `mime`, `imported_at`, `namespace`, `meta`
+- [X] T003 [P] Create `Source` in `graphknows/models/source.py` with `id` derived from `uri` + `content_hash`, `mime`, `imported_at`, `namespace`, `meta`
   - Verify: `pytest -q tests/models/test_source.py`
 - [ ] T004 [P] Create `Segment` and the closed `SegmentKind` enum in `graphknows/models/segment.py` with `byte_range`, free-string `role`, `observed_at`, `observed_at_inferred`, `path`, `extractor_version`
   - Verify: `pytest -q tests/models/test_segment.py`
