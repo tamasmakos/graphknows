@@ -41,3 +41,10 @@ PYSEC-2026-2447       # diskcache         5.6.3   -> none released
 # torch needs an image rebuild and an eval re-run, so it is deferred rather
 # than bundled into a gate change.
 PYSEC-2025-194        # torch             2.12.0  -> 2.13.0
+
+# 9 Sep 2026: no fixed accelerate release exists — the advisory (path traversal
+# and DoS via a sharded checkpoint's weight_map) names 1.14.0, the latest on
+# PyPI, as affected. accelerate reaches the runtime set only through
+# gliner2 -> peft; the models it loads are the pinned repos baked into the
+# image, never a checkpoint from user input. Revisit when a release lands.
+GHSA-4j2p-28q2-5m79   # accelerate (CVE-2026-69112)        1.13.0  -> none released
