@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Protocol, runtime_checkable
 
 from graphknows.models import ConceptRef, PredicateRef
@@ -14,8 +14,8 @@ class DomainPack(Protocol):
 
     ``lexicon()``, ``channel()``, ``expand()`` and ``retrieval_profile()`` arrive
     with the dialogue pack, where each gets its first caller (FR-022); so do
-    ``hygiene()``, ``parser()`` and ``extractor()``, whose value types this slice
-    has not created yet.
+    ``parser()`` and ``extractor()``, whose value types this slice has not created
+    yet.
     """
 
     @property
@@ -34,8 +34,11 @@ class DomainPack(Protocol):
     def prompt_addendum(self) -> str:
         """Domain guidance appended to the extraction prompt."""
 
+    def hygiene(self) -> Callable[[str], bool]:
+        """The pack's name hygiene: True when a surface may become an entity (FR-022)."""
+
     def thresholds(self) -> Mapping[str, float]:
-        """Pack-supplied thresholds, by name."""
+        """Pack-supplied thresholds, by name: ``mention`` and ``fact`` confidence floors."""
 
     def veto(self, a: str, b: str) -> bool:
         """True when the pack forbids merging these two entity ids (FR-019)."""

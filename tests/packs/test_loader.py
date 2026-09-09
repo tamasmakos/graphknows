@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 import pytest
@@ -34,6 +34,9 @@ class _StubPack:
 
     def prompt_addendum(self) -> str:
         return ""
+
+    def hygiene(self) -> Callable[[str], bool]:
+        return lambda surface: True
 
     def thresholds(self) -> Mapping[str, float]:
         return {}

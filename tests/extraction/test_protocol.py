@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,6 +42,9 @@ class _StubPack:
     def prompt_addendum(self) -> str:
         return ""
 
+    def hygiene(self) -> Callable[[str], bool]:
+        return lambda surface: True
+
     def thresholds(self) -> Mapping[str, float]:
         return {}
 
@@ -62,6 +65,7 @@ class _StubDecoder:
         extra_entity_labels: Any = None,
         extra_relation_labels: Any = None,
         speaker: str = "",
+        prompt_addendum: str = "",
     ) -> ExtractionResult:
         self.calls.append((text, tuple(extra_entity_labels or ()), speaker))
         return self.result

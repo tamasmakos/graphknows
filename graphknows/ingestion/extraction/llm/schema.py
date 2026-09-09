@@ -39,6 +39,7 @@ class DecodeRequest:
     relation_spec: dict[str, str]  # label -> definition; {} = no relation section
     frame_candidates: tuple[FrameCandidate, ...]  # () = no frame section
     speaker: str = ""  # "" when unresolved
+    prompt_addendum: str = ""  # the pack's guidance, appended to the instructions
 
 
 class DecodedEntity(BaseModel):
