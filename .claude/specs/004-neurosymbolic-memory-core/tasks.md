@@ -105,7 +105,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/storage/test_tombstone_filter.py`
 - [X] T020 [US2] Split `graphknows/storage/arcadedb/graph_store.py` into source, segment, fact, entity and symbol writers, rejecting at write any fact without an `ASSERTED_IN` edge (FR-008)
   - Verify: `pytest -q tests/storage/test_writers.py`
-- [ ] T021 [P] [US2] Add the `Parser` protocol and the MIME-keyed registry in `graphknows/ingestion/parsers/registry.py`, and strip the dialogue heuristics from `graphknows/ingestion/parsers/text.py`
+- [X] T021 [P] [US2] Add the `Parser` protocol and the MIME-keyed registry in `graphknows/ingestion/parsers/registry.py`, and strip the dialogue heuristics from `graphknows/ingestion/parsers/text.py`
   - Verify: `pytest -q tests/ingestion/parsers/test_registry.py`
 - [ ] T022 [P] [US2] Add the `Extractor` protocol in `graphknows/ingestion/extraction/protocol.py` and put `LocalExtractor` and `LLMExtractor` behind it
   - Verify: `pytest -q tests/extraction/test_protocol.py`
