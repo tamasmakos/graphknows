@@ -40,15 +40,21 @@ def build_decoder(settings: GraphKnowsSettings) -> Any:
 
     Under ``Decoder.llm`` that is a fresh ``LLMDecoder`` — it is cheap (one
     provider handle, no local model) and carries per-run abstention counters, so
-    it is not memoised. Otherwise it is the process-wide GLiNER2 extractor: the
-    model is stateless and its inference is lock-serialised, so concurrent
-    callers share one instance safely.
+    it is not memoised. Otherwise it is the shared :func:`local_decoder`.
     """
     if settings.decoder is Decoder.llm:
         from graphknows.ingestion.extraction.llm.decoder import LLMDecoder
 
         return LLMDecoder(settings)
+    return local_decoder()
 
+
+def local_decoder() -> Any:
+    """The process-wide GLiNER2 extractor.
+
+    The model is stateless and its inference is lock-serialised, so concurrent
+    callers share one instance safely.
+    """
     global _extractor
     if _extractor is None:
         with _extractor_lock:
@@ -68,4 +74,4 @@ def reset_entity_extractor() -> None:
         _extractor = None
 
 
-__all__ = ["build_decoder", "reset_entity_extractor"]
+__all__ = ["build_decoder", "local_decoder", "reset_entity_extractor"]

@@ -1,0 +1,180 @@
+"""The extraction seam: what an extractor is, and the two paths behind it.
+
+An extractor reads one segment with one pack's vocabulary and answers in the
+neutral currency of the graph — mentions and facts — so the pipeline never
+learns which of the two paths produced them (FR-043).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from hashlib import sha256
+from typing import Any, Protocol, runtime_checkable
+
+from graphknows.models.fact import Fact, Mention
+from graphknows.models.segment import Segment
+from graphknows.models.symbols import PredicateRef
+
+
+@runtime_checkable
+class PackGuidance(Protocol):
+    """The whole of what an extractor asks a pack for.
+
+    Declared here rather than imported: ``graphknows.packs`` sits above the core
+    and the core must not know it (``core-knows-no-domain``). Every ``DomainPack``
+    satisfies this structurally.
+    """
+
+    @property
+    def name(self) -> str:
+        """Pack name; the key its predicate index is memoised under."""
+
+    def predicates(self) -> Iterable[PredicateRef]:
+        """The predicates a fact from this pack may name."""
+
+    def entity_labels(self) -> tuple[str, ...]:
+        """The label set offered to the decoder — it *replaces*, never unions."""
+
+
+@runtime_checkable
+class Extractor(Protocol):
+    """Turns one segment into the mentions and facts it evidences.
+
+    Attributes:
+        name: Extractor identity, recorded on everything it emits.
+        version: Extractor version; a change re-extracts a segment.
+    """
+
+    name: str
+    version: str
+
+    def extract(self, segment: Segment, pack: PackGuidance) -> tuple[list[Mention], list[Fact]]:
+        """The mentions and facts *segment* evidences under *pack*."""
+        ...
+
+
+def _entity_id(name: str) -> str:
+    """Identity of the entity a surface refers to.
+
+    Normalised like the graph's own merge key (mirrors ``graph_store._name_norm``),
+    so two surfaces that differ only in case or spacing name one entity.
+    """
+    return sha256(" ".join(name.split()).casefold().encode()).hexdigest()[:16]
+
+
+def _byte_span(text: str, surface: str) -> tuple[int, int] | None:
+    """Byte offsets of *surface* within *text*, or ``None`` when it is absent.
+
+    A surface the segment does not contain cannot be cited, and evidence is what
+    makes a mention worth keeping (FR-008).
+    """
+    found = text.find(surface)
+    if found < 0:
+        return None
+    start = len(text[:found].encode())
+    return start, start + len(surface.encode())
+
+
+class _DecoderExtractor:
+    """Puts a chunk decoder behind :class:`Extractor`.
+
+    Both decoders answer with an ``ExtractionResult`` of entity and relation
+    dicts; the translation into mentions and facts is the same for both, so it
+    lives here and the two subclasses only choose a decoder and a name.
+    """
+
+    name = ""
+    version = "1"
+
+    def __init__(self, decoder: Any) -> None:
+        self._decoder = decoder
+        # Predicate labels resolve to ids by scanning the pack once per pack,
+        # not once per segment: `predicates()` is a lazy iterable by contract.
+        self._predicate_ids: dict[str, dict[str, str]] = {}
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self._decoder!r})"
+
+    def extract(self, segment: Segment, pack: PackGuidance) -> tuple[list[Mention], list[Fact]]:
+        """Label *segment* with the pack's vocabulary, which replaces the core's."""
+        result = self._decoder.extract(segment.text, pack.entity_labels(), speaker=segment.role)
+        mentions = [
+            mention
+            for entity in result.entities
+            if (mention := self._mention(entity, segment)) is not None
+        ]
+        cited = {mention.entity_id for mention in mentions}
+        facts = [
+            fact
+            for relation in result.relations
+            if (fact := self._fact(relation, segment, pack)) is not None
+            and {fact.subject, fact.object} <= cited
+        ]
+        return mentions, facts
+
+    def _mention(self, entity: dict[str, Any], segment: Segment) -> Mention | None:
+        """One entity dict as a mention, or ``None`` when it cannot be cited."""
+        surface = str(entity.get("name") or "")
+        span = _byte_span(segment.text, surface) if surface else None
+        if span is None:
+            return None
+        return Mention(
+            segment_id=segment.id,
+            entity_id=_entity_id(surface),
+            surface=surface,
+            span=span,
+            confidence=float(entity.get("score", 1.0) or 0.0),
+            extractor=self.name,
+        )
+
+    def _fact(self, relation: dict[str, Any], segment: Segment, pack: PackGuidance) -> Fact | None:
+        """One relation dict as a fact, or ``None`` when the pack has no predicate for it."""
+        predicate = self._predicate_id(pack, str(relation.get("relation") or ""))
+        if predicate is None:
+            return None
+        subject, object_ = _entity_id(str(relation["head"])), _entity_id(str(relation["tail"]))
+        return Fact(
+            id=sha256(f"{segment.id}|{subject}|{predicate}|{object_}".encode()).hexdigest()[:16],
+            subject=subject,
+            predicate=predicate,
+            object=object_,
+            confidence=float(relation.get("score", 1.0) or 0.0),
+            extractor=self.name,
+            extractor_version=self.version,
+        )
+
+    def _predicate_id(self, pack: PackGuidance, label: str) -> str | None:
+        """The pack's predicate id for *label*; a relation it does not name is dropped."""
+        by_label = self._predicate_ids.get(pack.name)
+        if by_label is None:
+            by_label = self._predicate_ids[pack.name] = {
+                predicate.label: predicate.id for predicate in pack.predicates()
+            }
+        return by_label.get(label)
+
+
+class LocalExtractor(_DecoderExtractor):
+    """The local path: GLiNER2 entities and their jointly extracted relations."""
+
+    name = "local"
+
+    def __init__(self, decoder: Any | None = None) -> None:
+        from graphknows.ingestion.extraction.entities import local_decoder
+
+        super().__init__(decoder if decoder is not None else local_decoder())
+
+
+class LLMExtractor(_DecoderExtractor):
+    """The assisted path: one gated structured provider call per segment."""
+
+    name = "llm"
+
+    def __init__(self, decoder: Any | None = None) -> None:
+        if decoder is None:
+            from graphknows.ingestion.extraction.llm.decoder import LLMDecoder
+
+            decoder = LLMDecoder()
+        super().__init__(decoder)
+
+
+__all__ = ["Extractor", "LLMExtractor", "LocalExtractor", "PackGuidance"]

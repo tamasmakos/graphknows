@@ -107,7 +107,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/storage/test_writers.py`
 - [X] T021 [P] [US2] Add the `Parser` protocol and the MIME-keyed registry in `graphknows/ingestion/parsers/registry.py`, and strip the dialogue heuristics from `graphknows/ingestion/parsers/text.py`
   - Verify: `pytest -q tests/ingestion/parsers/test_registry.py`
-- [ ] T022 [P] [US2] Add the `Extractor` protocol in `graphknows/ingestion/extraction/protocol.py` and put `LocalExtractor` and `LLMExtractor` behind it
+- [X] T022 [P] [US2] Add the `Extractor` protocol in `graphknows/ingestion/extraction/protocol.py` and put `LocalExtractor` and `LLMExtractor` behind it
   - Verify: `pytest -q tests/extraction/test_protocol.py`
 - [ ] T065 [US2] Wire `pack.entity_labels()` (replacing, never unioning), `pack.prompt_addendum()`, `pack.hygiene()` and `pack.thresholds()` into `LocalExtractor` and `LLMExtractor` under `graphknows/ingestion/extraction/`, deleting the core's conversational label inventory and hygiene defaults and moving `linguistics.py` vocabularies into pack guidance (FR-022)
   - Verify: `pytest -q tests/extraction/test_pack_guidance.py`
