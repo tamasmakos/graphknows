@@ -156,7 +156,7 @@ the module they import.
 <!-- T035/T036 moved here from Phase 4 on 2026-09-09: deleting the STM package before the new
 pipeline (T024) and facade (T030) exist breaks memory.py at import time, and dropping the
 frame types before T027/T029 leaves their readers dangling. They are cutover deletions. -->
-- [ ] T035 [Cutover] Delete `graphknows/ingestion/stm/` and the closed `Role` enum in `graphknows/models/message.py`; a session is a `Source`, a turn is a `Segment`
+- [X] T035 [Cutover] Delete `graphknows/ingestion/stm/` and the closed `Role` enum in `graphknows/models/message.py`; a session is a `Source`, a turn is a `Segment`
   - Verify: `pytest -q tests/test_dropped_plane_stm.py`
 - [ ] T036 [Cutover] Stop declaring and writing the frame-element mirror, frame-specific types, graph-ranking columns and free-string relations, reducing `graphknows/symbolic/framenet/` to a concept+predicate emitter
   - Verify: `pytest -q tests/test_dropped_plane_frames.py`

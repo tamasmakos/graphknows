@@ -22,7 +22,7 @@ from graphknows.models.hit import (
 from graphknows.models.ingest import IngestResult
 from graphknows.models.ingest_options import IngestOptions
 from graphknows.models.memory_class import MemoryClass
-from graphknows.models.message import Message, MessageInput, Role, normalize_messages
+from graphknows.models.message import Message, MessageInput, normalize_messages
 from graphknows.models.report import (
     Counters,
     Evidence,
@@ -59,7 +59,6 @@ __all__ = [
     "RecallBudget",
     "RecallResult",
     "RenderedMemories",
-    "Role",
     "Segment",
     "SegmentKind",
     "Source",

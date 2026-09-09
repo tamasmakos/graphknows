@@ -15,6 +15,8 @@ import time
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
+from datetime import datetime
+from hashlib import sha256
 from typing import Any
 
 from graphknows.bounds import (
@@ -25,11 +27,11 @@ from graphknows.bounds import (
     check_top_k,
 )
 from graphknows.exceptions import ConfigurationError
-from graphknows.ingestion.parsers.text import strip_content_heading
+from graphknows.ingestion.parsers.text import PlainTextParser, strip_content_heading
 from graphknows.models.fact import FactState
 from graphknows.models.hit import Hit
 from graphknows.models.report import IngestReport, RecallBudget, RecallResult
-from graphknows.models.segment import Segment
+from graphknows.models.segment import Segment, SegmentKind
 from graphknows.models.source import Source
 from graphknows.packs import DomainPack, load_packs
 from graphknows.settings import Decoder, GraphKnowsSettings, MemoryMode, get_settings
@@ -119,6 +121,14 @@ def _format_fused_hits(fused_results: list[dict[str, Any]], session_id: str) -> 
 
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
+
+
+def _turn_anchor(ts: object) -> datetime | None:
+    """A buffered turn's time anchor, or ``None`` so ``Segment`` marks it inferred."""
+    try:
+        return datetime.fromisoformat(str(ts))
+    except ValueError:
+        return None
 
 
 def _format_stm_hits(
@@ -403,29 +413,6 @@ class Memory:
         finally:
             await c.close()
 
-    async def redecode(self, session_id: str) -> dict[str, Any]:
-        """Re-run the decoder over this session's decode-failed chunks (FR-024).
-
-        Returns ``{"session_id", "attempted", "recovered", "still_failed",
-        "abstentions", "errors"}``. Only chunks marked ``decode_state='failed'``
-        are touched, and the text already in the graph is the input — the source
-        is never re-ingested. A chunk that decodes loses the marker, one that
-        fails again keeps it, so a second run finds nothing and reports
-        ``attempted: 0``.
-
-        Deliberately not folded into :meth:`flush_memory`: flush is the
-        raw -> consolidated lifecycle, and a re-drive is not a lifecycle
-        transition.
-        """
-        from graphknows.ingestion import build_stm_service
-
-        service = build_stm_service(self.settings, self.namespace)
-        try:
-            await service.connect()
-            return await service.redecode(session_id)  # type: ignore[no-any-return]
-        finally:
-            await service.close()
-
     async def ingest_memory(
         self,
         messages: str | list[dict[str, Any]] | dict[str, Any] = "",
@@ -504,7 +491,7 @@ class Memory:
                     # in the turn to whenever the buffer happened to be written.
                     await store.write_turn(
                         sid,
-                        m.role.value,
+                        m.role,
                         m.content,
                         seq,
                         m.timestamp or "",
@@ -521,31 +508,18 @@ class Memory:
                 "errors": [],
             }
 
-        from graphknows.ingestion import build_stm_service
-
-        service = build_stm_service(self.settings, self.namespace)
-        try:
-            # connect() inside the try so a failure after the pool opens (schema
-            # DDL, transient ArcadeDB error) still runs close() in the finally.
-            await service.connect()
-            result = await service.ingest(
-                messages,  # type: ignore[arg-type]
-                session_id=scope.to_session_id(),
-                title=title,
-                metadata=metadata or {},
-                infer=infer,
-            )
-            return {
-                "file_id": result.file_id,
-                "chunks": result.chunk_count,
-                "entities": result.entity_count,
-                "elapsed_s": round(result.elapsed_s, 3),
-                "errors": list(result.errors),
-                "warnings": [],
-                "abstentions": result.abstentions,
-            }
-        finally:
-            await service.close()
+        started = time.monotonic()
+        source, segments = self._document_as_source(str(messages), title)
+        report = await self.ingest(source, segments)
+        return {
+            "file_id": source.id,
+            "chunks": report.segments_written,
+            "entities": report.entities_touched,
+            "elapsed_s": round(time.monotonic() - started, 3),
+            "errors": [],
+            "warnings": [],
+            "abstentions": {},
+        }
 
     async def recall_memory(
         self,
@@ -625,64 +599,89 @@ class Memory:
         # transport has to reimplement the fallback rule to say so.
         return {"hits": (stm_hits + graph_hits)[:top_k], "facts": facts, "scope": scope}
 
-    async def _ingest_buffered_turns(
-        self, store: Any, session_id: str, raw_turns: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        """Run the session's buffered ``TURN`` rows through the real STM pipeline.
-
-        This is the expensive step (GLiNER extraction + embeddings) that the
-        buffer exists to defer. ``raw_turns`` is newest-first (as returned by
-        ``list_turns``); it is reversed to oldest-first so seq order in the
-        graph matches the order the turns actually happened.
-        """
-        from graphknows.ingestion import build_stm_service
-        from graphknows.models.ingest_options import IngestOptions
-        from graphknows.models.message import Message, Role
-        from graphknows.models.scope import MemoryScope
-
-        ordered = list(reversed(raw_turns))
-        # Carry each turn's ts through as the Message timestamp: it is the
-        # anchor the extractor resolves that turn's relative dates against.
-        # Dropping it here is what dated a Jan-Jul 2023 conversation's TEMPORAL
-        # nodes to 2026 — 42 of 62 wrong — because every unanchored expression
-        # fell back to ingestion time.
-        messages = [
-            Message(
-                role=Role(t["role"]),
-                content=t["text"],
-                name=t.get("speaker") or None,
-                timestamp=t.get("ts") or None,
-            )
-            for t in ordered
-        ]
-        # Each turn's own extract/skip decision, made by the caller at add()
-        # time. A turn stored with infer=False is still written and embedded —
-        # it stays retrievable as text — it just mints no entities.
-        infer_flags = [bool(t.get("infer", True)) for t in ordered]
-        scope = MemoryScope(run_id=session_id)
-        # Continue this dialog file's chunk sequence instead of restarting at 0.
-        # Every flush ingests into the same file_id, and neighbor_chunks expands
-        # a hit to its siblings by (file_id, seq ± radius) — a second flush
-        # numbering from 0 again hands retrieval the first flush's chunks as
-        # this one's neighbours. Forward-only: seq values already colliding on
-        # disk stay as they are.
-        last_seq = await store.max_chunk_seq(scope.to_dialog_id())
-        options = IngestOptions(
-            scope=scope,
-            turn_index_offset=0 if last_seq is None else last_seq + 1,
+    def _document_as_source(self, text: str, title: str) -> tuple[Source, list[Segment]]:
+        """One document as a ``Source``, each heading-aligned chunk a ``prose`` ``Segment``."""
+        parsed = PlainTextParser().parse(text, title=title)
+        source = Source(
+            uri=f"document:{parsed.source_id}",
+            content_hash=sha256(text.encode()).hexdigest(),
+            mime="text/plain",
+            namespace=self.namespace,
+            meta={"title": parsed.title},
         )
+        segments = [
+            Segment(
+                source_id=source.id,
+                text=chunk.text,
+                kind=SegmentKind.prose,
+                path=chunk.heading_path,
+                byte_range=(chunk.char_offset, chunk.char_offset + len(chunk.text.encode())),
+            )
+            for chunk in parsed.segments
+        ]
+        return source, segments
 
-        service = build_stm_service(self.settings, self.namespace)
-        try:
-            await service.connect()
-            result = await service.ingest_messages(messages, options, infer_flags=infer_flags)
-        finally:
-            await service.close()
+    def _session_as_source(
+        self, session_id: str, turns: Sequence[dict[str, Any]]
+    ) -> tuple[Source, list[Segment]]:
+        """One session as a ``Source``, each of its turns as a ``turn`` ``Segment``.
+
+        The joined transcript is the source's content and every turn addresses
+        its own byte range of it, so both identities are derived: re-draining a
+        session rewrites the same segments in place instead of forking a set.
+        """
+        transcript = "\n".join(str(turn.get("text", "")) for turn in turns)
+        source = Source(
+            uri=f"session:{session_id}",
+            content_hash=sha256(transcript.encode()).hexdigest(),
+            mime="text/plain",
+            namespace=self.namespace,
+        )
+        segments: list[Segment] = []
+        start = 0
+        for turn in turns:
+            text = str(turn.get("text", ""))
+            end = start + len(text.encode())
+            segments.append(
+                Segment(
+                    source_id=source.id,
+                    text=text,
+                    kind=SegmentKind.turn,
+                    path=str(turn.get("turn_id", "") or ""),
+                    byte_range=(start, end),
+                    # Free string, not a closed role vocabulary: a session may
+                    # name speakers no four-value enum has a member for.
+                    role=str(turn.get("role", "") or ""),
+                    # The turn's own time anchor, carried through so relative
+                    # dates in it resolve against when it was said rather than
+                    # against ingestion time.
+                    observed_at=_turn_anchor(turn.get("ts")),
+                )
+            )
+            start = end + 1  # the newline this join put after the turn
+        return source, segments
+
+    async def _ingest_buffered_turns(
+        self, session_id: str, raw_turns: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Run the session's buffered ``TURN`` rows through the ingest pipeline.
+
+        This is the expensive step (extraction + embeddings) that the buffer
+        exists to defer. ``raw_turns`` is newest-first (as returned by
+        ``list_turns``); it is reversed to oldest-first so segment order in the
+        graph matches the order the turns actually happened.
+
+        ``abstentions`` and ``errors`` come back empty: the pipeline raises
+        rather than swallowing a failed turn, so :meth:`flush_memory` records
+        it through its own ``step()`` wrapper.
+        """
+        source, segments = self._session_as_source(session_id, list(reversed(raw_turns)))
+        report = await self.ingest(source, segments)
         return {
-            "turns": len(messages),
-            "chunks": result.chunk_count,
-            "abstentions": result.abstentions,
-            "errors": list(result.errors),
+            "turns": len(segments),
+            "chunks": report.segments_written,
+            "abstentions": {},
+            "errors": [],
         }
 
     async def flush_memory(self, session_id: str) -> dict[str, Any]:
@@ -777,16 +776,16 @@ class Memory:
             if raw_turns:
                 drained = await step(
                     "drain_turns",
-                    self._ingest_buffered_turns(store, session_id, raw_turns),
+                    self._ingest_buffered_turns(session_id, raw_turns),
                     {"turns": 0, "chunks": 0, "abstentions": {}, "errors": []},
                 )
                 turns_ingested = drained["turns"]
                 turn_chunks = drained["chunks"]
                 abstentions = drained.get("abstentions") or {}
-                # Per-turn extraction failures are caught inside STMService and
-                # never raise, so `step()` above sees a clean return and would
-                # otherwise hide them — surface them here so a graph that failed
-                # on every write is not indistinguishable from an empty one.
+                # A drain that reports per-turn failures rather than raising
+                # leaves `step()` above seeing a clean return, which would hide
+                # them — surface them here so a graph that failed on every write
+                # is not indistinguishable from an empty one.
                 for turn_error in drained.get("errors") or []:
                     errors.append(f"drain_turns: {turn_error}")
             await step("mark_turns_consolidated", store.mark_turns_consolidated(session_id), 0)

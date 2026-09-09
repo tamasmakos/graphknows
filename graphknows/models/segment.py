@@ -36,8 +36,8 @@ class Segment(BaseModel, frozen=True):
         path: Structure path within the source — a heading breadcrumb, a
             qualified symbol name — free-form because every parser shapes it.
         byte_range: Half-open ``(start, end)`` byte offsets into the source.
-        role: Speaker role for conversational segments. Free string, not the
-            closed ``Role``: a source may name speakers the dialogue model has
+        role: Speaker role for conversational segments. Free string, never a
+            closed vocabulary: a source may name speakers a dialogue model has
             no member for.
         observed_at: The single time anchor of this span, supplied by the
             parser; relative dates in the text resolve against it.

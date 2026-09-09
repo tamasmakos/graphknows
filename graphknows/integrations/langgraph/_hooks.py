@@ -71,10 +71,10 @@ def _message_text(message: Any) -> str:
     return str(content or "")
 
 
-# graphknows' Role is a four-value enum, but the labels that reach a node come
+# A TURN's role is one of four names, but the labels that reach a node come
 # from whatever the caller's framework uses. LangChain's own message objects
-# report ``type`` as "human"/"ai", neither of which is a Role — passing them
-# through raises a pydantic ValidationError on the first real LangChain state.
+# report ``type`` as "human"/"ai", neither of which is one of them — storing
+# them raw would split the same speaker across two role values.
 _ROLE_ALIASES = {"human": "user", "ai": "assistant", "agent": "assistant", "bot": "assistant"}
 _ROLES = {"user", "assistant", "system", "tool"}
 

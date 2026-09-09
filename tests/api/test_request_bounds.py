@@ -17,7 +17,7 @@ import pytest
 from graphknows import bounds
 from graphknows.exceptions import ConfigurationError
 from graphknows.memory import Memory
-from graphknows.models.message import Message, Role
+from graphknows.models.message import Message
 from graphknows.retrieval.retriever import DETRetriever
 
 # ---------------------------------------------------------------------------
@@ -131,11 +131,11 @@ def test_the_memory_facade_is_not_timeout_bounded() -> None:
 
 def test_message_content_over_the_bound_is_rejected() -> None:
     with pytest.raises(ConfigurationError):
-        Message(role=Role.user, content="x" * (bounds.MAX_TEXT_CHARS + 1))
+        Message(role="user", content="x" * (bounds.MAX_TEXT_CHARS + 1))
 
 
 def test_message_content_at_the_bound_is_accepted() -> None:
-    Message(role=Role.user, content="x" * bounds.MAX_TEXT_CHARS)
+    Message(role="user", content="x" * bounds.MAX_TEXT_CHARS)
 
 
 @pytest.mark.asyncio

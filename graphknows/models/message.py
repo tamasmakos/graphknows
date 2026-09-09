@@ -2,29 +2,20 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError
 
 from graphknows.bounds import MAX_TEXT_CHARS
 from graphknows.exceptions import ConfigurationError
-
-
-class Role(StrEnum):
-    """Supported conversation message roles."""
-
-    user = "user"
-    assistant = "assistant"
-    system = "system"
-    tool = "tool"
 
 
 class Message(BaseModel, frozen=True):
     """A single conversation message.
 
     Attributes:
-        role: Speaker role.
+        role: Speaker role, as a free string: a source may name speakers no
+            closed vocabulary has a member for.
         content: Text content.
         name: Optional speaker alias or tool name.
         tool_call_id: For role=tool replies, the originating tool call id.
@@ -34,7 +25,7 @@ class Message(BaseModel, frozen=True):
             silently dates a 2023 conversation to the year it was imported.
     """
 
-    role: Role
+    role: str
     content: str = Field(max_length=MAX_TEXT_CHARS)
     name: str | None = None
     tool_call_id: str | None = None
@@ -49,13 +40,6 @@ class Message(BaseModel, frozen=True):
             super().__init__(**data)
         except ValidationError as exc:
             raise ConfigurationError(str(exc)) from exc
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_role_aliases(cls, v: object) -> object:
-        if isinstance(v, dict) and v.get("role") == "agent":
-            v = dict(v, role="assistant")
-        return v
 
 
 MessageInput = str | dict[str, Any] | list[Any]
@@ -75,11 +59,11 @@ def normalize_messages(input: MessageInput) -> list[Message]:
         return [input] if input.content.strip() else []
     if isinstance(input, str):
         stripped = input.strip()
-        return [Message(role=Role.user, content=input)] if stripped else []
+        return [Message(role="user", content=input)] if stripped else []
     if isinstance(input, dict):
         if "content" not in input:
             text = str(input).strip()
-            return [Message(role=Role.user, content=str(input))] if text else []
+            return [Message(role="user", content=str(input))] if text else []
         msg = Message(**input)
         return [msg] if msg.content.strip() else []
     # list branch

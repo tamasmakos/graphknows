@@ -69,7 +69,7 @@ class TestByteRange:
 
 class TestSegmentFields:
     def test_role_is_a_free_string(self) -> None:
-        """Sources name speakers the closed dialogue Role has no member for."""
+        """Sources name speakers a closed dialogue role vocabulary has no member for."""
         segment = _segment(kind=SegmentKind.turn, role="reviewer-2")
 
         assert segment.role == "reviewer-2"
