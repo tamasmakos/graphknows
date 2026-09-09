@@ -1,0 +1,71 @@
+{
+  "concepts": [
+    {
+      "uri": "agent:session",
+      "label": "session",
+      "definition": "One agent working session: a transcript, its working directory and branch."
+    },
+    {
+      "uri": "agent:prompt",
+      "label": "prompt",
+      "definition": "One request a user submitted to the agent within a session."
+    },
+    {
+      "uri": "agent:decision",
+      "label": "decision",
+      "definition": "A choice the user and the agent settled on: an approach taken, a design fixed, an option rejected."
+    },
+    {
+      "uri": "agent:file",
+      "label": "file",
+      "definition": "A file in the working directory, named by the path a tool call addressed it with."
+    },
+    {
+      "uri": "agent:tool",
+      "label": "tool",
+      "definition": "A tool the agent may call, named as the transcript names it."
+    }
+  ],
+  "predicates": [
+    {
+      "id": "agent:asked_in",
+      "label": "asked_in",
+      "definition": "The prompt was asked in the session.",
+      "canonical": "asked in",
+      "domain": "agent:prompt",
+      "range": "agent:session"
+    },
+    {
+      "id": "agent:touched",
+      "label": "touched",
+      "definition": "The tool read or searched the file without changing it.",
+      "canonical": "touched",
+      "domain": "agent:tool",
+      "range": "agent:file"
+    },
+    {
+      "id": "agent:changed",
+      "label": "changed",
+      "definition": "The tool wrote to the file, changing its content.",
+      "canonical": "changed",
+      "domain": "agent:tool",
+      "range": "agent:file"
+    },
+    {
+      "id": "agent:decided_in",
+      "label": "decided_in",
+      "definition": "The decision was decided in the session.",
+      "canonical": "decided in",
+      "domain": "agent:decision",
+      "range": "agent:session"
+    },
+    {
+      "id": "agent:decision_status",
+      "label": "decision_status",
+      "definition": "The current status of the decision; a later status supersedes the earlier one.",
+      "canonical": "has status",
+      "functional": true,
+      "domain": "agent:decision"
+    }
+  ]
+}

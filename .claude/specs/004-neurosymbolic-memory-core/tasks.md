@@ -137,7 +137,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/ingestion/parsers/test_transcript.py`
 - [X] T046 [US2] Link tool results as citable `Source`s rather than segments in `graphknows/ingestion/parsers/transcript.py`, and assert recall survives a citation to a tool result that was never ingested
   - Verify: `pytest -q tests/ingestion/parsers/test_transcript_tool_results.py`
-- [ ] T064 [US2] Ship the agent pack under `graphknows/packs/agent/` and `graphknows/packs/data/`: concepts session, prompt, decision, file, tool; predicates asked_in, touched, changed, decided_in and the functional decision_status; a deterministic `AgentExtractor` emitting facts from tool_use/tool_result blocks; extraction guidance labelling `decision` from user and assistant text; an open decision is one with no superseding `decision_status` fact (FR-004, FR-032)
+- [X] T064 [US2] Ship the agent pack under `graphknows/packs/agent/` and `graphknows/packs/data/`: concepts session, prompt, decision, file, tool; predicates asked_in, touched, changed, decided_in and the functional decision_status; a deterministic `AgentExtractor` emitting facts from tool_use/tool_result blocks; extraction guidance labelling `decision` from user and assistant text; an open decision is one with no superseding `decision_status` fact (FR-004, FR-032)
   - Verify: `pytest -q tests/packs/test_agent_pack.py`
 - [ ] T033 [US2] Implement the `two-packs`, `schema-refusal` and `concurrent-ingest` scenarios in `evaluation/scenarios.py`
   - Verify: `pytest -q tests/evaluation/test_scenarios.py`
