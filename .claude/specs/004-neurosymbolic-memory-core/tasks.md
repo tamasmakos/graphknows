@@ -25,7 +25,7 @@ table (A → B → B′ → C → D → E → F); US1 blocks everything by const
 
 **Purpose**: the harness surface every later phase reports through.
 
-- [ ] T001 Extend the dispatcher in `evaluation/__main__.py` with the `baseline`, `panel`, `deadweight`, `identity`, `scenario` and `download` subcommands routing to `evaluation/common/` entry points
+- [X] T001 Extend the dispatcher in `evaluation/__main__.py` with the `baseline`, `panel`, `deadweight`, `identity`, `scenario` and `download` subcommands routing to `evaluation/common/` entry points
   - Verify: `pytest -q tests/evaluation/test_dispatcher.py`
 - [ ] T002 [P] Define the per-row and internal-metric report shape (`row`, `feeding_mode`, `extractor`, `accuracy`, `evidence_recall`, `by_category`, `n`, `not_run`, and `median`/`band`/`runs`/`commit`) and the per-run internal-metrics object (`identity`, `fact_precision`, `dead_weight`) from contracts/panel-report.md in `evaluation/common/reporting.py`
   - Verify: `pytest -q tests/evaluation/test_report_shape.py`
