@@ -4,6 +4,14 @@ Used by ingestion, retrieval and every endpoint. Layer-neutral: these depend on
 nothing else in the package.
 """
 
+from graphknows.models.fact import (
+    Fact,
+    FactState,
+    Mention,
+    Modality,
+    Polarity,
+    Validity,
+)
 from graphknows.models.hit import (
     MAX_CONTEXT_CHARS,
     Hit,
@@ -20,16 +28,22 @@ from graphknows.models.source import Source
 
 __all__ = [
     "MAX_CONTEXT_CHARS",
+    "Fact",
+    "FactState",
     "Hit",
     "IngestOptions",
     "IngestResult",
     "MemoryClass",
     "MemoryScope",
+    "Mention",
     "Message",
     "MessageInput",
+    "Modality",
+    "Polarity",
     "RenderedMemories",
     "Role",
     "Source",
+    "Validity",
     "date_in",
     "normalize_messages",
     "render_memories",
