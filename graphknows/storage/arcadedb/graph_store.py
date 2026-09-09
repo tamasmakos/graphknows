@@ -36,7 +36,13 @@ from typing import Any, TypeVar, cast
 from graphknows.exceptions import SchemaVersionMismatchError, StoreError
 from graphknows.storage.arcadedb._base import ArcadeStoreBase
 from graphknows.storage.arcadedb._schema import _CORE_DDL, schema_version
-from graphknows.storage.arcadedb._sql import is_missing_type, quote, quoted_list, sanitize
+from graphknows.storage.arcadedb._sql import (
+    is_missing_type,
+    not_forgotten,
+    quote,
+    quoted_list,
+    sanitize,
+)
 from graphknows.storage.arcadedb.client import ArcadeDBClient
 
 logger = logging.getLogger(__name__)
@@ -2127,7 +2133,7 @@ class GraphStore(ArcadeStoreBase):
         try:
             rows = await self.query(
                 f"MATCH (e:ENTITY) WHERE e.name_norm IN {quoted_list(sorted(wanted))} "
-                f"RETURN e.name_norm AS nn"
+                f"AND {not_forgotten('e')} RETURN e.name_norm AS nn"
             )
             return {str(r["nn"]) for r in rows if r.get("nn")}
         except Exception as exc:
@@ -2735,7 +2741,7 @@ class GraphStore(ArcadeStoreBase):
         filters = self._chunk_filters(session_id, state)
         rows = await self.query(
             f"MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
-            f"WHERE ({where_entity}){filters} "
+            f"WHERE ({where_entity}) AND {not_forgotten('e')}{filters} "
             f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text "
             f"ORDER BY chunk_id LIMIT $k",
             k=top_k,
@@ -2866,7 +2872,7 @@ class GraphStore(ArcadeStoreBase):
         filters = self._chunk_filters(session_id, state)
         rows = await self.query(
             f"MATCH (c:CHUNK)-[:MENTIONS]->(e:ENTITY) "
-            f"WHERE ({where_entity}){filters} "
+            f"WHERE ({where_entity}) AND {not_forgotten('e')}{filters} "
             f"WITH c "
             f"MATCH (c)-[:MENTIONS_DATE]->(d:TEMPORAL) "
             f"RETURN DISTINCT c.chunk_id AS chunk_id, c.text AS text, d.date AS date "
@@ -3139,8 +3145,9 @@ class GraphStore(ArcadeStoreBase):
         count is thousands, so the fold is cheap and provably correct.
         """
         rows = await self.query(
-            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
-            "RETURN r.source AS source, r.verifier_score AS verifier_score"
+            f"MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
+            f"WHERE {not_forgotten('a')} AND {not_forgotten('b')} "
+            f"RETURN r.source AS source, r.verifier_score AS verifier_score"
         )
         return verifier_coverage_rows(rows)
 
@@ -3165,17 +3172,23 @@ class GraphStore(ArcadeStoreBase):
         for undirected patterns or negation, only for a plain grouped scan.
         """
         total_rows = await self.query(
-            "MATCH (e:ENTITY) WHERE e.name_norm IS NOT NULL RETURN e.name_norm AS nn"
+            f"MATCH (e:ENTITY) WHERE e.name_norm IS NOT NULL "
+            f"AND {not_forgotten('e')} RETURN e.name_norm AS nn"
         )
         total = {r["nn"] for r in total_rows if r.get("nn")}
         out_rel = await self.query(
-            "MATCH (a:ENTITY)-[:REL]->(b:ENTITY) RETURN DISTINCT a.name_norm AS nn"
+            f"MATCH (a:ENTITY)-[:REL]->(b:ENTITY) "
+            f"WHERE {not_forgotten('a')} AND {not_forgotten('b')} "
+            f"RETURN DISTINCT a.name_norm AS nn"
         )
         in_rel = await self.query(
-            "MATCH (a:ENTITY)<-[:REL]-(b:ENTITY) RETURN DISTINCT a.name_norm AS nn"
+            f"MATCH (a:ENTITY)<-[:REL]-(b:ENTITY) "
+            f"WHERE {not_forgotten('a')} AND {not_forgotten('b')} "
+            f"RETURN DISTINCT a.name_norm AS nn"
         )
         roles = await self.query(
-            "MATCH (e:ENTITY)<-[:PLAYS_ROLE]-(fi:FRAME_INSTANCE) RETURN DISTINCT e.name_norm AS nn"
+            f"MATCH (e:ENTITY)<-[:PLAYS_ROLE]-(fi:FRAME_INSTANCE) "
+            f"WHERE {not_forgotten('e')} RETURN DISTINCT e.name_norm AS nn"
         )
         connected = {r["nn"] for r in out_rel + in_rel + roles if r.get("nn")} & total
         return {
@@ -3226,7 +3239,8 @@ class GraphStore(ArcadeStoreBase):
             # No LIMIT here: the cap is applied after ranking, and the match set
             # is bounded by the namespace's entity count.
             rows = await self.query(
-                f"MATCH (e:ENTITY) WHERE {conds} RETURN DISTINCT e.name AS name, e.name_norm AS nn"
+                f"MATCH (e:ENTITY) WHERE ({conds}) AND {not_forgotten('e')} "
+                f"RETURN DISTINCT e.name AS name, e.name_norm AS nn"
             )
         except Exception as exc:
             logger.debug("resolve_query_entities failed (soft): %s", exc)
@@ -3282,7 +3296,7 @@ class GraphStore(ArcadeStoreBase):
         if norms:
             rows = await self.query(
                 f"MATCH (e:ENTITY)<-[:PLAYS_ROLE]-(fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c:CHUNK) "
-                f"WHERE e.name_norm IN {quoted_list(norms)}{scope} "
+                f"WHERE e.name_norm IN {quoted_list(norms)} AND {not_forgotten('e')}{scope} "
                 f"RETURN c.chunk_id AS chunk_id, count(fi) AS n"
             )
             for r in rows:
@@ -3348,7 +3362,7 @@ class GraphStore(ArcadeStoreBase):
             if norms:
                 rows = await self.query(
                     f"MATCH (fi:FRAME_INSTANCE)-[:PLAYS_ROLE]->(e:ENTITY) "
-                    f"WHERE e.name_norm IN {quoted_list(norms)} "
+                    f"WHERE e.name_norm IN {quoted_list(norms)} AND {not_forgotten('e')} "
                     f"RETURN DISTINCT fi.id AS fid"
                 )
                 bound = {str(r["fid"]) for r in rows if r.get("fid")}
@@ -3413,6 +3427,7 @@ class GraphStore(ArcadeStoreBase):
                 # its `predicate` property (the raw human-readable label).
                 f"MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
                 f"WHERE (a.name_norm IN {name_lit} OR b.name_norm IN {name_lit}) "
+                f"AND {not_forgotten('a')} AND {not_forgotten('b')} "
                 f"AND (r.is_current = true OR r.is_current IS NULL) "
                 # Frame-derived adjacency is excluded: the frame facts below
                 # already state it, in a form that keeps the role names. Letting
@@ -3424,9 +3439,9 @@ class GraphStore(ArcadeStoreBase):
             )
             frame_rows = await self.query(
                 f"MATCH (fi:FRAME_INSTANCE)-[:PLAYS_ROLE]->(seed:ENTITY) "
-                f"WHERE seed.name_norm IN {name_lit} "
+                f"WHERE seed.name_norm IN {name_lit} AND {not_forgotten('seed')} "
                 f"WITH DISTINCT fi "
-                f"MATCH (fi)-[p:PLAYS_ROLE]->(o:ENTITY) "
+                f"MATCH (fi)-[p:PLAYS_ROLE]->(o:ENTITY) WHERE {not_forgotten('o')} "
                 # Group per instance (fi.id), not per frame TYPE — otherwise every
                 # instance of a type collapses into one giant concatenated fact.
                 f"RETURN fi.id AS id, fi.frame AS frame, "
@@ -3449,7 +3464,7 @@ class GraphStore(ArcadeStoreBase):
             nest_rows = await self.query(
                 f"MATCH (seed:ENTITY)<-[:PLAYS_ROLE]-(fi:FRAME_INSTANCE)"
                 f"-[n:FRAME_NESTS]->(inner:FRAME_INSTANCE) "
-                f"WHERE seed.name_norm IN {name_lit} "
+                f"WHERE seed.name_norm IN {name_lit} AND {not_forgotten('seed')} "
                 f"RETURN DISTINCT fi.frame AS outer, n.role AS role, inner.frame AS inner_frame"
             )
         except Exception as exc:
@@ -3554,10 +3569,14 @@ class GraphStore(ArcadeStoreBase):
         undirected Cypher pattern support.
         """
         out_rows = await self.query(
-            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) RETURN a.name_norm AS nn, count(r) AS deg"
+            f"MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) "
+            f"WHERE {not_forgotten('a')} AND {not_forgotten('b')} "
+            f"RETURN a.name_norm AS nn, count(r) AS deg"
         )
         in_rows = await self.query(
-            "MATCH (a:ENTITY)<-[r:REL]-(b:ENTITY) RETURN a.name_norm AS nn, count(r) AS deg"
+            f"MATCH (a:ENTITY)<-[r:REL]-(b:ENTITY) "
+            f"WHERE {not_forgotten('a')} AND {not_forgotten('b')} "
+            f"RETURN a.name_norm AS nn, count(r) AS deg"
         )
         degree: dict[str, int] = {}
         for r in out_rows + in_rows:
@@ -3774,8 +3793,9 @@ class GraphStore(ArcadeStoreBase):
         entity resolver, which decides drops/merges over the whole graph.
         """
         rows = await self.query(
-            "MATCH (e:ENTITY) WHERE e.name_norm IS NOT NULL "
-            "OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e) "
+            f"MATCH (e:ENTITY) WHERE e.name_norm IS NOT NULL "
+            f"AND {not_forgotten('e')} "
+            f"OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e) "
             "RETURN e.name_norm AS name_norm, e.name AS name, e.type AS type, "
             "count(c) AS mention_count"
         )

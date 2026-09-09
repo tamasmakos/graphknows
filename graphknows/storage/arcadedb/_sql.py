@@ -42,3 +42,16 @@ def is_missing_type(exc: Exception) -> bool:
     not be swallowed — a partial delete leaves orphaned nodes behind.
     """
     return "was not found" in str(exc).lower()
+
+
+# ``forget`` marks a record ``forgotten`` instead of deleting it, so merge logs
+# and provenance stay replayable (FR-037). The record is invisible to recall only
+# because every read query composes this fragment for each tombstoned alias it
+# binds — no store-level seam can splice a predicate into arbitrary query text —
+# so this is the single place its text is written.
+_FORGOTTEN = "forgotten"
+
+
+def not_forgotten(alias: str) -> str:
+    """Return the tombstone filter for *alias*: ``e.state <> 'forgotten'``."""
+    return f"{alias}.state <> {quote(_FORGOTTEN)}"
