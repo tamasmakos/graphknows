@@ -54,7 +54,7 @@ result file per row plus the internal metrics.
   - Verify: `pytest -q tests/evaluation/test_baseline_cli.py`
 - [X] T016 [P] [US1] Add the hand-labelled identity sample of at least 200 clusters, not from LoCoMo, at `evaluation/data/identity/labelled.jsonl`: the corpus is this repository's own Claude Code transcripts and source tree, a cluster is the set of mentions (names, paths, symbols) referring to one real referent, labelled by hand, with the procedure recorded beside the file
   - Verify: `pytest -q tests/evaluation/test_identity_sample.py`
-- [ ] T017 [US1] Record and commit the baseline files for every row and internal metric under `evaluation/results/baseline/` against the unmodified core
+- [X] T017 [US1] Record and commit the baseline files for every row and internal metric under `evaluation/results/baseline/` against the unmodified core
   - Verify: `pytest -q tests/evaluation/test_baseline_committed.py`
 
 **Checkpoint**: SC-003 holds — no new core code may be written before this point.

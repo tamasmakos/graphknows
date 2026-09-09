@@ -1,0 +1,33 @@
+{
+  "not_run": "baseline recording run not executed: `python -m evaluation baseline --rows locomo,longmem,beam --repeats 3` needs the provisioned corpora, a reachable ArcadeDB and the judge LLM",
+  "identity": {
+    "median": 0.0,
+    "band": 0.0,
+    "runs": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "commit": "f647b41768327f09831d7bfc30887fab5f3125de"
+  },
+  "fact_precision": {
+    "median": 0.0,
+    "band": 0.0,
+    "runs": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "commit": "f647b41768327f09831d7bfc30887fab5f3125de"
+  },
+  "dead_weight": {
+    "median": 0.0,
+    "band": 0.0,
+    "runs": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "commit": "f647b41768327f09831d7bfc30887fab5f3125de"
+  }
+}
