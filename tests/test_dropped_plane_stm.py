@@ -54,7 +54,11 @@ def test_a_session_is_a_source_and_a_turn_a_segment() -> None:
     """The buffered turns of one session map onto the neutral pair (FR-046)."""
     memory = Memory(GraphKnowsSettings())
     source, segments = memory._session_as_source(
-        "s1", [{"role": "Gina", "text": "hi"}, {"role": "assistant", "text": "hello"}]
+        "s1",
+        [
+            message.Message(role="Gina", content="hi"),
+            message.Message(role="assistant", content="hello"),
+        ],
     )
     assert isinstance(source, Source)
     assert source.uri == "session:s1"
