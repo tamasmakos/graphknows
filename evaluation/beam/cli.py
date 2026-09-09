@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _run_one(
+async def run_one(
     mode: str, limit: int, offset: int, ts: str, *, reuse_ingest: bool = False
 ) -> tuple[RunReport, ReportPaths]:
     """Run a single mode and return (RunReport, ReportPaths)."""
@@ -115,10 +115,10 @@ async def amain(argv: list[str] | None = None) -> int:
             f"[eval] --compare: running llm_free + llm_assisted  "
             f"limit={args.limit} offset={args.offset}"
         )
-        run_free, paths_free = await _run_one(
+        run_free, paths_free = await run_one(
             "llm_free", args.limit, args.offset, ts, reuse_ingest=args.no_ingest
         )
-        run_asst, paths_asst = await _run_one(
+        run_asst, paths_asst = await run_one(
             "llm_assisted", args.limit, args.offset, ts, reuse_ingest=args.no_ingest
         )
 
@@ -142,7 +142,7 @@ async def amain(argv: list[str] | None = None) -> int:
         return 0
 
     print(f"[eval] benchmark=beam mode={args.mode}")
-    run, paths = await _run_one(args.mode, args.limit, args.offset, ts, reuse_ingest=args.no_ingest)
+    run, paths = await run_one(args.mode, args.limit, args.offset, ts, reuse_ingest=args.no_ingest)
 
     print(
         f"\nAccuracy (LLM judge): {run.summary.get('accuracy', 0.0):.3f}  "
