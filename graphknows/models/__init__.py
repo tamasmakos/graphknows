@@ -25,9 +25,11 @@ from graphknows.models.memory_class import MemoryClass
 from graphknows.models.message import Message, MessageInput, Role, normalize_messages
 from graphknows.models.scope import MemoryScope
 from graphknows.models.source import Source
+from graphknows.models.symbols import ConceptRef, PredicateRef, SymbolKind
 
 __all__ = [
     "MAX_CONTEXT_CHARS",
+    "ConceptRef",
     "Fact",
     "FactState",
     "Hit",
@@ -40,9 +42,11 @@ __all__ = [
     "MessageInput",
     "Modality",
     "Polarity",
+    "PredicateRef",
     "RenderedMemories",
     "Role",
     "Source",
+    "SymbolKind",
     "Validity",
     "date_in",
     "normalize_messages",
