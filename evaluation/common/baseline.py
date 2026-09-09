@@ -69,13 +69,17 @@ def _head_commit() -> str:
     return proc.stdout.strip()
 
 
-async def _run_row(row: str, args: argparse.Namespace) -> PanelRow:
-    """Run one row once and report it in the panel's row shape."""
+async def _run_row(row: str, args: argparse.Namespace, *, reuse_ingest: bool = False) -> PanelRow:
+    """Run one row once and report it in the panel's row shape.
+
+    ``reuse_ingest`` answers repeats two and three against the graph repeat one
+    built: the band measures generation and judge noise, not re-ingest.
+    """
     extractor = _EXTRACTORS[args.mode]
     module = importlib.import_module(_ROW_MODULES[row])
     ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     try:
-        run, _paths = await module.run_one(args.mode, args.limit, 0, ts)
+        run, _paths = await module.run_one(args.mode, args.limit, 0, ts, reuse_ingest=reuse_ingest)
     except OSError as exc:  # an unprovisioned corpus is recorded, not dropped
         return PanelRow(row=row, feeding_mode="", extractor=extractor, not_run=str(exc))
     summary = run.summary
@@ -115,7 +119,7 @@ async def amain(argv: list[str] | None = None) -> int:
     commit = _head_commit()
 
     for row in args.rows:
-        repeats = [await _run_row(row, args) for _ in range(args.repeats)]
+        repeats = [await _run_row(row, args, reuse_ingest=i > 0) for i in range(args.repeats)]
         path = args.out / f"{row}.json"
         path.write_text(json.dumps(_record(repeats, commit), indent=2), encoding="utf-8")
         print(f"[baseline] {row}: {args.repeats} runs -> {path}")
