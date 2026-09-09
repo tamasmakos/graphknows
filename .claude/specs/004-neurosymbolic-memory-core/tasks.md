@@ -127,7 +127,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/channels/test_registry_packs.py`
 - [ ] T030 [US2] Rewrite the facade in `graphknows/memory.py` as `Memory(packs=[...])` with `ingest`/`recall`/`forget` and a per-namespace `asyncio.Lock` reporting `ingest_queue_wait_ms`, and the `graphknows.cli` `ingest`/`recall` commands on that facade
   - Verify: `pytest -q tests/memory/test_facade_packs.py`
-- [ ] T032 [P] [US2] Add the grep test asserting no benchmark, dialogue, speaker or turn-regex term appears in core modules, at `tests/test_core_domain_neutral.py`
+- [X] T032 [P] [US2] Add the grep test asserting no benchmark, dialogue, speaker or turn-regex term appears in core modules, at `tests/test_core_domain_neutral.py`
   - Verify: `pytest -q tests/test_core_domain_neutral.py`
 - [ ] T043 [P] [US2] Implement the stdlib-`ast` code parser emitting one segment per function and class with the qualified symbol as `path`, in `graphknows/ingestion/parsers/code.py`
   - Verify: `pytest -q tests/ingestion/parsers/test_code.py`
