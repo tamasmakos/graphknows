@@ -121,7 +121,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/ingestion/test_supersede.py`
 - [X] T027 [US2] Rewrite `graphknows/retrieval/retriever.py` as symbol-keyed recall returning facts with evidence under an explicit budget, with `no_evidence` and `truncated_by`, and top-down activation reading `EVOKES` and `INSTANCE_OF` for candidate generation (FR-002)
   - Verify: `pytest -q tests/retrieval/test_symbol_recall.py`
-- [ ] T028 [P] [US2] Add the `RetrievalProfile` value object with core defaults in `graphknows/retrieval/profile.py`; pack supply arrives with the dialogue pack (FR-022)
+- [X] T028 [P] [US2] Add the `RetrievalProfile` value object with core defaults in `graphknows/retrieval/profile.py`; pack supply arrives with the dialogue pack (FR-022)
   - Verify: `pytest -q tests/retrieval/test_profile.py`
 - [ ] T029 [US2] Rewrite `graphknows/channels/registry.py` as the fixed core collectors with no `enable_x` flags; pack channels arrive with the dialogue pack (FR-022)
   - Verify: `pytest -q tests/channels/test_registry_packs.py`
