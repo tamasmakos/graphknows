@@ -129,7 +129,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/memory/test_facade_packs.py`
 - [X] T032 [P] [US2] Add the grep test asserting no benchmark, dialogue, speaker or turn-regex term appears in core modules, at `tests/test_core_domain_neutral.py`
   - Verify: `pytest -q tests/test_core_domain_neutral.py`
-- [ ] T043 [P] [US2] Implement the stdlib-`ast` code parser emitting one segment per function and class with the qualified symbol as `path`, in `graphknows/ingestion/parsers/code.py`
+- [X] T043 [P] [US2] Implement the stdlib-`ast` code parser emitting one segment per function and class with the qualified symbol as `path`, in `graphknows/ingestion/parsers/code.py`
   - Verify: `pytest -q tests/ingestion/parsers/test_code.py`
 - [ ] T044 [US2] Ship the code pack — concepts, predicates (calls, imports, defines, tests), `CodeExtractor` with no model, a veto rule (a function and a module symbol with the same normalised name never merge, FR-019), and its data — under `graphknows/packs/code/` and `graphknows/packs/data/`
   - Verify: `pytest -q tests/packs/test_code_pack.py`
