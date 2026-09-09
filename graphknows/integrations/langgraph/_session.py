@@ -78,8 +78,7 @@ class GraphKnowsMemory:
         self._cross_session = cross_session
         self._top_k = top_k
         # The extraction policy, asked once per turn on both write paths. A flat
-        # bool, or a predicate — `graphknows.worth_extracting` is the one that
-        # keeps greetings from minting entities. Per-turn control used to mean
+        # bool, or a predicate asked per turn. Per-turn control used to mean
         # abandoning `remember` and driving `ingest_memory` by hand.
         self._infer = infer
         self._messages_key = messages_key
@@ -148,9 +147,8 @@ class GraphKnowsMemory:
         ``infer`` is the extraction decision for this turn: a turn stored with
         ``infer=False`` is still written, embedded and retrievable as text — it
         just mints no entities. Omit it to use the session's policy (the
-        ``infer=`` given to ``__init__``, which may be a per-turn predicate such
-        as :func:`graphknows.worth_extracting`); pass a bool or a predicate to
-        override it for this turn alone.
+        ``infer=`` given to ``__init__``, which may be a per-turn predicate);
+        pass a bool or a predicate to override it for this turn alone.
 
         Buffered turns reach the graph on :meth:`flush`, not here.
         """

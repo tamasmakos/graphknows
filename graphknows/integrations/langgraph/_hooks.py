@@ -104,9 +104,9 @@ def _message_role(message: Any) -> tuple[str, str | None]:
 def resolve_infer(infer: bool | Callable[[str], bool], text: str) -> bool:
     """Apply an extraction policy to one turn's text.
 
-    ``infer`` is either a flat answer or a predicate asked per turn — e.g.
-    :func:`graphknows.worth_extracting`, which skips greetings so they mint no
-    entities. Shared by every write path so the two cannot drift.
+    ``infer`` is either a flat answer or a predicate asked per turn, so a
+    caller can decide per turn whether it mints entities. Shared by every
+    write path so the two cannot drift.
     """
     return bool(infer(text)) if callable(infer) else bool(infer)
 

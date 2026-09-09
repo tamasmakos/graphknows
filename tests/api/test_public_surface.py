@@ -35,10 +35,6 @@ EXPECTED_PUBLIC_API = {
     "date_in",
     "normalize_messages",
     "render_memories",
-    # The per-turn extraction decision. Public because every caller has to make
-    # it — the alternative is minting entities out of greetings — and it is
-    # purely linguistic, so re-writing it per integration only makes it drift.
-    "worth_extracting",
 }
 
 

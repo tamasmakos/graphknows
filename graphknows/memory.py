@@ -720,8 +720,6 @@ class Memory:
         """
         import time
 
-        from graphknows.ingestion.consolidation import resolve_entities
-
         t0 = time.monotonic()
         errors: list[str] = []
         pagerank_updated = 0
@@ -731,7 +729,6 @@ class Memory:
         turns_ingested = 0
         turn_chunks = 0
         abstentions: dict[str, int] = {}
-        resolution = {"dropped": 0, "merged": 0, "considered": 0}
         rel_consolidation = {"deduped": 0, "contradictions": 0, "invalidated": 0}
         verifier_coverage: dict[str, dict[str, Any]] = {}
         entity_coverage: dict[str, int] = {}
@@ -746,7 +743,7 @@ class Memory:
             flush meaningful. The step name is kept in the error so a caller can
             tell which stage degraded.
 
-            Timed, because ``flush_elapsed_s`` covers drain, resolution, pagerank,
+            Timed, because ``flush_elapsed_s`` covers drain, consolidation, pagerank,
             node2vec and louvain together — a 50-minute flush said nothing
             about WHICH of those took the 50 minutes, so every conversation about
             ingest cost started by guessing. A failed step is timed too: how long
@@ -793,7 +790,7 @@ class Memory:
             # Caller-supplied structure goes in HERE: the buffer has drained, so
             # this session's CHUNK vertices exist and custom edges have
             # something to attach to; the analytics below have not run, so
-            # entity resolution sees the finished graph.
+            # the channels see the finished graph.
             # Each channel soft-fails under its own name — one broken extension
             # must not cost the consolidation the rest of the flush does.
             #
@@ -813,12 +810,6 @@ class Memory:
                     None,
                 )
 
-            resolution = await step(
-                "resolve_entities", resolve_entities(store, session_id), resolution
-            )
-            # Entity merges above replay REL edges through write_relation and
-            # can themselves mint duplicates, so consolidation must run after
-            # resolution has settled, over the already-merged graph.
             rel_consolidation = await step(
                 "consolidate_relations",
                 store.consolidate_relations(),
@@ -860,15 +851,6 @@ class Memory:
             "abstentions": abstentions,
             # Seconds per stage. `elapsed_s` is their sum plus the untimed glue.
             "stage_s": stage_s,
-            "entities_dropped": resolution["dropped"],
-            "merged_entities": resolution["merged"],
-            # merges / entities considered for resolution, so a bare count is
-            # never read without the population it's a fraction of.
-            "merge_rate": (
-                round(resolution["merged"] / considered, 4)
-                if (considered := resolution.get("considered"))
-                else 0.0
-            ),
             "graph_embeddings_computed": graph_embeddings_computed,
             "communities_computed": communities_computed,
             "rel_consolidation": rel_consolidation,
@@ -958,7 +940,7 @@ class Memory:
 
         Ingests the session's buffered ``TURN`` rows into the graph (real
         extraction + embeddings), marks them consolidated, then runs the usual
-        entity-resolution/analytics consolidation pass. See
+        analytics consolidation pass. See
         :meth:`flush_memory` for the full step order.
         """
         sid = self._scoped_session_id(user_id, agent_id, run_id, session_id)
@@ -1073,7 +1055,6 @@ class Memory:
             "documents_processed": processed,
             "entities_extracted": entities,
             "chunks_written": chunks,
-            "merged_entities": flushed.get("merged_entities", 0),
             "chunks_consolidated": flushed.get("chunks", 0),
             "elapsed_s": round(time.monotonic() - t0, 3),
             "errors": errors,

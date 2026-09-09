@@ -1978,10 +1978,9 @@ class GraphStore(ArcadeStoreBase):
         """MERGE a synset's shortest hypernym chain as BROADER edges.
 
         Rows: ``{"child", "parent", "parent_name", "parent_definition", "rel",
-        "transitive"}``, as produced by :func:`graphknows.symbolic.wordnet.ancestors`.
-        The parent SYNSET is MERGEd here too -- ``ancestors()`` mints only the
-        one shortest path from a grounded synset to its root, so a parent may
-        not have been written by :meth:`write_senses` yet.
+        "transitive"}``, one shortest hypernym path per grounded synset.
+        The parent SYNSET is MERGEd here too -- a parent on that path may not
+        have been written by :meth:`write_senses` yet.
         """
         if not rows:
             return 0

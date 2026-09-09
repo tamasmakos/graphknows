@@ -2,7 +2,7 @@
 
 Protects the fix for issue #239: ``load_spacy_model`` is the single entry
 point every spaCy load in the package goes through, and it must memoize per
-``(name, options)`` instead of loading a fresh pipeline on every call — five
+``(name, options)`` instead of loading a fresh pipeline on every call — the
 call sites were each growing their own private cache because they could not
 see each other's loaded model.
 """
@@ -79,20 +79,18 @@ def test_distinct_options_get_distinct_pipelines(monkeypatch: pytest.MonkeyPatch
     )
 
 
-def test_five_call_sites_share_at_most_two_pipelines(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_every_call_site_shares_at_most_two_pipelines(monkeypatch: pytest.MonkeyPatch) -> None:
     """The two configurations in use (full pipeline, and disable=['ner']) must
-    resolve to exactly two resident pipelines, not five."""
+    resolve to exactly two resident pipelines, not one per call site."""
     calls = _install_fake_load(monkeypatch)
     monkeypatch.setenv("GRAPHKNOWS_SPACY_MODEL", "gk_fake_model")
 
-    import graphknows.worth as worth
-    from graphknows.ingestion.consolidation.entity_resolution import _parser
     from graphknows.ingestion.extraction.entities.extractor import _SpacySchemaMiner
+    from graphknows.ingestion.extraction.entities.hygiene import _parser
     from graphknows.symbolic.framenet.framenet import _spacy
     from graphknows.symbolic.ontology.skos import _lemmatise
 
-    worth_pipeline = worth._nlp()
-    resolution_pipeline = _parser()
+    hygiene_pipeline = _parser()
     miner_pipeline = _SpacySchemaMiner(model_name="gk_fake_model").nlp
     _lemmatise({"dog"})
     framenet_pipeline = _spacy()
@@ -111,11 +109,10 @@ def test_five_call_sites_share_at_most_two_pipelines(monkeypatch: pytest.MonkeyP
         f"expected 1 spacy.load call with disable=['ner'], got {len(disable_ner_calls)}: {calls}"
     )
 
-    assert worth_pipeline is resolution_pipeline is miner_pipeline, (
-        "worth._nlp(), entity_resolution._parser() and _SpacySchemaMiner.nlp "
-        "must share the same plain pipeline instance"
+    assert hygiene_pipeline is miner_pipeline, (
+        "hygiene._parser() and _SpacySchemaMiner.nlp must share the same plain pipeline instance"
     )
-    assert framenet_pipeline is not worth_pipeline, (
+    assert framenet_pipeline is not hygiene_pipeline, (
         "framenet._spacy() uses disable=['ner'] and must not share the plain pipeline"
     )
 

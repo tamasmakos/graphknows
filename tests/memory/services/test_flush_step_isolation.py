@@ -8,7 +8,7 @@ stage had degraded.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -44,18 +44,13 @@ def _memory(store: MagicMock) -> Memory:
 @pytest.mark.asyncio
 async def test_happy_path_reports_every_step() -> None:
     store = _store()
-    with patch(
-        "graphknows.ingestion.consolidation.resolve_entities",
-        AsyncMock(return_value={"dropped": 1, "merged": 2}),
-    ):
-        out = await _memory(store).flush_memory("s1")
+    out = await _memory(store).flush_memory("s1")
 
     assert out["errors"] == []
     assert out["nodes"] == 3
     assert out["graph_embeddings_computed"] == 4
     assert out["communities_computed"] == 5
     assert out["chunks"] == 7
-    assert out["merged_entities"] == 2
     assert out["entity_coverage"] == {"total": 10, "connected": 8, "isolated": 2}
 
 
@@ -65,11 +60,7 @@ async def test_analytics_failure_still_consolidates() -> None:
     store = _store()
     store.compute_and_persist_pagerank = AsyncMock(side_effect=Exception("pagerank boom"))
 
-    with patch(
-        "graphknows.ingestion.consolidation.resolve_entities",
-        AsyncMock(return_value={"dropped": 0, "merged": 0}),
-    ):
-        out = await _memory(store).flush_memory("s1")
+    out = await _memory(store).flush_memory("s1")
 
     store.consolidate_session.assert_awaited_once()
     assert out["chunks"] == 7, "consolidate_session was skipped by an analytics failure"
@@ -102,11 +93,7 @@ async def test_drain_turns_per_turn_errors_are_surfaced() -> None:
         }
     )
 
-    with patch(
-        "graphknows.ingestion.consolidation.resolve_entities",
-        AsyncMock(return_value={"dropped": 0, "merged": 0}),
-    ):
-        out = await mem.flush_memory("s1")
+    out = await mem.flush_memory("s1")
 
     assert any(e == "drain_turns: wordnet: Resource 'wordnet' not found" for e in out["errors"]), (
         out["errors"]

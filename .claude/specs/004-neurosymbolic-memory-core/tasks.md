@@ -160,7 +160,7 @@ frame types before T027/T029 leaves their readers dangling. They are cutover del
   - Verify: `pytest -q tests/test_dropped_plane_stm.py`
 - [ ] T036 [Cutover] Stop declaring and writing the frame-element mirror, frame-specific types, graph-ranking columns and free-string relations, reducing `graphknows/symbolic/framenet/` to a concept+predicate emitter
   - Verify: `pytest -q tests/test_dropped_plane_frames.py`
-- [ ] T037 [Cutover] Delete the remaining old core modules in one change — `graphknows/symbolic/wordnet.py`, `graphknows/worth.py`, `graphknows/ingestion/extraction/entities/hygiene.py`'s dialogue-only rules, the old `entity_resolution.py` layers replaced at T063, and every test that imports them; `bounds.py`, `nlp.py` and `linguistics.py` stay. `graphknows/memory.py` was rewritten in place at T030 and nothing routes to two write paths (FR-045)
+- [X] T037 [Cutover] Delete the remaining old core modules in one change — `graphknows/symbolic/wordnet.py`, `graphknows/worth.py`, `graphknows/ingestion/extraction/entities/hygiene.py`'s dialogue-only rules, the old `entity_resolution.py` layers replaced at T063, and every test that imports them; `bounds.py`, `nlp.py` and `linguistics.py` stay. `graphknows/memory.py` was rewritten in place at T030 and nothing routes to two write paths (FR-045)
   - Verify: `pytest -q tests/memory/test_cutover.py`
 - [ ] T063 [Cutover] Implement exact-key-only identity on the cut-over core — no `MERGED_INTO` and no `SAME_AS` edge is written — and the cutover-report line that states it (FR-048)
   - Verify: `pytest -q tests/ingestion/consolidation/test_exact_key_interim.py`

@@ -2,9 +2,9 @@
 
 ``is_graph_entity_name`` is the single predicate deciding whether a span belongs
 in the ENTITY graph; ``graph_entities`` applies it to an extraction's entity
-list. This is the extraction layer's gate, applied by ``_STMIngestHandler``
-(entity/MENTIONS path, relation endpoints, frame role fillers) and by the
-flush-time entity resolver.
+list. This is the extraction layer's gate, and the only place a name is judged:
+every write path (entity/MENTIONS, relation endpoints, frame role fillers) runs
+a name through it before an ENTITY node exists at all.
 """
 
 from __future__ import annotations
@@ -101,12 +101,6 @@ _CODE_MARKUP_RE = re.compile(r"```|https?://|www\.|://|[{}<>=|]|::|\(\)|\[\]")
 # capitalised word. Abbreviations ("Dr. Nagy", "U.S. Army", "J. R. Ewing") have
 # one or two letters before the period and are deliberately not matched.
 _SENTENCE_BREAK_RE = re.compile(r"[A-Za-z]{3,}\.\s+[A-Z]")
-# The dialogue window's own attribution shape, where the span OPENS on it:
-# "Gina: Sorry about your job". Anchored, because an unanchored colon rule also
-# matches a subtitle ("Charlotte's Web: A Review") and those are real names. A
-# speaker colon appearing mid-span is preceded by the end of the previous
-# sentence, which _SENTENCE_BREAK_RE already catches.
-_SPEAKER_COLON_RE = re.compile(r"^[A-Z][\w'-]{1,20}:\s")
 # A proper entity is a noun phrase, not a sentence or a heading — cap the words.
 #
 # DECIDED (#160): the cap STAYS at 8. Lowering it to 3 was already measured to
@@ -120,38 +114,15 @@ _SPEAKER_COLON_RE = re.compile(r"^[A-Z][\w'-]{1,20}:\s")
 _MAX_ENTITY_WORDS = 8
 
 
-# Backchannel, greetings and discourse markers. Dialogue is full of them and
-# they are not entities in any conversation — measured on LoCoMo conv-30, these
-# reached the ANSWER PROMPT as frame role fillers ("Buyer=Hey Gina!",
-# "Speaker=Yeah", "Cognizer=Wow"). Matched only as a WHOLE single-token name, so
-# real titles containing them survive ("Cool Runnings", "Great Expectations").
-_BACKCHANNEL_NAMES = frozenset(
+# Generic non-referential nouns that object extraction surfaces as junk hub
+# entities ("others", "many", "kind"): a node standing for "thing" answers no
+# question about anything. Dropped at the mint point, which is the only place a
+# name is judged now that the flush-time resolver is gone.
+_JUNK_ENTITIES = frozenset(
     """
-    hey hi hello bye goodbye
-    thanks thank ta cheers welcome please sorry oops oof
-    yeah yeh yep yup nope nah sure ok okay alright right
-    wow whoa woah oh ah aha ooh huh hmm hm um uh eh
-    great cool nice awesome amazing lovely fine good bad
-    congrats congratulations kudos
-    same next got gotta wanna gonna lets check
+    others many kind thing things everyone someone anyone everything nothing
+    lot lots one ones some all none way ways bit part
     """.split()
-)
-
-# Multi-word discourse formulas. Each is a fixed idiom whose head noun is not
-# what it is about ("way" in "way to go"), so no head-based rule reaches them.
-_BACKCHANNEL_PHRASES = frozenset(
-    {
-        "way to go",
-        "me too",
-        "same here",
-        "no worries",
-        "no problem",
-        "good luck",
-        "take care",
-        "sounds great",
-        "sounds good",
-        "thank you",
-    }
 )
 
 # Pronouns and auxiliaries that can only ever OPEN a clause, never head a noun
@@ -176,54 +147,9 @@ _CLAUSE_OPENERS = frozenset(
 )
 
 
-# Greetings and thanks, the subset of the backchannel vocabulary that takes a
-# vocative: "Hey Jon", "Thanks Gina". Kept separate from _BACKCHANNEL_NAMES
-# because most of that set is adjectival ("cool", "great", "nice") and heads
-# real titles — "Cool Runnings", "Great Expectations" — which a first-token rule
-# over the full set would delete.
-_VOCATIVE_OPENERS = frozenset(
-    """
-    hey hi hello bye goodbye
-    thanks thank cheers sorry congrats congratulations
-    """.split()
-)
-
-
-def _is_backchannel(name: str) -> bool:
-    """A greeting, discourse marker or fixed formula standing alone as a name."""
-    stripped = name.strip().strip("!?.,").casefold()
-    if stripped in _BACKCHANNEL_PHRASES:
-        return True
-    return " " not in stripped and stripped.replace("'", "") in _BACKCHANNEL_NAMES
-
-
-def _is_vocative_address(name: str) -> bool:
-    """A form of address — a greeting plus the person addressed — not an entity.
-
-    Dialogue opens and closes on these, and the extractor swallows the name with
-    the greeting: "Thanks, Gina" / "Hey Jon". Two shapes, because the comma is
-    optional in speech:
-
-    * comma-separated, where the head segment is any backchannel — this reuses
-      the whole-name rule, so "Washington, D.C." (head segment "Washington")
-      is untouched;
-    * space-separated, where the first token must be a greeting proper
-      (``_VOCATIVE_OPENERS``), which is what keeps titles like "Cool Runnings"
-      out of scope.
-    """
-    head, comma, rest = name.strip().partition(",")
-    if comma and rest.strip():
-        # The head is a form of address whole ("Thanks, Gina") or one that opens
-        # with a greeting and trails off ("Thanks so much, Mel" — measured on
-        # conv-26, minted as an ENTITY). Keying on the OPENER, not the whole
-        # head, is what reaches the second shape; "Washington, D.C." is untouched
-        # because "Washington" is neither a backchannel nor a greeting.
-        head_tokens = head.split()
-        return _is_backchannel(head) or (
-            bool(head_tokens) and head_tokens[0].casefold().strip("!?.'\"") in _VOCATIVE_OPENERS
-        )
-    tokens = head.split()
-    return len(tokens) >= 2 and tokens[0].casefold().strip("!?.'\"") in _VOCATIVE_OPENERS
+def _is_junk_hub(name: str) -> bool:
+    """A generic non-referential noun — a node standing for nothing in particular."""
+    return name.strip().casefold() in _JUNK_ENTITIES
 
 
 #: Coordinators that join two things. A name built around one names a
@@ -285,27 +211,20 @@ def _is_clause_fragment(name: str) -> bool:
     return "'" in tokens[0] and (stem in _CLAUSE_OPENERS or stem == "")
 
 
-def _spans_an_utterance_boundary(name: str) -> bool:
-    """A span running across a sentence or a speaker line — two fragments, not a name.
+def _spans_a_sentence_boundary(name: str) -> bool:
+    """A span running across a sentence break — two fragments, not a name.
 
-    The sibling of ``_is_clause_fragment``'s ``!``/``?`` rule, for the two
-    boundaries that rule cannot see. Both are minted by multi-turn extraction:
-    with a window of consecutive turns the model can open a span in one turn and
-    close it in the next, producing
-    ``"business. Gina: Sorry about your job Jon"`` — a single ENTITY carrying two
-    speakers and two sentences. Measured on conv-30: 0/733 such names when
-    turns were extracted alone, 10/282 with a 5-turn window.
+    The sibling of ``_is_clause_fragment``'s ``!``/``?`` rule, for the boundary
+    that rule cannot see: a model given several consecutive segments can open a
+    span in one and close it in the next.
 
     A bare ``.`` is NOT enough, because real names carry them ("Dr. Nagy",
     "U.S. Army", "J. R. Ewing"). The signal is a sentence-ending period — a word
     of three or more letters, then ``.``, then whitespace and a capital — which
-    no abbreviation produces. The speaker colon is matched on the same shape the
-    dialogue window itself writes: ``Name: ``.
+    no abbreviation produces.
     """
     stripped = name.strip()
-    if "\n" in stripped:
-        return True
-    return bool(_SENTENCE_BREAK_RE.search(stripped) or _SPEAKER_COLON_RE.search(stripped))
+    return "\n" in stripped or bool(_SENTENCE_BREAK_RE.search(stripped))
 
 
 def _is_stopword_name(name: str) -> bool:
@@ -326,20 +245,19 @@ _NLP_UNAVAILABLE = False
 
 
 def _parser() -> Any:
-    """The shared spaCy pipeline.
+    """The shared spaCy pipeline, memoized by :func:`graphknows.nlp.load_spacy_model`.
 
-    Reuses ``worth.shared_nlp``'s singleton instead of loading a second ~600MB
-    copy of the same model into the process. Soft-fails: a missing model logs
-    once at WARNING and returns ``None`` rather than raising, so this gate
-    degrades to "admit" instead of emptying the graph.
+    Soft-fails: a missing model logs once at WARNING and returns ``None`` rather
+    than raising, so this gate degrades to "admit" instead of emptying the graph.
     """
     global _NLP_UNAVAILABLE
     if _NLP_UNAVAILABLE:
         return None
     try:
-        from graphknows.worth import shared_nlp
+        from graphknows.nlp import load_spacy_model
+        from graphknows.settings import get_settings
 
-        return shared_nlp()
+        return load_spacy_model(get_settings().spacy_model)
     except Exception as exc:  # a missing model must not take ingest down
         _NLP_UNAVAILABLE = True
         log.warning("Verb-head entity gate skipped: spaCy unavailable (%s)", exc)
@@ -390,10 +308,9 @@ def _is_degenerate_name(name: str) -> bool:
 #: the reason the list reads as a list of reasons.
 _REJECTS = (
     _is_stopword_name,
-    _is_backchannel,
-    _is_vocative_address,
+    _is_junk_hub,
     _is_clause_fragment,
-    _spans_an_utterance_boundary,
+    _spans_a_sentence_boundary,
     _is_coordinated_phrase,
     _is_degenerate_name,
     _is_code_or_clause,

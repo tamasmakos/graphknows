@@ -26,11 +26,10 @@ fragments. Each field now goes where it belongs: text stays text, the speaker
 becomes ``Message.name`` (-> ``CHUNK.speaker``), the timestamp becomes
 ``Message.timestamp`` (-> the anchor relative dates resolve against).
 
-Whether a turn is worth extracting from is ``graphknows.worth_extracting``.
-Pass it once as ``GraphKnowsMemory(..., infer=worth_extracting)`` and every
-turn is judged; this file calls it per turn only because it also reports the
-rate. "Hey Jon!" is stored and embedded and stays retrievable as text; it just
-mints no entities.
+Every turn is extracted from: the per-turn extraction gate was deleted at
+cutover, so ``infer`` is a flat ``True`` here. A turn stored with
+``infer=False`` would still be embedded and retrievable as text; it would just
+mint no entities.
 """
 
 from __future__ import annotations
@@ -55,7 +54,7 @@ from evaluation.common.lexical import evidence_recall
 from evaluation.common.llm import extract_answer
 from evaluation.locomo.adapter import render_facts
 from evaluation.locomo.prompts import ANSWER_PROMPT
-from graphknows import Hit, worth_extracting
+from graphknows import Hit
 from graphknows.channels.base import Channel
 from graphknows.integrations.langgraph import GraphKnowsMemory
 from graphknows.ranking.rrf import rrf_score
@@ -286,10 +285,7 @@ async def ingest(
                 turn = parse_turn(msg, prefix=prefix)
                 if not turn["text"]:
                     continue
-                # `infer=worth_extracting` on the constructor does this for
-                # every turn with no per-turn code; it is called explicitly here
-                # only because the report needs the rate.
-                extract = worth_extracting(turn["text"])
+                extract = True
                 stats["extract" if extract else "store_only"] += 1
                 await mem.add(
                     turn["text"],  # clean utterance, no prefix

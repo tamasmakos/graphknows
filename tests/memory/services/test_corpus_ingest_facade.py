@@ -22,7 +22,7 @@ def _memory() -> Memory:
     mem.ingest_memory = AsyncMock(
         return_value={"file_id": "f", "chunks": 2, "entities": 3, "elapsed_s": 0.1, "errors": []}
     )
-    mem.flush_memory = AsyncMock(return_value={"chunks": 2, "merged_entities": 1, "errors": []})
+    mem.flush_memory = AsyncMock(return_value={"chunks": 2, "errors": []})
     return mem
 
 

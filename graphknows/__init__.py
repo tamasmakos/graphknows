@@ -44,7 +44,6 @@ from graphknows.settings import (
     MemoryMode,
     TopicMode,
 )
-from graphknows.worth import worth_extracting
 
 # A library must not configure logging handlers; attach a NullHandler so records
 # are dropped unless the embedding application configures the root logger.
@@ -69,5 +68,4 @@ __all__ = [
     "date_in",
     "normalize_messages",
     "render_memories",
-    "worth_extracting",
 ]

@@ -29,9 +29,7 @@ DOMAIN_TERM = re.compile(
 # Dialogue-shaped modules awaiting the cutover (T037). Strike each off there.
 PENDING_CUTOVER = frozenset(
     {
-        "ingestion/consolidation/entity_resolution.py",
         "ingestion/extraction/entities/extractor.py",
-        "ingestion/extraction/entities/hygiene.py",
         "ingestion/extraction/llm/anchor.py",
         "ingestion/extraction/llm/decoder.py",
         "ingestion/extraction/llm/schema.py",
