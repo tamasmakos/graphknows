@@ -11,8 +11,10 @@ import asyncio
 import logging
 import os
 import re
+import time
 import uuid
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import Any
 
 from graphknows.bounds import (
@@ -24,10 +26,24 @@ from graphknows.bounds import (
 )
 from graphknows.exceptions import ConfigurationError
 from graphknows.ingestion.parsers.text import strip_content_heading
+from graphknows.models.fact import FactState
 from graphknows.models.hit import Hit
+from graphknows.models.report import IngestReport, RecallBudget, RecallResult
+from graphknows.models.segment import Segment
+from graphknows.models.source import Source
+from graphknows.packs import DomainPack, load_packs
 from graphknows.settings import Decoder, GraphKnowsSettings, MemoryMode, get_settings
 
 logger = logging.getLogger(__name__)
+
+_INGEST_LOCKS: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+"""One ingest lock per namespace, shared by every ``Memory`` in this process.
+
+A namespace is one physical database, so two facade instances writing the same
+namespace must queue behind the same lock (FR-047).
+
+ponytail: in-process only — a second service process needs a store-side lease.
+"""
 
 
 def _with_mode(settings: GraphKnowsSettings, mode: MemoryMode | str | None) -> GraphKnowsSettings:
@@ -54,6 +70,19 @@ def _require_decoder_key(settings: GraphKnowsSettings) -> None:
             f"mode={settings.mode} decodes with the LLM and no API key resolves; "
             "set GRAPHKNOWS_LLM_API_KEY in the environment or .env."
         )
+
+
+def _build_extractor(settings: GraphKnowsSettings) -> Any:
+    """The extractor the configured decoder puts behind the write path (FR-043)."""
+    from graphknows.ingestion.extraction.protocol import LLMExtractor, LocalExtractor
+
+    return LLMExtractor() if settings.decoder is Decoder.llm else LocalExtractor()
+
+
+def _with_queue_wait(report: IngestReport, waited_ms: int) -> IngestReport:
+    """Return *report* with the time it spent queueing folded into its counters."""
+    counters = report.counters.model_copy(update={"ingest_queue_wait_ms": waited_ms})
+    return report.model_copy(update={"counters": counters})
 
 
 def _redact_store_error(exc: Exception, *, where: str) -> str:
@@ -141,6 +170,7 @@ class Memory:
         namespace: str | None = None,
         mode: MemoryMode | str | None = None,
         channels: list[Any] | None = None,
+        packs: Sequence[DomainPack] = (),
     ) -> None:
         # The mode picks the decoder. Explicit arg wins over the settings value;
         # nothing implicit sets it, so a caller who named it meant it — hence the
@@ -156,8 +186,14 @@ class Memory:
         # so a custom schema cannot end up written but unread, or read but
         # never written. Appended after the settings-gated defaults.
         self._channels: list[Any] = list(channels or [])
+        # The domain knowledge this facade reads with. Loaded here, not at first
+        # ingest, so two packs contesting a symbol fail the caller who supplied
+        # them rather than a write months later (FR-025).
+        self._packs = tuple(packs)
+        load_packs(self._packs)
         # One retriever over one connected store, built lazily on first use.
         self._retriever: Any = None
+        self._pipeline: Any = None
         self._store: Any = None
         self._connect_lock = asyncio.Lock()
         # One lock per session: allocating the next TURN sequence and writing at
@@ -187,6 +223,7 @@ class Memory:
                 # shutdown from outside, so name it.
                 logger.warning("Memory.close: store close failed (non-fatal): %s", exc)
         self._retriever = None
+        self._pipeline = None
         self._store = None
 
     async def _get_retriever(self) -> Any:
@@ -221,6 +258,53 @@ class Memory:
             raise
         self._retriever = build_retriever(s, store=store, extra_channels=self._channels)
         return self._retriever
+
+    async def _get_pipeline(self) -> Any:
+        """The write path over the connected store, built once per instance."""
+        if self._pipeline is None:
+            from graphknows.ingestion.pipeline import IngestPipeline
+
+            await self._get_retriever()  # connects the store + ensures schema
+            self._pipeline = IngestPipeline(
+                self._store, _build_extractor(self.settings), self._packs
+            )
+        return self._pipeline
+
+    async def ingest(self, source: Source, segments: Sequence[Segment]) -> IngestReport:
+        """Write *source* and its *segments*, serialised per namespace (FR-047).
+
+        A concurrent ingest of the same namespace queues here rather than
+        failing, and how long it waited comes back as ``ingest_queue_wait_ms``
+        — a queue that has become the bottleneck is visible in the report, not
+        only in a latency graph. Recall takes no lock and stays available.
+        """
+        queued_at = time.monotonic()
+        async with _INGEST_LOCKS[self.namespace]:
+            waited_ms = round((time.monotonic() - queued_at) * 1000)
+            pipeline = await self._get_pipeline()
+            report = await pipeline.ingest(source, segments)
+        return _with_queue_wait(report, waited_ms)
+
+    async def recall(self, query: str, budget: RecallBudget | None = None) -> RecallResult:
+        """The facts *query*'s symbols activate, with the evidence asserting them."""
+        from graphknows.retrieval.retriever import SymbolRecall
+
+        await self._get_retriever()  # connects the store + ensures schema
+        return await SymbolRecall(self._store).recall(query, budget)
+
+    async def forget(self, record_id: str) -> None:
+        """Tombstone the fact or entity *record_id* so recall stops seeing it (FR-037).
+
+        A tombstone, never a delete: the record stays readable to a merge-log
+        replay while every retrieval path filters it out.
+        """
+        await self._get_retriever()  # connects the store + ensures schema
+        for label in ("FACT", "ENTITY"):
+            await self._store.command(
+                f"MATCH (v:{label} {{id: $id}}) SET v.state = $state",
+                id=record_id,
+                state=str(FactState.FORGOTTEN),
+            )
 
     async def doctor(self) -> dict[str, Any]:
         """Check configured backend connectivity for this runtime's namespace."""
@@ -714,16 +798,16 @@ class Memory:
             # Each channel soft-fails under its own name — one broken extension
             # must not cost the consolidation the rest of the flush does.
             #
-            # Settings-gated defaults (frames/ontology) go through the same
-            # loop as caller-supplied channels: default_channels() is also
-            # what build_retriever() uses for the read side (see
+            # The core collectors go through the same loop as
+            # caller-supplied channels: core_channels() is also what
+            # build_retriever() uses for the read side (see
             # ``_build_retriever``), so a channel registered there is active
-            # on both paths from one registration. None of the defaults
-            # implements ``populate`` today; they inherit the no-op default,
-            # so this loop adds no write work for them yet.
-            from graphknows.channels.registry import default_channels
+            # on both paths from one registration. None of the core
+            # collectors implements ``populate`` today; they inherit the no-op
+            # default, so this loop adds no write work for them yet.
+            from graphknows.channels.registry import core_channels
 
-            for channel in [*default_channels(self.settings), *self._channels]:
+            for channel in [*core_channels(), *self._channels]:
                 await step(
                     f"populate:{getattr(channel, 'name', type(channel).__name__)}",
                     channel.populate(store, session_id),

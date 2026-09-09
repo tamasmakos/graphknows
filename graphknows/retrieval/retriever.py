@@ -3,7 +3,7 @@
 The four collectors below (entity traversal, dense vector ANN, BM25, temporal)
 run concurrently over one per-namespace ``GraphStore``, each filtered by a
 lifecycle ``state`` derived from the query scope, alongside whatever optional
-channels ``channels.registry.default_channels`` turned on. The spine is
+channels ``channels.registry.core_channels`` supplies. The spine is
 signal-blind: it merges the candidates, sorts by fused score, and cuts to top_k.
 
 ``SymbolRecall`` below is the top-down half of the traversal (FR-002): it reads

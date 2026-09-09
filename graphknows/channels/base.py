@@ -8,7 +8,7 @@ A channel is owned end-to-end across the write and read paths:
 Both hooks have a no-op / empty default, so a read-only channel implements just
 ``collect`` and a write-only channel just ``ingest``. Adding a new signal — e.g.
 metadata extraction — is one new subclass plus one line in
-``registry.default_channels``, and it is active on both paths at once.
+``registry.core_channels``, and it is active on both paths at once.
 
 There is no separate promote hook: the golden layer consolidates a session in
 place rather than copying it into a second database, so everything a channel
@@ -91,14 +91,13 @@ CollectResult = dict[str, tuple[float, dict[str, Any]]]
 
 
 class Channel:
-    """One optional memory signal, selected by ``registry.default_channels``.
+    """One memory signal — a core collector, or one a caller supplies.
 
     Subclasses set ``name`` (the sources label) and implement ``collect``.
 
-    There is no ``profiles`` class var any more: every channel declared both
-    modes, so the filter that consumed it never excluded anything and went with
-    the registry. Gate a channel on the setting that actually decides it
-    (``enable_frames``, ``ontology_source``) in ``default_channels`` instead.
+    There is no ``profiles`` class var and no ``enable_x`` gate: the core set
+    is fixed (``registry.core_channels``), and anything else is passed in by
+    the caller or, from the dialogue pack on, by a pack.
     """
 
     name: str = "channel"

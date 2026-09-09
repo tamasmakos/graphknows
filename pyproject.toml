@@ -159,6 +159,7 @@ packages = ["graphknows"]
 exclude = ["evaluation", "examples", "tests", "research", ".scratch", ".claude", "CLAUDE.md"]
 
 [project.scripts]
+graphknows = "graphknows.cli.memory:main"
 graphknows-mcp = "graphknows.server.mcp.stdio_server:main"
 
 # ── Dev tooling ────────────────────────────────────────────────────────────────

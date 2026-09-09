@@ -123,9 +123,9 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/retrieval/test_symbol_recall.py`
 - [X] T028 [P] [US2] Add the `RetrievalProfile` value object with core defaults in `graphknows/retrieval/profile.py`; pack supply arrives with the dialogue pack (FR-022)
   - Verify: `pytest -q tests/retrieval/test_profile.py`
-- [ ] T029 [US2] Rewrite `graphknows/channels/registry.py` as the fixed core collectors with no `enable_x` flags; pack channels arrive with the dialogue pack (FR-022)
+- [X] T029 [US2] Rewrite `graphknows/channels/registry.py` as the fixed core collectors with no `enable_x` flags; pack channels arrive with the dialogue pack (FR-022)
   - Verify: `pytest -q tests/channels/test_registry_packs.py`
-- [ ] T030 [US2] Rewrite the facade in `graphknows/memory.py` as `Memory(packs=[...])` with `ingest`/`recall`/`forget` and a per-namespace `asyncio.Lock` reporting `ingest_queue_wait_ms`, and the `graphknows.cli` `ingest`/`recall` commands on that facade
+- [X] T030 [US2] Rewrite the facade in `graphknows/memory.py` as `Memory(packs=[...])` with `ingest`/`recall`/`forget` and a per-namespace `asyncio.Lock` reporting `ingest_queue_wait_ms`, and the `graphknows.cli` `ingest`/`recall` commands on that facade
   - Verify: `pytest -q tests/memory/test_facade_packs.py`
 - [X] T032 [P] [US2] Add the grep test asserting no benchmark, dialogue, speaker or turn-regex term appears in core modules, at `tests/test_core_domain_neutral.py`
   - Verify: `pytest -q tests/test_core_domain_neutral.py`
