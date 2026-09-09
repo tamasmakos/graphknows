@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from hashlib import sha256
 from typing import Any
 
 from pydantic import BaseModel, field_validator, model_validator
@@ -55,6 +56,17 @@ class Segment(BaseModel, frozen=True):
     observed_at: datetime | None = None
     observed_at_inferred: bool = False
     extractor_version: str = ""
+
+    @property
+    def id(self) -> str:
+        """Deterministic identity of this span within its source.
+
+        Derived like :attr:`Source.id`, so re-parsing a source rewrites its
+        segments in place instead of forking a second set.
+        """
+        start, end = self.byte_range
+        span = f"{self.source_id}|{self.path}|{start}:{end}"
+        return sha256(span.encode()).hexdigest()[:16]
 
     @field_validator("byte_range")
     @classmethod
