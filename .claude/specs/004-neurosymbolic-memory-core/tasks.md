@@ -164,6 +164,16 @@ frame types before T027/T029 leaves their readers dangling. They are cutover del
   - Verify: `pytest -q tests/memory/test_cutover.py`
 - [X] T063 [Cutover] Implement exact-key-only identity on the cut-over core — no `MERGED_INTO` and no `SAME_AS` edge is written — and the cutover-report line that states it (FR-048)
   - Verify: `pytest -q tests/ingestion/consolidation/test_exact_key_interim.py`
+<!-- T066-T068 added 2026-09-10: the cutover run (T037) deleted modules but left the old core's
+read/write paths inside graph_store.py, memory.py and retriever.py; tests/storage/test_read_types.py
+(T014) is the signal — 24 read methods still declare CHUNK/TURN/FRAME types the golden schema no
+longer has. -->
+- [ ] T066 [Cutover] Make `graphknows/storage/arcadedb/graph_store.py` speak only the golden schema: delete every read and write method over the dropped types (CHUNK, TURN, SESSION, FILE, TEMPORAL, FRAME, FRAME_INSTANCE, FE, SEMTYPE, TOPIC, SYNSET, SENSE, REL) and the graph-analytics methods (pagerank, communities, graph embeddings, analytical view), add the golden reads the retriever needs (segment ANN, full-text and by-id, neighbours by NEXT, facts by entity and predicate, entity resolution by name key), and delete the tests that imported the removed methods (FR-045, FR-046)
+  - Verify: `pytest -q tests/storage/test_read_types.py`
+- [ ] T067 [Cutover] Rewrite the collectors in `graphknows/retrieval/retriever.py` and `graphknows/channels/base.py` over SEGMENT and FACT through the store's golden reads; no chunk-plane read remains (FR-002, FR-045)
+  - Verify: `pytest -q tests/retrieval/test_no_chunk_reads.py tests/retrieval/test_symbol_recall.py`
+- [ ] T068 [Cutover] Route `graphknows/memory.py` through `graphknows/ingestion/pipeline.py` only: drop the TURN buffer, the flush-time analytics (pagerank, communities, graph embeddings) and session consolidation; `flush` becomes identity resolution plus the dead-weight report; update `graphknows/storage/namespace.py`, `graphknows/ingestion/extraction/relations/verifier.py` and `graphknows/symbolic/ontology/rdf/store.py` callers (FR-045, FR-046)
+  - Verify: `pytest -q tests/memory/test_no_old_core_paths.py tests/memory/test_facade_packs.py`
 
 **Checkpoint**: SC-004 and SC-005 — identity precision and dead weight hold and the three
 scenarios pass; dialogue rows report not-run and the repository row joins the gate in Phase 9

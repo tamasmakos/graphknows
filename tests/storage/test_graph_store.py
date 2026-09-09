@@ -57,81 +57,6 @@ def test_db_name_mapping() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
-    stmts = [stmt for _, stmt in _CORE_DDL]
-    type_stmts = [s for s in stmts if s.startswith(("CREATE VERTEX TYPE", "CREATE EDGE TYPE"))]
-
-    def created(kind: str, name: str) -> bool:
-        return any(s.startswith(f"CREATE {kind} TYPE {name} ") for s in type_stmts)
-
-    # Golden vertices (FRAME_INSTANCE is the role-filled frame layer — WS D3).
-    # COMMUNITY was retired with compute_community_quality: ArcadeDB's
-    # modularityScore is untrustworthy and the topic stage's Newman modularity
-    # (graphknows.topics.metrics.newman_modularity) is the real number now.
-    for vertex in (
-        "SESSION",
-        "TURN",
-        "FILE",
-        "CHUNK",
-        "ENTITY",
-        "TEMPORAL",
-        "TOPIC",
-        "FRAME",
-        "FRAME_INSTANCE",
-    ):
-        assert created("VERTEX", vertex), f"missing vertex {vertex}"
-    # Golden edges (PLAYS_ROLE / FRAME_EVOKED_IN are the FRAME_INSTANCE layer edges).
-    for edge in (
-        "PART_OF",
-        "IN_SESSION",
-        "MENTIONS",
-        "MENTIONS_DATE",
-        "IN_TOPIC",
-        "EVOKED_BY",
-        "PLAYS_ROLE",
-        "FRAME_EVOKED_IN",
-    ):
-        assert created("EDGE", edge), f"missing edge {edge}"
-    # IN_TOPIC (ENTITY -> TOPIC) carries the cluster-membership pagerank.
-    assert "CREATE PROPERTY IN_TOPIC.pagerank IF NOT EXISTS DOUBLE" in stmts
-    # Dead schema must NOT be recreated. TURN used to sit in this list: the
-    # pre-golden-layer TURN was a dialog-turn model (DIALOG-[:HAS_TURN]->TURN
-    # with NEXT/MENTIONS edges) and that one stays dead — HAS_TURN below still
-    # guards it. The TURN asserted above is a different vertex: a flat
-    # short-term buffer keyed by session_id, linked with IN_SESSION, drained by
-    # flush(). Same name, unrelated shape.
-    for vertex in ("DIALOG", "SEGMENT", "DOC", "SESSIONENTITY", "COMMUNITY"):
-        assert not created("VERTEX", vertex), f"dead vertex {vertex} present"
-    # HAS_TOPIC and TOPIC.embedding were write-only once the topic read path
-    # went: nothing traversed CHUNK->TOPIC and nothing vector-searched TOPIC.
-    assert not created("EDGE", "HAS_TOPIC"), "write-only HAS_TOPIC edge recreated"
-    assert not any("TOPIC.embedding" in s for s in stmts), "write-only TOPIC.embedding recreated"
-    assert not any("ON TOPIC(embedding)" in s for s in stmts), "dead TOPIC vector index recreated"
-    for edge in (
-        "HAS_CHUNK",
-        "HAS_TURN",
-        "HAS_ENTITY",
-        "NEXT",
-        "CO_OCCURS",
-        "APPEARED_IN",
-        "CONTAINS_DOC",
-        "HAS_FILE",
-        "IN_COMMUNITY",
-    ):
-        assert not created("EDGE", edge), f"dead edge {edge} present"
-
-    # Golden naming conventions: unique keys and no legacy properties.
-    joined = " | ".join(stmts)
-    assert "CREATE INDEX ON ENTITY(name_norm) UNIQUE" in joined
-    assert "CREATE INDEX ON CHUNK(chunk_id) UNIQUE" in joined
-    assert "CREATE INDEX ON TEMPORAL(date) UNIQUE" in joined
-    assert "FRAME.chunk_id" not in joined  # evidence via EVOKED_BY edge
-    assert "ENTITY.label" not in joined  # `type`, not `label`
-    # Lifecycle state is NOTUNIQUE-indexed on CHUNK and ENTITY.
-    assert "CREATE INDEX ON CHUNK(state) NOTUNIQUE" in joined
-    assert "CREATE INDEX ON ENTITY(state) NOTUNIQUE" in joined
-
-
 @pytest.mark.asyncio
 async def test_ensure_schema_injects_dims_and_swallows_already_exists() -> None:
     client = _mock_client()
@@ -943,14 +868,6 @@ async def test_query_temporal_chunks_year_prefix_and_state() -> None:
     assert "d.date = '2023-05-07'" in cypher
     assert "c.state = 'raw'" in cypher
     assert "MENTIONS_DATE" in cypher
-
-
-@pytest.mark.asyncio
-async def test_core_ddl_frame_carries_summary_and_vector_index() -> None:
-    joined = " | ".join(stmt for _, stmt in _CORE_DDL)
-    assert "CREATE PROPERTY FRAME.summary" in joined
-    assert "CREATE PROPERTY FRAME.embedding" in joined
-    assert "ON FRAME(embedding) LSM_VECTOR" in joined
 
 
 @pytest.mark.asyncio
