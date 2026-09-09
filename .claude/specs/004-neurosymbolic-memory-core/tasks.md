@@ -103,7 +103,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/test_dropped_plane_stm.py`
 - [ ] T036 [US2] Stop declaring and writing the frame-element mirror, frame-specific types, graph-ranking columns and free-string relations, reducing `graphknows/symbolic/framenet/` to a concept+predicate emitter
   - Verify: `pytest -q tests/test_dropped_plane_frames.py`
-- [ ] T018 [US2] Replace the DDL wholesale with the golden schema in `graphknows/storage/arcadedb/_schema.py`, keeping the `SCHEMA_STAMP` mechanism verbatim
+- [X] T018 [US2] Replace the DDL wholesale with the golden schema in `graphknows/storage/arcadedb/_schema.py`, keeping the `SCHEMA_STAMP` mechanism verbatim
   - Verify: `pytest -q tests/storage/test_golden_schema.py`
 - [ ] T019 [US2] Define the single `state <> 'forgotten'` fragment in `graphknows/storage/arcadedb/_sql.py` and assert every read query text composes it
   - Verify: `pytest -q tests/storage/test_tombstone_filter.py`
