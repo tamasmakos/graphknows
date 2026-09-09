@@ -8,6 +8,7 @@ type = layers
 layers =
     graphknows.cli | graphknows.server | graphknows.integrations
     graphknows.memory
+    graphknows.packs
     graphknows.ingestion | graphknows.retrieval
     graphknows.channels
     graphknows.symbolic
@@ -31,11 +32,24 @@ source_modules =
 forbidden_modules =
     graphknows.ingestion.stm
 
+[importlinter:contract:core-knows-no-domain]
+name = The core must not import any domain pack
+type = forbidden
+source_modules =
+    graphknows.ingestion
+    graphknows.retrieval
+    graphknows.channels
+    graphknows.symbolic
+    graphknows.storage
+forbidden_modules =
+    graphknows.packs
+
 [importlinter:contract:client-stdlib-only]
 name = The out-of-process client SDK stays stdlib-only
 type = forbidden
 source_modules =
     graphknows.integrations.client
+    graphknows.integrations.claude_code
 forbidden_modules =
     graphknows.ingestion
     graphknows.retrieval

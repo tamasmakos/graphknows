@@ -82,7 +82,7 @@ rules that every user story below depends on.
   - Verify: `python -c "from graphknows.exceptions import PackConflictError"`
 - [X] T009 Create the packs layer: `DomainPack` protocol in `graphknows/packs/protocol.py` and the all-or-nothing loader with concept-URI/predicate-id conflict detection in `graphknows/packs/loader.py`
   - Verify: `pytest -q tests/packs/test_loader.py`
-- [ ] T010 Add the `packs` layer, the `core-knows-no-domain` forbidden contract and `graphknows.integrations.claude_code` as a `client-stdlib-only` source module to `.importlinter`
+- [X] T010 Add the `packs` layer, the `core-knows-no-domain` forbidden contract and `graphknows.integrations.claude_code` as a `client-stdlib-only` source module to `.importlinter`
   - Verify: `pytest -q tests/test_import_contracts.py`
 
 **Checkpoint**: neutral model and pack layer exist; user story phases can begin.
