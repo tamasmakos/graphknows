@@ -52,7 +52,7 @@ result file per row plus the internal metrics.
   - Verify: `pytest -q tests/storage/test_read_types.py`
 - [X] T015 [US1] Implement `python -m evaluation baseline --rows … --repeats 3` writing `median`/`band`/`runs`/`commit` per row and metric under `evaluation/results/baseline/`
   - Verify: `pytest -q tests/evaluation/test_baseline_cli.py`
-- [ ] T016 [P] [US1] Add the hand-labelled identity sample of at least 200 clusters, not from LoCoMo, at `evaluation/data/identity/labelled.jsonl`: the corpus is this repository's own Claude Code transcripts and source tree, a cluster is the set of mentions (names, paths, symbols) referring to one real referent, labelled by hand, with the procedure recorded beside the file
+- [X] T016 [P] [US1] Add the hand-labelled identity sample of at least 200 clusters, not from LoCoMo, at `evaluation/data/identity/labelled.jsonl`: the corpus is this repository's own Claude Code transcripts and source tree, a cluster is the set of mentions (names, paths, symbols) referring to one real referent, labelled by hand, with the procedure recorded beside the file
   - Verify: `pytest -q tests/evaluation/test_identity_sample.py`
 - [ ] T017 [US1] Record and commit the baseline files for every row and internal metric under `evaluation/results/baseline/` against the unmodified core
   - Verify: `pytest -q tests/evaluation/test_baseline_committed.py`

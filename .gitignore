@@ -24,7 +24,8 @@ dogfood-output/
 input/
 data/raw/
 evaluation/results/
-evaluation/data/
+evaluation/data/*
+!evaluation/data/identity/
 evaluation/external/
 demo_ingest.py
 demo_*.py
