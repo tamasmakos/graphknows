@@ -1,27 +1,27 @@
 {
   "row": "locomo",
-  "feeding_mode": "",
+  "feeding_mode": "document",
   "extractor": "local",
-  "n": 0,
-  "not_run": "baseline recording run not executed: `python -m evaluation baseline --rows locomo,longmem,beam --repeats 3` needs the provisioned corpora, a reachable ArcadeDB and the judge LLM",
+  "n": 10,
+  "not_run": null,
   "accuracy": {
-    "median": 0.0,
-    "band": 0.0,
+    "median": 0.9,
+    "band": 0.09999999999999998,
     "runs": [
-      0.0,
-      0.0,
-      0.0
+      0.9,
+      0.9,
+      0.8
     ],
-    "commit": "f647b41768327f09831d7bfc30887fab5f3125de"
+    "commit": "2d50ebacbd873d2d13d69e823d6aa033235e545f"
   },
   "evidence_recall": {
-    "median": 0.0,
+    "median": 0.6,
     "band": 0.0,
     "runs": [
-      0.0,
-      0.0,
-      0.0
+      0.6,
+      0.6,
+      0.6
     ],
-    "commit": "f647b41768327f09831d7bfc30887fab5f3125de"
+    "commit": "2d50ebacbd873d2d13d69e823d6aa033235e545f"
   }
 }
