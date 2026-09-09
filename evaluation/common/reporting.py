@@ -11,7 +11,8 @@ from __future__ import annotations
 import csv
 import json
 import math
-from dataclasses import dataclass
+import statistics
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,58 @@ class ReportPaths:
     json_path: Path
     csv_path: Path
     markdown_path: Path
+
+
+@dataclass(frozen=True)
+class PanelRow:
+    """One benchmark row of a panel run (contracts/panel-report.md).
+
+    ``dataclasses.asdict`` yields the contract's JSON shape. A row that could not
+    be provisioned carries the reason in *not_run* and is never omitted.
+    """
+
+    row: str
+    feeding_mode: str
+    extractor: str
+    accuracy: float = 0.0
+    evidence_recall: float = 0.0
+    by_category: dict[str, float] = field(default_factory=dict)
+    n: int = 0
+    not_run: str | None = None
+
+
+@dataclass(frozen=True)
+class InternalMetrics:
+    """The once-per-run internal metrics (FR-040); ``asdict`` is the JSON shape."""
+
+    identity: dict[str, float] = field(default_factory=dict)
+    fact_precision: dict[str, float] = field(default_factory=dict)
+    dead_weight: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BaselineMetric:
+    """Repeated runs of one metric. *median* is the headline, *band* the run noise."""
+
+    runs: list[float]
+    commit: str
+
+    @property
+    def median(self) -> float:
+        return statistics.median(self.runs)
+
+    @property
+    def band(self) -> float:
+        return max(self.runs) - min(self.runs)
+
+    def to_record(self) -> dict[str, Any]:
+        """The contract's ``median``/``band``/``runs``/``commit`` shape."""
+        return {
+            "median": self.median,
+            "band": self.band,
+            "runs": list(self.runs),
+            "commit": self.commit,
+        }
 
 
 def _mean(vals: list[float]) -> float:
