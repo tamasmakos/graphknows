@@ -11,6 +11,7 @@ activation reads exactly those two edges back.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 
 from graphknows.ingestion.extraction.protocol import Extractor, PackGuidance
 from graphknows.models.fact import Fact, Mention
@@ -44,6 +45,17 @@ def _concepts_by_label(packs: Sequence[PackGuidance]) -> dict[str, ConceptRef]:
     return table
 
 
+def _functional_predicate_ids(packs: Sequence[PackGuidance]) -> frozenset[str]:
+    """Ids of the predicates that admit at most one current object per subject.
+
+    The functional flag is a property of the predicate symbol (FR-011), so the
+    currency rule is read off the loaded packs, never off a hand-kept list.
+    """
+    return frozenset(
+        predicate.id for pack in packs for predicate in pack.predicates() if predicate.functional
+    )
+
+
 class IngestPipeline:
     """Writes one source as segments, mentions and facts, labelled with symbols.
 
@@ -65,6 +77,7 @@ class IngestPipeline:
         self._extractor = extractor
         self._packs = tuple(packs)
         self._concepts = _concepts_by_label(self._packs)
+        self._functional = _functional_predicate_ids(self._packs)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self._extractor.name!r}, {len(self._packs)} packs)"
@@ -133,6 +146,33 @@ class IngestPipeline:
         evidence = [Evidence(segment_id=segment.id, span=(0, len(segment.text.encode())))]
         for fact in facts:
             await self._facts.write(fact, evidence)
+            await self._settle_currency(fact, segment.observed_at)
+
+    async def _settle_currency(self, fact: Fact, anchor: datetime | None) -> None:
+        """Rule the newly written *fact* against the current one it competes with.
+
+        Only functional predicates compete (FR-012): of two objects the newer
+        one stays current and SUPERSEDES the older, which is retained and marked
+        not current. Two assertions anchored at the same instant — or at no
+        instant at all — cannot be ordered, so neither retires the other and
+        they are linked by CONTRADICTS instead.
+
+        The anchor is the fact's own ``valid_from`` when it has one, else the
+        observation time of the segment that evidences it.
+        """
+        if fact.predicate not in self._functional:
+            return
+        incumbent = await self._facts.incumbent(fact)
+        if incumbent is None:
+            return
+        incumbent_id, incumbent_at = incumbent
+        asserted_at = fact.validity.valid_from or anchor
+        if asserted_at is None or incumbent_at is None or asserted_at == incumbent_at:
+            await self._facts.contradict(fact.id, incumbent_id)
+        elif asserted_at > incumbent_at:
+            await self._facts.supersede(fact.id, incumbent_id)
+        else:
+            await self._facts.supersede(incumbent_id, fact.id)
 
 
 __all__ = ["IngestPipeline"]

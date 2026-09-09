@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from graphknows.exceptions import StoreError
-from graphknows.models.fact import Fact
+from graphknows.models.fact import Fact, FactState
 from graphknows.storage.arcadedb.writers._base import _Writer
 
 
@@ -43,6 +43,50 @@ class FactWriter(_Writer):
             for item in evidence:
                 await self._link_evidence(fact.id, item)
         return fact.id
+
+    async def incumbent(self, fact: Fact) -> tuple[str, datetime | None] | None:
+        """The other current fact on *fact*'s subject and predicate, with its anchor.
+
+        ``None`` when nothing yet claims that subject and predicate — asked only
+        for functional predicates, where at most one object may be current.
+        """
+        rows = await self._store.query(
+            "MATCH (f:FACT) WHERE f.subject = $subject AND f.predicate = $predicate "
+            "AND f.is_current = true AND f.state = $state AND f.id <> $id "
+            "RETURN f.id AS id, f.valid_from AS valid_from LIMIT 1",
+            subject=fact.subject,
+            predicate=fact.predicate,
+            state=str(FactState.ACTIVE),
+            id=fact.id,
+        )
+        if not rows:
+            return None
+        return str(rows[0]["id"]), _moment(rows[0].get("valid_from"))
+
+    async def supersede(self, winner_id: str, loser_id: str) -> None:
+        """Link the newer fact to the older one it retires (FR-012).
+
+        The loser is kept and marked not current: superseding is a tombstone,
+        never a delete, so the history of a functional predicate stays readable.
+        """
+        await self._store.command(
+            "MATCH (w:FACT {id: $winner}), (l:FACT {id: $loser}) "
+            "MERGE (w)-[:SUPERSEDES]->(l) SET l.is_current = false",
+            winner=winner_id,
+            loser=loser_id,
+        )
+
+    async def contradict(self, fact_id: str, other_id: str) -> None:
+        """Link two facts claiming one functional predicate at the same instant.
+
+        Neither can be called stale by time alone, so both stay current and the
+        conflict is recorded rather than resolved.
+        """
+        await self._store.command(
+            "MATCH (f:FACT {id: $id}), (o:FACT {id: $other}) MERGE (f)-[:CONTRADICTS]->(o)",
+            id=fact_id,
+            other=other_id,
+        )
 
     async def _write_vertex(self, fact: Fact) -> None:
         """MERGE the FACT vertex itself."""
@@ -97,3 +141,8 @@ class FactWriter(_Writer):
 def _iso(moment: datetime | None) -> str:
     """Render an optional validity end for storage; an open end stays empty."""
     return moment.isoformat() if moment else ""
+
+
+def _moment(stored: object) -> datetime | None:
+    """Read back what :func:`_iso` wrote; an empty or absent end stays open."""
+    return datetime.fromisoformat(str(stored)) if stored else None
