@@ -5,6 +5,11 @@ run concurrently over one per-namespace ``GraphStore``, each filtered by a
 lifecycle ``state`` derived from the query scope, alongside whatever optional
 channels ``channels.registry.default_channels`` turned on. The spine is
 signal-blind: it merges the candidates, sorts by fused score, and cuts to top_k.
+
+``SymbolRecall`` below is the top-down half of the traversal (FR-002): it reads
+back the two edges ``IngestPipeline`` wrote bottom-up and answers in facts with
+their evidence, under a stated budget. It replaces the collectors above at the
+cutover; until then both live here.
 """
 
 from __future__ import annotations
@@ -23,6 +28,14 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on broke
 
 from graphknows.bounds import check_top_k
 from graphknows.channels.base import ChannelContext
+from graphknows.models.fact import Fact, Modality, Polarity, Validity
+from graphknows.models.report import (
+    Counters,
+    Evidence,
+    FactWithEvidence,
+    RecallBudget,
+    RecallResult,
+)
 from graphknows.ranking.rrf import (
     FUSION_ALPHA,
     RRF_RELATION_BOOST,
@@ -30,7 +43,10 @@ from graphknows.ranking.rrf import (
 )
 from graphknows.retrieval.models.context import RetrievalContext
 from graphknows.settings import get_settings
+from graphknows.storage.arcadedb._base import ArcadeStoreBase
+from graphknows.storage.arcadedb._sql import not_forgotten, quoted_list
 from graphknows.storage.arcadedb.graph_store import GraphStore
+from graphknows.storage.arcadedb.writers.fact import moment
 from graphknows.storage.embedder import embed
 from graphknows.temporal import asks_for_a_date, query_date_candidates
 
@@ -693,3 +709,165 @@ def _add_result(
         )
     else:
         result[chunk_id] = (score, info)
+
+
+# ---------------------------------------------------------------------------
+# Top-down activation (FR-002)
+# ---------------------------------------------------------------------------
+
+# What a fact needs to come back with the segment it was read from: the
+# assertion, and the evidence's place in its source. Written once because both
+# activation queries answer in the same shape.
+_FACT_ROW = (
+    "f.id AS id, f.subject AS subject, f.predicate AS predicate, f.object AS object, "
+    "f.polarity AS polarity, f.modality AS modality, f.confidence AS confidence, "
+    "f.valid_from AS valid_from, f.valid_to AS valid_to, "
+    "g.text AS text, g.byte_start AS byte_start, g.byte_end AS byte_end, s.uri AS source_uri"
+)
+
+_ORDERING = "fact confidence"
+"""The stated ordering the budget cuts along, reported as ``truncated_by``."""
+
+
+class SymbolRecall:
+    """Symbol-keyed recall: an activated symbol pulls its facts back (FR-002).
+
+    The mirror of :class:`~graphknows.ingestion.pipeline.IngestPipeline`'s
+    bottom-up labelling. The query resolves to concepts, and activation reads
+    exactly the two edges labelling wrote — ``SEGMENT-[EVOKES]->CONCEPT`` and
+    ``ENTITY-[INSTANCE_OF]->CONCEPT`` — for its candidates. What comes back is
+    facts with the evidence asserting them, never segments (FR-009) and never a
+    fact without its source (SC-002), cut to a budget the caller stated (FR-010).
+    """
+
+    def __init__(self, store: ArcadeStoreBase) -> None:
+        self._store = store
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self._store.database!r})"
+
+    async def recall(self, query: str, budget: RecallBudget | None = None) -> RecallResult:
+        """The facts *query*'s symbols activate, with their evidence and counters.
+
+        A query resolving to no symbol, or to symbols nothing hangs off, answers
+        ``no_evidence=True`` — "nothing is known", which a caller can tell apart
+        from a lookup that failed (FR-015).
+        """
+        bound = budget or RecallBudget()
+        terms = _terms(query)
+        resolved = await self._resolve(terms)
+        uris = sorted(set(resolved.values()))
+        rows = await self._activate(uris) if uris else []
+        pool = _facts_with_evidence(rows, bound.max_evidence_per_fact)
+        pool.sort(key=lambda item: -item.fact.confidence)
+        kept = pool[: bound.max_facts]
+        return RecallResult(
+            facts=kept,
+            no_evidence=not kept,
+            budget=bound,
+            truncated_by=_ORDERING if len(kept) < len(pool) else None,
+            counters=Counters(
+                symbols_resolved=len(uris),
+                symbols_unresolved=len(set(terms) - set(resolved)),
+                facts_returned=len(kept),
+                facts_truncated_by_budget=len(pool) - len(kept),
+            ),
+        )
+
+    async def _resolve(self, terms: list[str]) -> dict[str, str]:
+        """The concepts *terms* name, as ``{matched label: concept uri}``.
+
+        Matched on the casefolded label, the key bottom-up labelling indexes its
+        concepts under, so both directions agree on what a symbol answers to.
+        The vocabulary is only what the loaded packs wrote, so it is read whole
+        and matched here rather than by a dialect-specific predicate.
+        """
+        rows = await self._store.query("MATCH (c:CONCEPT) RETURN c.uri AS uri, c.label AS label")
+        wanted = set(terms)
+        resolved: dict[str, str] = {}
+        for row in rows:
+            label = str(row["label"]).casefold()
+            if label in wanted:
+                resolved[label] = str(row["uri"])
+        return resolved
+
+    async def _activate(self, uris: list[str]) -> list[dict[str, Any]]:
+        """Every fact the activated concepts reach, by either labelling edge."""
+        evoked, instantiated = await asyncio.gather(
+            self._facts_evoked(uris), self._facts_instantiated(uris)
+        )
+        return [*evoked, *instantiated]
+
+    async def _facts_evoked(self, uris: list[str]) -> list[dict[str, Any]]:
+        """Facts asserted in a segment that EVOKES one of the activated concepts."""
+        return await self._store.query(
+            "MATCH (g:SEGMENT)-[:EVOKES]->(c:CONCEPT) "
+            f"WHERE c.uri IN {quoted_list(uris)} "
+            "MATCH (f:FACT)-[:ASSERTED_IN]->(g), (g)-[:PART_OF]->(s:SOURCE) "
+            f"WHERE {not_forgotten('f')} AND f.is_current = true "
+            f"RETURN {_FACT_ROW}"
+        )
+
+    async def _facts_instantiated(self, uris: list[str]) -> list[dict[str, Any]]:
+        """Facts whose subject entity is an INSTANCE_OF one of those concepts."""
+        return await self._store.query(
+            "MATCH (e:ENTITY)-[:INSTANCE_OF]->(c:CONCEPT) "
+            f"WHERE c.uri IN {quoted_list(uris)} AND {not_forgotten('e')} "
+            "MATCH (e)-[:SUBJECT_OF]->(f:FACT)-[:ASSERTED_IN]->(g:SEGMENT), "
+            "(g)-[:PART_OF]->(s:SOURCE) "
+            f"WHERE {not_forgotten('f')} AND f.is_current = true "
+            f"RETURN {_FACT_ROW}"
+        )
+
+
+def _terms(query: str) -> list[str]:
+    """The casefolded word tokens a symbol can answer to."""
+    return re.findall(r"[a-z0-9][a-z0-9']*", query.casefold())
+
+
+def _facts_with_evidence(rows: list[dict[str, Any]], max_evidence: int) -> list[FactWithEvidence]:
+    """Group activation rows by fact, keeping at most *max_evidence* segments each.
+
+    Both labelling edges can reach one fact through the same segment, so
+    evidence is deduplicated before the per-fact ceiling applies — otherwise a
+    ceiling of one would spend itself on a repeat.
+    """
+    facts: dict[str, Fact] = {}
+    evidence: dict[str, list[Evidence]] = {}
+    for row in rows:
+        fact_id = str(row["id"])
+        facts.setdefault(fact_id, _fact(row))
+        cited = evidence.setdefault(fact_id, [])
+        item = _evidence(row)
+        if item not in cited and len(cited) < max_evidence:
+            cited.append(item)
+    return [
+        FactWithEvidence(fact=facts[fact_id], evidence=cited)
+        for fact_id, cited in evidence.items()
+        if cited
+    ]
+
+
+def _fact(row: dict[str, Any]) -> Fact:
+    """The assertion one activation row carries."""
+    return Fact(
+        id=str(row["id"]),
+        subject=str(row["subject"]),
+        predicate=str(row["predicate"]),
+        object=str(row["object"]),
+        polarity=Polarity(str(row.get("polarity") or Polarity.ASSERTED)),
+        modality=Modality(str(row["modality"])) if row.get("modality") else None,
+        confidence=float(row.get("confidence") or 0.0),
+        validity=Validity(
+            valid_from=moment(row.get("valid_from")), valid_to=moment(row.get("valid_to"))
+        ),
+    )
+
+
+def _evidence(row: dict[str, Any]) -> Evidence:
+    """Where that row's fact was read: the source, the bytes, and the text."""
+    return Evidence(
+        source_uri=str(row.get("source_uri") or ""),
+        byte_range=(int(row.get("byte_start") or 0), int(row.get("byte_end") or 0)),
+        text=str(row.get("text") or ""),
+    )

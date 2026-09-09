@@ -61,7 +61,7 @@ class FactWriter(_Writer):
         )
         if not rows:
             return None
-        return str(rows[0]["id"]), _moment(rows[0].get("valid_from"))
+        return str(rows[0]["id"]), moment(rows[0].get("valid_from"))
 
     async def supersede(self, winner_id: str, loser_id: str) -> None:
         """Link the newer fact to the older one it retires (FR-012).
@@ -138,11 +138,11 @@ class FactWriter(_Writer):
         )
 
 
-def _iso(moment: datetime | None) -> str:
+def _iso(end: datetime | None) -> str:
     """Render an optional validity end for storage; an open end stays empty."""
-    return moment.isoformat() if moment else ""
+    return end.isoformat() if end else ""
 
 
-def _moment(stored: object) -> datetime | None:
+def moment(stored: object) -> datetime | None:
     """Read back what :func:`_iso` wrote; an empty or absent end stays open."""
     return datetime.fromisoformat(str(stored)) if stored else None

@@ -119,7 +119,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/ingestion/test_dedup.py`
 - [X] T026 [US2] Implement the functional-predicate currency rule (supersede newer/older, contradict on equal times) in `graphknows/ingestion/pipeline.py`
   - Verify: `pytest -q tests/ingestion/test_supersede.py`
-- [ ] T027 [US2] Rewrite `graphknows/retrieval/retriever.py` as symbol-keyed recall returning facts with evidence under an explicit budget, with `no_evidence` and `truncated_by`, and top-down activation reading `EVOKES` and `INSTANCE_OF` for candidate generation (FR-002)
+- [X] T027 [US2] Rewrite `graphknows/retrieval/retriever.py` as symbol-keyed recall returning facts with evidence under an explicit budget, with `no_evidence` and `truncated_by`, and top-down activation reading `EVOKES` and `INSTANCE_OF` for candidate generation (FR-002)
   - Verify: `pytest -q tests/retrieval/test_symbol_recall.py`
 - [ ] T028 [P] [US2] Add the `RetrievalProfile` value object with core defaults in `graphknows/retrieval/profile.py`; pack supply arrives with the dialogue pack (FR-022)
   - Verify: `pytest -q tests/retrieval/test_profile.py`
