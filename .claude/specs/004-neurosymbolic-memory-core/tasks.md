@@ -131,7 +131,7 @@ symbol from each, and confirm both return facts with evidence.
   - Verify: `pytest -q tests/test_core_domain_neutral.py`
 - [X] T043 [P] [US2] Implement the stdlib-`ast` code parser emitting one segment per function and class with the qualified symbol as `path`, in `graphknows/ingestion/parsers/code.py`
   - Verify: `pytest -q tests/ingestion/parsers/test_code.py`
-- [ ] T044 [US2] Ship the code pack — concepts, predicates (calls, imports, defines, tests), `CodeExtractor` with no model, a veto rule (a function and a module symbol with the same normalised name never merge, FR-019), and its data — under `graphknows/packs/code/` and `graphknows/packs/data/`
+- [X] T044 [US2] Ship the code pack — concepts, predicates (calls, imports, defines, tests), `CodeExtractor` with no model, a veto rule (a function and a module symbol with the same normalised name never merge, FR-019), and its data — under `graphknows/packs/code/` and `graphknows/packs/data/`
   - Verify: `pytest -q tests/packs/test_code_pack.py`
 - [X] T045 [P] [US2] Implement the tolerant, versioned agent-transcript parser in `graphknows/ingestion/parsers/transcript.py`, counting unknown record and block types and retaining timestamp, `cwd`, `gitBranch` and `isSidechain`
   - Verify: `pytest -q tests/ingestion/parsers/test_transcript.py`
