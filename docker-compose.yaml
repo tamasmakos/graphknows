@@ -19,6 +19,12 @@ x-graphknows-env: &graphknows-env
   GRAPHKNOWS_LLM_MODEL: "${GRAPHKNOWS_LLM_MODEL:-openrouter/deepseek/deepseek-v4-flash}"
   GRAPHKNOWS_LLM_API_KEY: "${GRAPHKNOWS_LLM_API_KEY:-}"
   GRAPHKNOWS_EMBED_MODEL: "${GRAPHKNOWS_EMBED_MODEL:-BAAI/bge-small-en-v1.5}"
+  # The evaluation harness (evaluation/README.md) reads these directly for
+  # answer generation and LLM judging; without them `python -m evaluation`
+  # cannot run inside the workspace container.
+  OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+  LLM_MODEL: "${LLM_MODEL:-}"
+  JUDGE_MODEL: "${JUDGE_MODEL:-}"
 
 services:
   arcadedb:
