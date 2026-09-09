@@ -32,6 +32,7 @@ from graphknows.models.report import (
     RecallResult,
 )
 from graphknows.models.scope import MemoryScope
+from graphknows.models.segment import Segment, SegmentKind
 from graphknows.models.source import Source
 from graphknows.models.symbols import ConceptRef, PredicateRef, SymbolKind
 
@@ -59,6 +60,8 @@ __all__ = [
     "RecallResult",
     "RenderedMemories",
     "Role",
+    "Segment",
+    "SegmentKind",
     "Source",
     "SymbolKind",
     "Validity",

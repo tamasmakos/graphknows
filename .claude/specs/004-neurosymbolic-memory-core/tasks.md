@@ -70,7 +70,7 @@ rules that every user story below depends on.
 
 - [X] T003 [P] Create `Source` in `graphknows/models/source.py` with `id` derived from `uri` + `content_hash`, `mime`, `imported_at`, `namespace`, `meta`
   - Verify: `pytest -q tests/models/test_source.py`
-- [ ] T004 [P] Create `Segment` and the closed `SegmentKind` enum in `graphknows/models/segment.py` with `byte_range`, free-string `role`, `observed_at`, `observed_at_inferred`, `path`, `extractor_version`
+- [X] T004 [P] Create `Segment` and the closed `SegmentKind` enum in `graphknows/models/segment.py` with `byte_range`, free-string `role`, `observed_at`, `observed_at_inferred`, `path`, `extractor_version`
   - Verify: `pytest -q tests/models/test_segment.py`
 - [X] T005 [P] Create `Mention`, `Fact`, `Polarity`, `Modality`, `Validity`, `FactState` in `graphknows/models/fact.py`
   - Verify: `pytest -q tests/models/test_fact.py`
