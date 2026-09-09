@@ -44,7 +44,7 @@ result file per row plus the internal metrics.
   - Verify: `pytest -q tests/evaluation/test_feeding_mode.py`
 - [X] T012 [P] [US1] Implement pairwise identity precision/recall over a labelled sample in `evaluation/identity.py`
   - Verify: `pytest -q tests/evaluation/test_identity_metric.py`
-- [ ] T013 [P] [US1] Implement the written-minus-read type diff in `evaluation/deadweight.py`: `deadweight` and `panel --compare` exit non-zero on a non-empty `unread_types`, while `baseline` records `passed: false` and continues (FR-041)
+- [X] T013 [P] [US1] Implement the written-minus-read type diff in `evaluation/deadweight.py`: `deadweight` and `panel --compare` exit non-zero on a non-empty `unread_types`, while `baseline` records `passed: false` and continues (FR-041)
   - Verify: `pytest -q tests/evaluation/test_deadweight.py`
 - [ ] T058 [P] [US1] Generalise the triplet audit in `evaluation/audit/` beyond dialogue so fact precision is reported on every run (FR-040)
   - Verify: `pytest -q tests/evaluation/test_audit_generalised.py`
