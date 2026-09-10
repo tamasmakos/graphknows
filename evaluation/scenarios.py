@@ -17,6 +17,8 @@ rather than a benchmark number:
   counted, never fatal, and its sound records still land (SC-014).
 * ``forget-roundtrip`` — a forgotten record leaves recall while its tombstone and
   the merge log around it stay readable (SC-012).
+* ``hook-latency`` — the verb an agent hook shells out to answers inside the hook
+  budget against a warm service (SC-010).
 
 Each scenario takes what it drives and returns a :class:`ScenarioResult`; the
 run outcome is :meth:`ScenarioResult.gate`, the same shape the dead-weight check
@@ -33,6 +35,7 @@ from hashlib import sha256
 from time import perf_counter
 from typing import Any
 
+from evaluation.common.reporting import _pct
 from graphknows.exceptions import SchemaVersionMismatchError
 from graphknows.ingestion.consolidation.candidates import MAX_CANDIDATES
 from graphknows.ingestion.consolidation.entity_resolution import (
@@ -262,6 +265,39 @@ def transcript_drift(
     )
 
 
+HOOK_SAMPLES = 200
+"""Recalls timed per run — enough that the 95th sample is a tail, not one outlier."""
+
+HOOK_BUDGET = 1.0
+"""Seconds the recall verb's p95 must stay under to be worth leaving a hook on (SC-010)."""
+
+HOOK_CEILING = 5.0
+"""Seconds no single recall may reach — the hook process's own timeout (SC-010)."""
+
+
+def hook_latency(samples: Sequence[float]) -> ScenarioResult:
+    """The recall verb must answer inside the hook budget, every time (SC-010).
+
+    Both halves are the same claim at two confidences: p95 is what the hook
+    costs a session, the slowest sample is what a session ever waits for.
+    """
+    if len(samples) < HOOK_SAMPLES:
+        return ScenarioResult(
+            "hook-latency", False, f"{len(samples)} samples measured, {HOOK_SAMPLES} asked for"
+        )
+    p95, slowest = _pct(list(samples), 95), max(samples)
+    measured = f"p95 {p95 * 1e3:.0f} ms over {len(samples)} samples, slowest {slowest * 1e3:.0f} ms"
+    if p95 >= HOOK_BUDGET:
+        return ScenarioResult(
+            "hook-latency", False, f"over the {HOOK_BUDGET:.0f} s budget: {measured}"
+        )
+    if slowest >= HOOK_CEILING:
+        return ScenarioResult(
+            "hook-latency", False, f"past the {HOOK_CEILING:.0f} s ceiling: {measured}"
+        )
+    return ScenarioResult("hook-latency", True, measured)
+
+
 def resolve_scaling(base: float, at_ten_times: float) -> ScenarioResult:
     """Per-batch wall clock must not follow the namespace it resolves against (SC-006).
 
@@ -443,6 +479,28 @@ async def _forget_roundtrip(namespace: str) -> ScenarioResult:
     return forget_roundtrip(await _observe_forget(namespace, PROBES[0]))
 
 
+async def _recall_samples(memory: Any, query: str) -> list[float]:
+    """Wall clock of :data:`HOOK_SAMPLES` recalls, warm — the first one is discarded.
+
+    A hook runs against a service an earlier hook already woke, so the connect
+    and the schema check the first recall pays for belong to no sample.
+    """
+    await memory.recall(query)
+    samples = []
+    for _ in range(HOOK_SAMPLES):
+        started = perf_counter()
+        await memory.recall(query)
+        samples.append(perf_counter() - started)
+    return samples
+
+
+async def _hook_latency(namespace: str) -> ScenarioResult:
+    """The budget claim, measured on the verb the hook shells out to (SC-010)."""
+    memory = await _fresh_memory(namespace)
+    await _ingest(memory, PROBES[0])
+    return hook_latency(await _recall_samples(memory, PROBES[0].query))
+
+
 async def _concurrent_ingest(namespace: str) -> ScenarioResult:
     memories = [
         await _fresh_memory(f"{namespace}_{order}") for order in ("concurrent", "sequential")
@@ -479,6 +537,7 @@ SCENARIOS: dict[str, Callable[[str], Awaitable[ScenarioResult]]] = {
     "resolve-scaling": _resolve_scaling,
     "transcript-drift": _transcript_drift,
     "forget-roundtrip": _forget_roundtrip,
+    "hook-latency": _hook_latency,
 }
 
 
