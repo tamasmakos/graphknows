@@ -273,7 +273,7 @@ same way as every other row.
   - Verify: `pytest -q tests/evaluation/test_repo_row_kinds.py`
 - [ ] T056 [US6] Implement `python -m evaluation panel --compare` as the merge gate — no row below `median − band`, identity precision not dropped, dead weight clean
   - Verify: `pytest -q tests/evaluation/test_panel_compare.py`
-- [ ] T057 [US6] Report the local and LLM extraction paths as separate columns in `evaluation/common/reporting.py`
+- [X] T057 [US6] Report the local and LLM extraction paths as separate columns in `evaluation/common/reporting.py`
   - Verify: `pytest -q tests/evaluation/test_extractor_columns.py`
 
 **Checkpoint**: SC-011 holds; all six stories are independently demonstrable.

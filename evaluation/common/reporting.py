@@ -370,3 +370,39 @@ def compare_modes(
     lines.append("")
     lines.append(f"_llm_free n={len(llm_free_cases)}  llm_assisted n={len(llm_assisted_cases)}_")
     return "\n".join(lines) + "\n"
+
+
+EXTRACTOR_COLUMNS = ("local", "llm")
+_PANEL_METRICS = ("accuracy", "evidence_recall")
+
+
+def _panel_cell(row: PanelRow | None, metric: str) -> str:
+    """One table cell: a score, the reason a row did not run, or an absent path."""
+    if row is None:
+        return "—"
+    if row.not_run:
+        return f"not run ({row.not_run})"
+    return f"{float(getattr(row, metric)):.3f}"
+
+
+def render_panel(rows: list[PanelRow]) -> str:
+    """Panel table with the local and LLM extraction paths as separate columns (FR-043)."""
+    by_row: dict[str, dict[str, PanelRow]] = {}
+    for row in rows:
+        by_row.setdefault(row.row, {})[row.extractor] = row
+
+    header = ["Row", *(f"{ex} {m}" for ex in EXTRACTOR_COLUMNS for m in _PANEL_METRICS)]
+    lines = [
+        "# Panel",
+        "",
+        "| " + " | ".join(header) + " |",
+        "|" + "---|" * len(header),
+    ]
+    for name, paths in sorted(by_row.items()):
+        cells = [
+            _panel_cell(paths.get(ex), metric)
+            for ex in EXTRACTOR_COLUMNS
+            for metric in _PANEL_METRICS
+        ]
+        lines.append(f"| `{name}` | " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
