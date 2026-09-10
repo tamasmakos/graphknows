@@ -247,7 +247,7 @@ end.
   - Verify: `pytest -q tests/integrations/claude_code/test_checkpoint.py`
 - [X] T051 [P] [US5] Add the subprocess test asserting `torch`, `transformers`, `spacy`, `sentence_transformers` and `gliner` are absent from `sys.modules` after importing the hook module, at `tests/integrations/claude_code/test_no_ml_imports.py`
   - Verify: `pytest -q tests/integrations/claude_code/test_no_ml_imports.py`
-- [ ] T031 [US5] Implement forget as a tombstone in the store, cascading from a forgotten `Segment` to the facts it evidences and counting `facts_excluded_tombstoned`, and expose the `memory_forget` tool in `graphknows/server/mcp/`
+- [X] T031 [US5] Implement forget as a tombstone in the store, cascading from a forgotten `Segment` to the facts it evidences and counting `facts_excluded_tombstoned`, and expose the `memory_forget` tool in `graphknows/server/mcp/`
   - Verify: `pytest -q tests/mcp_server/test_forget_tool.py`
 - [ ] T052 [US5] Implement the `forget-roundtrip` scenario in `evaluation/scenarios.py`, proving a forgotten record vanishes from recall while its tombstone and merge log stay readable
   - Verify: `pytest -q tests/evaluation/test_forget_roundtrip.py`

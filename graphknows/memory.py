@@ -30,11 +30,12 @@ from graphknows.ingestion.parsers.text import PlainTextParser, strip_content_hea
 from graphknows.models.fact import FactState
 from graphknows.models.hit import Hit
 from graphknows.models.message import Message
-from graphknows.models.report import IngestReport, RecallBudget, RecallResult
+from graphknows.models.report import Counters, IngestReport, RecallBudget, RecallResult
 from graphknows.models.segment import Segment, SegmentKind
 from graphknows.models.source import Source, session_uri
 from graphknows.packs import DomainPack, load_packs
 from graphknows.settings import Decoder, GraphKnowsSettings, MemoryMode, get_settings
+from graphknows.storage.arcadedb._sql import not_forgotten
 from graphknows.storage.arcadedb.writers import WRITTEN_TYPES
 
 logger = logging.getLogger(__name__)
@@ -259,19 +260,39 @@ class Memory:
         await self._get_retriever()  # connects the store + ensures schema
         return await SymbolRecall(self._store).recall(query, budget)
 
-    async def forget(self, record_id: str) -> None:
-        """Tombstone the fact or entity *record_id* so recall stops seeing it (FR-037).
+    async def forget(self, record_id: str) -> Counters:
+        """Tombstone the fact, entity or segment *record_id* (FR-037).
 
         A tombstone, never a delete: the record stays readable to a merge-log
-        replay while every retrieval path filters it out.
+        replay while every retrieval path filters it out. Forgetting a segment
+        cascades to every fact left without live evidence (edge case 8), and
+        how many that was comes back as ``facts_excluded_tombstoned``.
         """
         await self._get_retriever()  # connects the store + ensures schema
-        for label in ("FACT", "ENTITY"):
+        forgotten = str(FactState.FORGOTTEN)
+        for label in ("FACT", "ENTITY", "SEGMENT"):
             await self._store.command(
                 f"MATCH (v:{label} {{id: $id}}) SET v.state = $state",
                 id=record_id,
-                state=str(FactState.FORGOTTEN),
+                state=forgotten,
             )
+        return Counters(facts_excluded_tombstoned=await self._cascade_forget(record_id))
+
+    async def _cascade_forget(self, segment_id: str) -> int:
+        """Tombstone the facts whose only evidence was segment *segment_id*.
+
+        A no-op unless *segment_id* named a segment: a fact still asserted in a
+        live segment keeps its evidence and its state.
+        """
+        rows = await self._store.command(
+            f"MATCH (f:FACT)-[:ASSERTED_IN]->(:SEGMENT {{id: $id}}) "
+            f"OPTIONAL MATCH (f)-[:ASSERTED_IN]->(e:SEGMENT) WHERE {not_forgotten('e')} "
+            "WITH f, count(e) AS live WHERE live = 0 "
+            "SET f.state = $state RETURN count(f) AS facts",
+            id=segment_id,
+            state=str(FactState.FORGOTTEN),
+        )
+        return int(rows[0]["facts"]) if rows else 0
 
     async def doctor(self) -> dict[str, Any]:
         """Check configured backend connectivity for this runtime's namespace."""
