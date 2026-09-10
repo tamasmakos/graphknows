@@ -47,7 +47,7 @@ from graphknows.retrieval.models.context import RetrievalContext
 from graphknows.settings import get_settings
 from graphknows.storage.arcadedb._base import ArcadeStoreBase
 from graphknows.storage.arcadedb._sql import not_forgotten, quoted_list
-from graphknows.storage.arcadedb.graph_store import GraphStore
+from graphknows.storage.arcadedb.graph_store import GraphStore, name_norm
 from graphknows.storage.arcadedb.writers.fact import moment
 from graphknows.storage.embedder import embed
 
@@ -644,9 +644,12 @@ class SymbolRecall:
         """
         bound = budget or RecallBudget()
         terms = _terms(query)
+        names = _identifiers(query)
         resolved = await self._resolve(terms)
         uris = sorted(set(resolved.values()))
-        rows = await self._activate(uris) if uris else []
+        named = await self._facts_of_named(names) if names else []
+        matched = {str(row["name_norm"]) for row in named}
+        rows = [*(await self._activate(uris) if uris else []), *named]
         committed = await self._commit_candidates(_entity_ids(rows))
         pool = _facts_with_evidence(_unified(rows, committed), bound.max_evidence_per_fact)
         pool.sort(key=lambda item: -item.fact.confidence)
@@ -657,8 +660,8 @@ class SymbolRecall:
             budget=bound,
             truncated_by=_ORDERING if len(kept) < len(pool) else None,
             counters=Counters(
-                symbols_resolved=len(uris),
-                symbols_unresolved=len(set(terms) - set(resolved)),
+                symbols_resolved=len(uris) + len(matched),
+                symbols_unresolved=len(set(terms) - set(resolved)) + len(set(names) - matched),
                 facts_returned=len(kept),
                 facts_truncated_by_budget=len(pool) - len(kept),
                 merges_committed=len(committed),
@@ -727,10 +730,42 @@ class SymbolRecall:
             f"RETURN {_FACT_ROW}"
         )
 
+    async def _facts_of_named(self, names: list[str]) -> list[dict[str, Any]]:
+        """Facts the entities *names* name are the subject of (FR-032, FR-033).
+
+        The other half of resolution: a query term can name an entity outright
+        ("graphknows/memory.py") rather than a concept, and the entity's own
+        assertions are what it should pull back. The matched key rides along so
+        the counters can say which names resolved.
+        """
+        return await self._store.query(
+            "MATCH (e:ENTITY) "
+            f"WHERE e.name_norm IN {quoted_list(names)} AND {not_forgotten('e')} "
+            "MATCH (e)-[:SUBJECT_OF]->(f:FACT)-[:ASSERTED_IN]->(g:SEGMENT), "
+            "(g)-[:PART_OF]->(s:SOURCE) "
+            f"WHERE {not_forgotten('f')} AND f.is_current = true "
+            f"RETURN {_FACT_ROW}, e.name_norm AS name_norm"
+        )
+
 
 def _terms(query: str) -> list[str]:
     """The casefolded word tokens a symbol can answer to."""
     return re.findall(r"[a-z0-9][a-z0-9']*", query.casefold())
+
+
+_IDENTIFIER_SHAPED = re.compile(r"\w[_./]\w")
+"""An identifier is a term glued by an inner ``_``, ``.`` or ``/``."""
+
+
+def _identifiers(query: str) -> list[str]:
+    """The identifier-shaped terms of *query*, whole, as ``ENTITY.name_norm`` keys.
+
+    ``graphknows/memory.py`` names one entity, not four words: word tokenising
+    it loses the only symbol it could resolve to. Normalised the way ingest
+    normalises an entity name, so both directions agree on the key (FR-033).
+    """
+    tokens = (token.strip(".,;:!?()[]\"'`") for token in query.split())
+    return sorted({name_norm(token) for token in tokens if _IDENTIFIER_SHAPED.search(token)})
 
 
 def _entity_ids(rows: list[dict[str, Any]]) -> set[str]:
