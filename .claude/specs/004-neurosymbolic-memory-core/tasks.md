@@ -284,7 +284,7 @@ same way as every other row.
 
 - [X] T059 [P] [Polish] Document the packs layer, the hook integration and the merge gate in `docs/` and `README.md`
   - Verify: `pytest -q tests/test_docs_packs.py`
-- [ ] T060 [Polish] Assert every command in `quickstart.md` exists and is dispatchable, skipping `<...>` operator placeholders
+- [X] T060 [Polish] Assert every command in `quickstart.md` exists and is dispatchable, skipping `<...>` operator placeholders
   - Verify: `pytest -q tests/test_quickstart_commands.py`
 
 ---

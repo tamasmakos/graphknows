@@ -145,10 +145,10 @@ python -m evaluation identity --sample evaluation/data/identity/labelled.jsonl
 ## Phase D — The repository and its transcripts become memory (US4)
 
 ```bash
-python -m graphknows.cli ingest --namespace repo --uri file://$(pwd)/graphknows
-python -m graphknows.cli ingest --namespace repo --uri file://<a transcript>.jsonl
-python -m graphknows.cli recall --namespace repo --query "schema_version"
-python -m graphknows.cli recall --namespace repo --query "<a decision stated in that transcript>"
+python -m graphknows.cli.memory ingest --namespace repo --uri file://$(pwd)/graphknows
+python -m graphknows.cli.memory ingest --namespace repo --uri file://<a transcript>.jsonl
+python -m graphknows.cli.memory recall --namespace repo --query "schema_version"
+python -m graphknows.cli.memory recall --namespace repo --query "<a decision stated in that transcript>"
 ```
 
 **Passes when**:
