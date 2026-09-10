@@ -123,21 +123,32 @@ async def _recall_about(service: MemoryService, query: str) -> str | None:
     """Recall the facts *query*'s symbols activate, or ``None`` for nothing known."""
     if not query.strip():
         return None
-    result = await service.call_tool("memory_query", {"query": query})
+    result = await service.call_tool("memory_recall", {"query": query})
     return _render(result)
 
 
-def _render(result: Any) -> str | None:
-    """Render a recall result's fact sheet as context lines, ``None`` when it is empty.
+def _evidence_texts(fact: Any) -> list[str]:
+    """The quoted segment texts of one ``FactWithEvidence`` payload."""
+    if not isinstance(fact, dict):
+        return []
+    evidence = fact.get("evidence") or []
+    return [
+        text.strip()
+        for item in evidence
+        if isinstance(item, dict) and isinstance(text := item.get("text"), str) and text.strip()
+    ]
 
-    Only the fact sheet is injected, never the ranked hits: the sheet is what
-    the query's resolved entities pulled back, and injecting the embedding
-    neighbourhood as well would make injection similarity-keyed (FR-031).
+
+def _render(result: Any) -> str | None:
+    """Render a ``RecallResult`` payload as context lines, ``None`` when nothing is known.
+
+    Only facts the query's symbols activated are injected, quoted at the
+    evidence that asserts them (FR-009): a recall that says ``no_evidence``
+    injects nothing, so injection stays symbol-keyed (FR-031).
     """
     if not isinstance(result, dict):
         return None
-    facts = result.get("facts") or []
-    lines = [f"- {fact}" for fact in facts if isinstance(fact, str) and fact.strip()]
+    lines = [f"- {text}" for fact in result.get("facts") or [] for text in _evidence_texts(fact)]
     return "\n".join(lines) or None
 
 

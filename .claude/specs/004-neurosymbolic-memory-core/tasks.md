@@ -369,7 +369,7 @@ gated on the whole panel, never on a single row.
 **Purpose**: three gaps the live runs exposed after every task was ticked. Each was reported
 rather than quietly absorbed, and each has a runnable check.
 
-- [ ] T071 [Polish] Add the `memory_recall` MCP tool specified by `contracts/mcp-tools.md` — a thin adapter over `Memory.recall` returning `RecallResult` as JSON (`facts` with `source_uri`/`byte_range`/`text` evidence, `no_evidence`, `budget`, `truncated_by`, `counters`) — and switch `_recall_about` in `graphknows/integrations/claude_code/hooks.py` from `memory_query`'s fact sheet to it (FR-009, FR-015, SC-002)
+- [X] T071 [Polish] Add the `memory_recall` MCP tool specified by `contracts/mcp-tools.md` — a thin adapter over `Memory.recall` returning `RecallResult` as JSON (`facts` with `source_uri`/`byte_range`/`text` evidence, `no_evidence`, `budget`, `truncated_by`, `counters`) — and switch `_recall_about` in `graphknows/integrations/claude_code/hooks.py` from `memory_query`'s fact sheet to it (FR-009, FR-015, SC-002)
   - Verify: `pytest -q tests/mcp_server/test_recall_tool.py`
 - [ ] T072 [Polish] Build the repository row on real agent transcripts (FR-044): read them at runtime from the user's own Claude Code project directory rather than committing session content, keep one committed fixture carrying the real sixteen-field record shape (`uuid`, `parentUuid`, `sessionId`, `cwd`, `gitBranch`, `isSidechain`) so the loader is exercised on the shape it meets in the wild and CI stays deterministic, derive each gold answer from that transcript and `git log`, and correct `evaluation/data/repo/README.md`, which currently claims the fixtures keep bookkeeping records they do not have
   - Verify: `pytest -q tests/evaluation/test_repo_row_is_real.py`

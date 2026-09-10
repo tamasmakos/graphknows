@@ -24,6 +24,7 @@ from graphknows.server.mcp.tools.admin import (
 from graphknows.server.mcp.tools.corpus import corpus_ingest
 from graphknows.server.mcp.tools.ltm import ltm_entities, ltm_entity, memory_forget
 from graphknows.server.mcp.tools.query import memory_query
+from graphknows.server.mcp.tools.recall import memory_recall
 from graphknows.server.mcp.tools.stm import memory_flush, memory_ingest
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     "memory_forget",
     "memory_ingest",
     "memory_query",
+    "memory_recall",
     "memory_stats",
 ]
 

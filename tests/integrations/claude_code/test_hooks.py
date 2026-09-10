@@ -17,7 +17,7 @@ from graphknows.integrations.claude_code import hooks
 
 
 class FakeService:
-    """Records tool calls and answers ``memory_query`` with a canned result."""
+    """Records tool calls and answers ``memory_recall`` with a canned result."""
 
     def __init__(self, recall_result: Any) -> None:
         self.recall_result = recall_result
@@ -26,18 +26,18 @@ class FakeService:
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
         """Record the call and answer it the way the service would."""
         self.calls.append((name, arguments or {}))
-        return self.recall_result if name == "memory_query" else {"file_id": "s1"}
+        return self.recall_result if name == "memory_recall" else {"file_id": "s1"}
 
 
 def one_fact(text: str) -> dict[str, Any]:
-    """A ``memory_query`` result whose fact sheet carries exactly *text*."""
-    return {"hits": [], "total": 0, "facts": [text]}
+    """A ``memory_recall`` result whose single fact is evidenced by *text*."""
+    evidence = {"source_uri": "file:///repo/a.py", "byte_range": [0, len(text)], "text": text}
+    return {"facts": [{"fact": {"id": "f1"}, "evidence": [evidence]}], "no_evidence": False}
 
 
-# The fact sheet is empty, but the hits are not: a query that resolved no
-# symbol still has an embedding neighbourhood, and injecting it would make
-# injection similarity-keyed instead of symbol-keyed (FR-031).
-NOTHING_KNOWN = {"hits": [{"text": "some loosely similar segment"}], "total": 1, "facts": []}
+# "Nothing is known", as recall states it (FR-015) — not an empty list left to
+# be read as a successful answer.
+NOTHING_KNOWN = {"facts": [], "no_evidence": True}
 
 # One payload carrying every field the recall verbs read, so each verb has
 # something to resolve and "nothing injected" is the service's answer, not a
@@ -90,7 +90,7 @@ async def test_recall_verbs_inject_resolved_facts(
 
     output = await hooks.run_verb(verb, event, service)
 
-    assert service.calls == [("memory_query", {"query": expected_query})]
+    assert service.calls == [("memory_recall", {"query": expected_query})]
     assert output == {
         "hookSpecificOutput": {
             "hookEventName": expected_event_name,
@@ -104,7 +104,7 @@ async def test_nothing_is_injected_when_no_symbol_resolves(verb: str) -> None:
     service = FakeService(NOTHING_KNOWN)
 
     assert await hooks.run_verb(verb, FULL_EVENT, service) is None
-    assert [name for name, _ in service.calls] == ["memory_query"]
+    assert [name for name, _ in service.calls] == ["memory_recall"]
 
 
 @pytest.mark.parametrize("verb", ["context", "recall", "preview", "observe"])
