@@ -27,6 +27,7 @@ evaluation/results/*
 !evaluation/results/baseline/
 evaluation/data/*
 !evaluation/data/identity/
+!evaluation/data/repo/
 evaluation/external/
 demo_ingest.py
 demo_*.py

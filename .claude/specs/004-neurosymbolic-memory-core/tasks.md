@@ -269,7 +269,7 @@ same way as every other row.
 
 - [X] T054 [US6] Implement the repository-transcript row adapter in `evaluation/repo/` running through `evaluation/common/pipeline.py`
   - Verify: `pytest -q tests/evaluation/test_repo_row.py`
-- [ ] T055 [US6] Build the gold set in `evaluation/repo/` covering decision location, change rationale and test coverage of a symbol
+- [X] T055 [US6] Build the gold set in `evaluation/repo/` covering decision location, change rationale and test coverage of a symbol
   - Verify: `pytest -q tests/evaluation/test_repo_row_kinds.py`
 - [ ] T056 [US6] Implement `python -m evaluation panel --compare` as the merge gate — no row below `median − band`, identity precision not dropped, dead weight clean
   - Verify: `pytest -q tests/evaluation/test_panel_compare.py`
