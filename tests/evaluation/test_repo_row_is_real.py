@@ -93,7 +93,7 @@ class TestSessionsAreReadAtRunTime:
 
         document = load_units(config, limit=1, offset=0)[0].documents[0]
 
-        assert "A, replace" in document.text
+        assert "replaces the core inventory" in document.text
 
     def test_the_session_directory_defaults_to_the_harness_directory_for_this_checkout(
         self,

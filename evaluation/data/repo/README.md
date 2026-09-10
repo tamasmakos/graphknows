@@ -4,11 +4,11 @@
 [`evaluation/repo/dataset.py`](../../repo/dataset.py). One JSON object per line:
 
 ```json
-{"case_id": "repo-t021-tests", "transcript": "transcripts/68734e48-....jsonl",
- "kind": "test_coverage", "commit": "d8e1221",
- "question": "Which test guards the extras declared in pyproject.toml against MissingExtraError.KNOWN_EXTRAS?",
- "answer": "tests/test_packaging.py, changed by commit d8e1221 when the assisted extra went.",
- "evidence": ["The `[assisted]` extra name disappears from `pyproject.toml` and `MissingExtraError.KNOWN_EXTRAS` (a packaging test enforces the pair)."]}
+{"case_id": "repo-t065-tests", "transcript": "transcripts/session-fixture.jsonl",
+ "kind": "test_coverage", "commit": "8f8229a",
+ "question": "Which test guards that a pack's labels replace the core inventory rather than extend it?",
+ "answer": "tests/extraction/test_pack_guidance.py, added by commit 8f8229a.",
+ "evidence": ["tests/extraction/test_pack_guidance.py is the test that guards it - it asserts a pack's labels replace rather than extend."]}
 ```
 
 `evidence` holds the transcript sentences the answer is read off, verbatim, so
@@ -32,12 +32,18 @@ working directory>`, see `claude_code_sessions_root` in
 [`evaluation/repo/config.py`](../../repo/config.py)); session content is not
 committed.
 
-`transcripts/` holds the single exception: one excerpt of a real session in this
-repository, kept verbatim — records untouched, harness bookkeeping (`mode`,
-`permission-mode`, `file-history-snapshot`, `system`) left in beside the turns —
-so the loader is exercised on the shape it meets in the wild while CI stays
-deterministic. A gold record names a transcript; it is read from here when it is
-the committed fixture and from the session directory otherwise.
+`transcripts/` holds one fixture, `session-fixture.jsonl`, and it is **written for
+this test, not a recorded session** — committing session content would put a
+developer's working conversation into the repository's history. What it copies
+from the wild is the *shape*: the same record types in the same order, harness
+bookkeeping (`mode`, `permission-mode`, `file-history-snapshot`, `system`) beside
+the turns, and the full sixteen-field turn record (`uuid`, `parentUuid`,
+`sessionId`, `cwd`, `gitBranch`, `isSidechain`, `version`, …) that a transcript
+written as plain prose would not have. So the loader is exercised on the shape it
+meets in the wild while CI stays deterministic, and the row's real measurement
+still comes from the run-time session directory above. A gold record names a
+transcript; it is read from here when it is the committed fixture and from the
+session directory otherwise.
 
 ## Invariants
 
