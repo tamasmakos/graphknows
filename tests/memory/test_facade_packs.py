@@ -126,7 +126,7 @@ async def test_forget_tombstones_rather_than_deletes() -> None:
 
     await memory.forget("f1")
 
-    assert [params["state"] for _, params in store.commands] == ["forgotten", "forgotten"]
+    assert [params["state"] for _, params in store.commands] == ["forgotten"] * 4
     assert all("DELETE" not in cypher for cypher, _ in store.commands)
 
 

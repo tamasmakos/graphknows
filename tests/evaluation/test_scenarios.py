@@ -131,4 +131,5 @@ def test_the_cli_offers_every_gating_scenario() -> None:
         "resolve-scaling",
         "transcript-drift",
         "forget-roundtrip",
+        "hook-latency",
     }

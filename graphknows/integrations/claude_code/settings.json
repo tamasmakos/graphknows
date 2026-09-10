@@ -22,10 +22,22 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
             "command": "python -m graphknows.integrations.claude_code preview"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -m graphknows.integrations.claude_code observe"
           }
         ]
       }
@@ -35,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -m graphknows.integrations.claude_code observe"
+            "command": "python -m graphknows.integrations.claude_code remember"
           }
         ]
       }
