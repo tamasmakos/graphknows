@@ -74,9 +74,20 @@ def _messages(path: Path) -> list[dict[str, str]]:
     return messages
 
 
+def _transcript_path(config: RepoConfig, transcript: str) -> Path:
+    """Where a named transcript is read from.
+
+    The committed fixture keeps CI deterministic; every other transcript is the
+    user's own session, read from the harness's directory at run time so no
+    session content is committed.
+    """
+    committed = config.data_root / transcript
+    return committed if committed.exists() else config.sessions_root / transcript
+
+
 def _document(config: RepoConfig, transcript: str) -> EvalDocument:
     """One transcript as an ingestable document (turn-fed when configured)."""
-    messages = _messages(config.data_root / transcript)
+    messages = _messages(_transcript_path(config, transcript))
     anchor = messages[0]["timestamp"] if messages else ""
     text = clip(
         "\n".join(f"{m['role']}: {m['content']}" for m in messages), config.max_chars_per_document
