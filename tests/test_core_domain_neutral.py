@@ -40,7 +40,6 @@ PENDING_CUTOVER = frozenset(
         "memory.py",
         "models/hit.py",
         "models/ingest_options.py",
-        "storage/arcadedb/graph_store.py",
     }
 )
 

@@ -58,14 +58,14 @@ def test_a_fresh_store_has_read_nothing(store: GraphStore) -> None:
 
 
 async def test_a_read_accumulates_its_declared_types(store: GraphStore) -> None:
-    await store.next_turn_seq("sess")
-    assert store.read_types == frozenset({"TURN"})
+    await store.sources()
+    assert store.read_types == frozenset({"SOURCE"})
 
-    await store.get_chunks_by_ids(["c1"])
-    assert store.read_types == frozenset({"TURN", "CHUNK"})
+    await store.get_segments_by_ids(["g1"])
+    assert store.read_types == frozenset({"SOURCE", "SEGMENT"})
 
 
 async def test_read_types_are_per_connection(store: GraphStore) -> None:
-    await store.next_turn_seq("sess")
+    await store.sources()
     other = GraphStore(_StubClient(), db="other")  # type: ignore[arg-type]
     assert other.read_types == frozenset()

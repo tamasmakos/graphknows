@@ -36,3 +36,12 @@ class Source(BaseModel, frozen=True):
     def id(self) -> str:
         """Deterministic identity of ``uri`` at ``content_hash``."""
         return sha256(f"{self.uri}\n{self.content_hash}".encode()).hexdigest()[:16]
+
+
+def session_uri(session_id: str) -> str:
+    """The ``uri`` a conversation session is ingested under.
+
+    A session is a ``Source``; this is the one place its uri is spelled, so the
+    facade that writes it and the retriever that scopes recall to it agree.
+    """
+    return f"session:{session_id}"

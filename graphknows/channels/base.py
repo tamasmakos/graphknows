@@ -2,17 +2,17 @@
 
 A channel is owned end-to-end across the write and read paths:
 
-- ``ingest(rt, ...)`` — derive + write this channel's structure for one chunk.
+- ``populate(store, ...)`` — write this channel's structure.
 - ``collect(ctx, rt, top_k)`` — return ranked query candidates at retrieval time.
 
 Both hooks have a no-op / empty default, so a read-only channel implements just
-``collect`` and a write-only channel just ``ingest``. Adding a new signal — e.g.
-metadata extraction — is one new subclass plus one line in
-``registry.core_channels``, and it is active on both paths at once.
+``collect`` and a write-only channel just ``populate``. Adding a new signal is
+one new subclass plus one line in ``registry.core_channels``, and it is active
+on both paths at once.
 
-There is no separate promote hook: the golden layer consolidates a session in
-place rather than copying it into a second database, so everything a channel
-writes is written on the ingest path.
+Candidates are SEGMENTs — the golden unit of retrieval and of provenance —
+and every collector reaches them through the store's declared reads, so what
+a recall touched is observable (FR-040).
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ class ChannelContext:
         "emb2",
         "query",
         "session_id",
-        "state",
+        "source_ids",
         "words",
         "words_graph",
     )
@@ -47,23 +47,23 @@ class ChannelContext:
         emb2: list[float] | None,
         words: list[str],
         words_graph: list[str],
-        state: str | None = None,
+        source_ids: list[str] | None = None,
     ) -> None:
         self.query = query
         self.session_id = session_id
-        # Lifecycle filter derived from the caller's scope (raw / consolidated /
-        # None=both). The raw scope itself is not carried: nothing read it.
-        self.state = state
+        # The SOURCE ids the session resolved to — a session is a SOURCE, so
+        # scoping is by source. ``None`` is namespace-wide.
+        self.source_ids = source_ids
         self.emb = emb
         self.emb2 = emb2
         self.words = words
         self.words_graph = words_graph
-        self._resolved_entities: list[str] | None = None
+        self._resolved_entities: list[dict[str, Any]] | None = None
 
-    async def resolve_entities(self, store: Any) -> list[str]:
-        """Entity names the query tokens resolve to (cached per query).
+    async def resolve_entities(self, store: Any) -> list[dict[str, Any]]:
+        """The entities (``{id, name}``) the query tokens name, cached per query.
 
-        Consumers ask for the same names from the same ``words_graph``; the
+        Consumers ask for the same entities from the same ``words_graph``; the
         graph read is issued once and shared, and a run where nothing asks
         never touches the store.
         """
@@ -72,7 +72,7 @@ class ChannelContext:
         return self._resolved_entities
 
 
-# Collector return type: chunk_id -> (fused_score, info_dict).
+# Collector return type: segment id -> (fused_score, info_dict).
 CollectResult = dict[str, tuple[float, dict[str, Any]]]
 
 
@@ -89,25 +89,17 @@ class Channel:
     name: str = "channel"
 
     async def populate(self, store: Any, session_id: str) -> None:
-        """Write this channel's graph structure for one flushed session. No-op by default.
+        """Write this channel's graph structure for one session. No-op by default.
 
-        Called once per :meth:`graphknows.Memory.flush_memory`, AFTER the
-        session's buffered turns have been drained into CHUNK vertices and
-        before the analytics stages — the one moment custom edges to those
-        chunks can actually land on something. ``store`` is the connected
-        per-namespace GraphStore; its public ``command``/``query`` take raw
-        Cypher, so a channel can declare its own types (idempotent DDL) and
-        write set-based MERGEs in a handful of statements.
-
-        This replaces the per-chunk ``ingest`` hook, which was declared,
-        documented, and never called by anything — and whose shape was wrong
-        anyway: session-level structure (one edge per session) written per
-        chunk is N redundant round-trips for one write.
+        ``store`` is the connected per-namespace GraphStore; its public
+        ``command``/``query`` take raw Cypher, so a channel can declare its own
+        types (idempotent DDL) and write set-based MERGEs in a handful of
+        statements.
         """
         return None
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
-        """Return ranked candidates ``{chunk_id: (score, info)}``. Empty by default."""
+        """Return ranked candidates ``{segment_id: (score, info)}``. Empty by default."""
         return {}
 
 

@@ -32,7 +32,7 @@ from graphknows.models.hit import Hit
 from graphknows.models.message import Message
 from graphknows.models.report import IngestReport, RecallBudget, RecallResult
 from graphknows.models.segment import Segment, SegmentKind
-from graphknows.models.source import Source
+from graphknows.models.source import Source, session_uri
 from graphknows.packs import DomainPack, load_packs
 from graphknows.settings import Decoder, GraphKnowsSettings, MemoryMode, get_settings
 from graphknows.storage.arcadedb.writers import WRITTEN_TYPES
@@ -474,7 +474,6 @@ class Memory:
             query,
             session_id="" if cross_session else session_id,
             top_k=top_k,
-            scope=scope,
         )
         hits = _format_fused_hits(ctx.fused_results, session_id)
         facts = list(getattr(ctx, "facts", []) or [])
@@ -517,7 +516,7 @@ class Memory:
         """
         transcript = "\n".join(turn.content for turn in turns)
         source = Source(
-            uri=f"session:{session_id}",
+            uri=session_uri(session_id),
             content_hash=sha256(transcript.encode()).hexdigest(),
             mime="text/plain",
             namespace=self.namespace,
@@ -654,7 +653,7 @@ class Memory:
             await store.connect()
             try:
                 if session_id:
-                    await store.delete_session(session_id)
+                    await store.delete_source(session_uri(session_id))
                 else:
                     await store.clear_all()
                 deleted = True
