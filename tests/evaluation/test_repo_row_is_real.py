@@ -66,8 +66,15 @@ class TestGoldIsDerivedFromTheTree:
             commit = str(case.get("commit") or "")
             assert commit, f"{case['case_id']} names no commit"
             assert commit in case["answer"], f"{case['case_id']} answers without its commit"
-            found = _git("cat-file", "-e", f"{commit}^{{commit}}")
-            assert found.returncode == 0, f"{case['case_id']} names an unknown commit {commit}"
+            # Reachability, not mere existence: `cat-file -e` answers yes for any
+            # object lying around locally, so a commit that is dangling here and
+            # absent from a fresh clone passes on the author's machine and fails
+            # in CI. An ancestor of HEAD is what every checkout of this branch has.
+            reachable = _git("merge-base", "--is-ancestor", commit, "HEAD")
+            assert reachable.returncode == 0, (
+                f"{case['case_id']} names {commit}, which is not an ancestor of HEAD -- "
+                "a fresh clone of this branch would not have it"
+            )
 
 
 class TestSessionsAreReadAtRunTime:
