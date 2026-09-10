@@ -223,7 +223,7 @@ inject nothing. -->
 **Independent Test**: ingest the repository and one transcript into one namespace and recall a
 known function and a known decision with correct evidence ranges.
 
-- [ ] T047 [P] [US4] Declare `graphknows/packs/data/**/*.json` to the build backend in `pyproject.toml` and assert it in `tests/test_packaging.py`
+- [X] T047 [P] [US4] Declare `graphknows/packs/data/**/*.json` to the build backend in `pyproject.toml` and assert it in `tests/test_packaging.py`
   - Verify: `pytest -q tests/test_packaging.py -k pack_data`
 - [X] T048 [US4] Implement the `transcript-drift` scenario in `evaluation/scenarios.py`, proving a drifted record is counted and never fatal
   - Verify: `pytest -q tests/evaluation/test_transcript_drift.py`

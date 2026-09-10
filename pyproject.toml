@@ -142,6 +142,10 @@ path = "graphknows/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["graphknows"]
+# Domain packs are data, not code. `packages` ships the directory, but hatchling
+# drops anything the VCS ignores — an ignore rule matching *.json would silently
+# produce an installed package with no packs. `artifacts` force-includes them.
+artifacts = ["graphknows/packs/data/**/*.json"]
 
 [tool.hatch.build.targets.sdist]
 # `.claude` is the agent harness (skills, workflows, hooks) — version controlled so the
