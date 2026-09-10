@@ -9,6 +9,8 @@ rather than a benchmark number:
   naming both versions, instead of migrating it (SC-013).
 * ``concurrent-ingest`` — ingesting concurrently lands the same graph as
   ingesting in sequence, and neither ingest fails (SC-015).
+* ``merge-replay`` — every merge a batch decided is reconstructed, and reversed,
+  from its ``MERGED_INTO`` log alone (SC-007).
 
 Each scenario takes what it drives and returns a :class:`ScenarioResult`; the
 run outcome is :meth:`ScenarioResult.gate`, the same shape the dead-weight check
@@ -25,6 +27,13 @@ from hashlib import sha256
 from typing import Any
 
 from graphknows.exceptions import SchemaVersionMismatchError
+from graphknows.ingestion.consolidation.entity_resolution import (
+    EntityView,
+    ResolutionPlan,
+    Resolver,
+    replay,
+    undo,
+)
 from graphknows.memory import Memory
 from graphknows.models import Segment, SegmentKind, Source
 from graphknows.packs.agent import AgentPack
@@ -142,6 +151,26 @@ async def concurrent_ingest(
     return ScenarioResult("concurrent-ingest", True, f"both orders wrote {concurrent_write}")
 
 
+def merge_replay(plan: ResolutionPlan) -> ScenarioResult:
+    """Every merge of *plan* must replay, and reverse, from its log alone (SC-007).
+
+    The log is read without the entities it was decided from: replay must place
+    every merged id under a survivor, and dropping one entry must stop that
+    entry's source from resolving where the entry put it.
+    """
+    resolved = replay(plan.merges)
+    if unreplayed := [link.source_id for link in plan.merges if link.source_id not in resolved]:
+        return ScenarioResult("merge-replay", False, f"not replayed: {', '.join(unreplayed)}")
+    stuck = [
+        link.source_id
+        for link in plan.merges
+        if undo(plan.merges, link).get(link.source_id) == resolved[link.source_id]
+    ]
+    if stuck:
+        return ScenarioResult("merge-replay", False, f"not undone: {', '.join(stuck)}")
+    return ScenarioResult("merge-replay", True, f"{len(plan.merges)} merges replayed and undone")
+
+
 # Two unrelated domains in one namespace — the two-pack claim as data. Small on
 # purpose: the scenario proves the core stays domain-blind, not that extraction
 # scales. Each query names a symbol only its own pack declares — recall is
@@ -198,6 +227,21 @@ async def _schema_refusal(namespace: str) -> ScenarioResult:
     return await schema_refusal(lambda: _memory(namespace).recall("schema stamp"))
 
 
+# Three views of one normalised key, differing only in how often each was
+# observed, proposed as a chain — the smallest batch whose log is more than a
+# single entry, so replay has an order to get wrong.
+MERGE_VIEWS = {
+    f"acme{rank}": EntityView(id=f"acme{rank}", name_norm="acme", type_histogram={"org": rank})
+    for rank in (1, 2, 3)
+}
+MERGE_NEIGHBOURS = {"acme1": ["acme2"], "acme2": ["acme3"]}
+
+
+async def _merge_replay(namespace: str) -> ScenarioResult:
+    """The merge-replay claim: pure, so it needs no namespace of its own."""
+    return merge_replay(Resolver().plan(MERGE_VIEWS, MERGE_NEIGHBOURS))
+
+
 async def _concurrent_ingest(namespace: str) -> ScenarioResult:
     memories = [
         await _fresh_memory(f"{namespace}_{order}") for order in ("concurrent", "sequential")
@@ -209,6 +253,7 @@ SCENARIOS: dict[str, Callable[[str], Awaitable[ScenarioResult]]] = {
     "two-packs": _two_packs,
     "schema-refusal": lambda namespace: _schema_refusal(f"{namespace}_stale"),
     "concurrent-ingest": _concurrent_ingest,
+    "merge-replay": _merge_replay,
 }
 
 

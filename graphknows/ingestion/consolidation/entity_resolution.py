@@ -242,6 +242,33 @@ class Resolver:
         return not (left.concepts and right.concepts) or bool(left.concepts & right.concepts)
 
 
+def replay(log: Iterable[Link]) -> dict[str, str]:
+    """Where each merged id ends up, folded out of the ``MERGED_INTO`` log alone.
+
+    The log is replayed oldest decision first, then every chain is followed to
+    its end, so the result is the surviving id for each id the batch merged
+    away — the merge reconstructed without the entities it was decided from
+    (SC-007).
+    """
+    merged = {link.source_id: link.target_id for link in sorted(log, key=lambda e: e.at)}
+    return {source: _survivor(merged, source) for source in merged}
+
+
+def _survivor(merged: Mapping[str, str], source: str) -> str:
+    """The end of *source*'s merge chain: the id no entry of the log merged away."""
+    seen = source
+    for _ in range(len(merged)):
+        if (further := merged.get(seen)) is None:
+            break
+        seen = further
+    return seen
+
+
+def undo(log: Sequence[Link], entry: Link) -> dict[str, str]:
+    """The same replay with *entry* dropped: one merge reversed from the log alone."""
+    return replay(link for link in log if link != entry)
+
+
 def _link(pair: tuple[EntityView, EntityView], verdict: Verdict) -> Link:
     """*verdict* given a direction: the better-observed side survives the merge.
 

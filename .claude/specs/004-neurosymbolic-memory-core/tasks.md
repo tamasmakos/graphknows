@@ -196,7 +196,7 @@ pairwise precision and recall against the labels, and replay every merge from it
   - Verify: `pytest -q tests/ingestion/consolidation/test_candidates.py`
 - [X] T040 [US3] Rewrite `graphknows/ingestion/consolidation/entity_resolution.py` with the mention layer, veto → strong → weak ladder, type histogram and `MERGED_INTO` log written before any structural change
   - Verify: `pytest -q tests/ingestion/consolidation/test_entity_resolution_layers.py`
-- [ ] T041 [US3] Implement merge replay and undo from the `MERGED_INTO` log alone, and the `merge-replay` scenario in `evaluation/scenarios.py`
+- [X] T041 [US3] Implement merge replay and undo from the `MERGED_INTO` log alone, and the `merge-replay` scenario in `evaluation/scenarios.py`
   - Verify: `pytest -q tests/ingestion/consolidation/test_merge_replay.py`
 - [ ] T061 [US3] Resolve `SAME_AS` candidate edges at recall time in `graphknows/retrieval/retriever.py`: a recalled entity's candidates are unified into one committed entity and the commitment is reported (FR-018)
   - Verify: `pytest -q tests/retrieval/test_candidate_commit.py`
