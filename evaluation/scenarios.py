@@ -15,6 +15,8 @@ rather than a benchmark number:
   namespace ten times larger, so no full-table scan survived (SC-006).
 * ``transcript-drift`` — a transcript the parser no longer fully recognises is
   counted, never fatal, and its sound records still land (SC-014).
+* ``forget-roundtrip`` — a forgotten record leaves recall while its tombstone and
+  the merge log around it stay readable (SC-012).
 
 Each scenario takes what it drives and returns a :class:`ScenarioResult`; the
 run outcome is :meth:`ScenarioResult.gate`, the same shape the dead-weight check
@@ -43,6 +45,7 @@ from graphknows.ingestion.consolidation.entity_resolution import (
 from graphknows.ingestion.parsers.transcript import TranscriptParser
 from graphknows.memory import Memory
 from graphknows.models import Segment, SegmentKind, Source
+from graphknows.models.fact import FactState
 from graphknows.models.report import Counters
 from graphknows.packs.agent import AgentPack
 from graphknows.packs.code import CodePack
@@ -177,6 +180,53 @@ def merge_replay(plan: ResolutionPlan) -> ScenarioResult:
     if stuck:
         return ScenarioResult("merge-replay", False, f"not undone: {', '.join(stuck)}")
     return ScenarioResult("merge-replay", True, f"{len(plan.merges)} merges replayed and undone")
+
+
+@dataclass(frozen=True)
+class ForgetObservation:
+    """One forget read back: what recall says after it, and what the store still holds.
+
+    The merge log is read on both sides of the forget, so an entry a tombstone
+    took with it shows up as a shorter log instead of being lost silently.
+    """
+
+    record_id: str
+    recalled_after: tuple[str, ...]
+    state_after: str
+    merge_log_before: tuple[str, ...]
+    merge_log_after: tuple[str, ...]
+
+
+def forget_roundtrip(observed: ForgetObservation) -> ScenarioResult:
+    """A forgotten record must leave recall while the graph still reads it (SC-012).
+
+    Forget is a tombstone, so all three have to hold at once: the record is gone
+    from recall, its state still reads ``forgotten``, and the merge log is the
+    one it was before.
+    """
+    if not observed.record_id:
+        return ScenarioResult("forget-roundtrip", False, "nothing was recalled to forget")
+    if observed.record_id in observed.recalled_after:
+        return ScenarioResult("forget-roundtrip", False, f"{observed.record_id} is still recalled")
+    if observed.state_after != str(FactState.FORGOTTEN):
+        return ScenarioResult(
+            "forget-roundtrip",
+            False,
+            f"tombstone unreadable: state is {observed.state_after or 'gone'}",
+        )
+    if observed.merge_log_after != observed.merge_log_before:
+        return ScenarioResult(
+            "forget-roundtrip",
+            False,
+            f"the merge log read {len(observed.merge_log_before)} entries before the forget "
+            f"and {len(observed.merge_log_after)} after",
+        )
+    return ScenarioResult(
+        "forget-roundtrip",
+        True,
+        f"{observed.record_id} tombstoned, "
+        f"{len(observed.merge_log_after)} merge entries still readable",
+    )
 
 
 DRIFT_COUNTERS = (
@@ -345,6 +395,54 @@ async def _resolve_scaling(namespace: str) -> ScenarioResult:
     return resolve_scaling(seconds_per_batch(BASE_SIZE), seconds_per_batch(BASE_SIZE * 10))
 
 
+async def _merge_log(store: Any) -> tuple[str, ...]:
+    """The ``MERGED_INTO`` entries the namespace still reads, in a stable order."""
+    rows = await store.command(
+        "MATCH (source:ENTITY)-[:MERGED_INTO]->(survivor:ENTITY) "
+        "RETURN source.id AS source, survivor.id AS survivor"
+    )
+    return tuple(sorted(f"{row['source']}->{row['survivor']}" for row in rows))
+
+
+async def _fact_state(store: Any, record_id: str) -> str:
+    """The lifecycle state *record_id* reads as — empty when the record is gone."""
+    rows = await store.command("MATCH (f:FACT {id: $id}) RETURN f.state AS state", id=record_id)
+    return str(rows[0]["state"]) if rows else ""
+
+
+async def _observe_forget(namespace: str, probe: PackProbe) -> ForgetObservation:
+    """Ingest *probe*, forget the first fact it recalls, and read the graph around it.
+
+    The reads go through a store of their own: recall filters tombstones out by
+    design, so what forget left behind is only visible below it.
+    """
+    memory = await _fresh_memory(namespace)
+    await _ingest(memory, probe)
+    recalled = (await memory.recall(probe.query)).facts
+    if not recalled:
+        return ForgetObservation("", (), "", (), ())
+    record_id = recalled[0].fact.id
+    store = build_graph_store(get_settings(), namespace)
+    await store.connect()
+    try:
+        before = await _merge_log(store)
+        await memory.forget(record_id)
+        return ForgetObservation(
+            record_id=record_id,
+            recalled_after=tuple(item.fact.id for item in (await memory.recall(probe.query)).facts),
+            state_after=await _fact_state(store, record_id),
+            merge_log_before=before,
+            merge_log_after=await _merge_log(store),
+        )
+    finally:
+        await store.close()
+
+
+async def _forget_roundtrip(namespace: str) -> ScenarioResult:
+    """The forget claim, proved against the probe the code pack understands."""
+    return forget_roundtrip(await _observe_forget(namespace, PROBES[0]))
+
+
 async def _concurrent_ingest(namespace: str) -> ScenarioResult:
     memories = [
         await _fresh_memory(f"{namespace}_{order}") for order in ("concurrent", "sequential")
@@ -380,6 +478,7 @@ SCENARIOS: dict[str, Callable[[str], Awaitable[ScenarioResult]]] = {
     "merge-replay": _merge_replay,
     "resolve-scaling": _resolve_scaling,
     "transcript-drift": _transcript_drift,
+    "forget-roundtrip": _forget_roundtrip,
 }
 
 

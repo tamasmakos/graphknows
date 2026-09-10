@@ -249,7 +249,7 @@ end.
   - Verify: `pytest -q tests/integrations/claude_code/test_no_ml_imports.py`
 - [X] T031 [US5] Implement forget as a tombstone in the store, cascading from a forgotten `Segment` to the facts it evidences and counting `facts_excluded_tombstoned`, and expose the `memory_forget` tool in `graphknows/server/mcp/`
   - Verify: `pytest -q tests/mcp_server/test_forget_tool.py`
-- [ ] T052 [US5] Implement the `forget-roundtrip` scenario in `evaluation/scenarios.py`, proving a forgotten record vanishes from recall while its tombstone and merge log stay readable
+- [X] T052 [US5] Implement the `forget-roundtrip` scenario in `evaluation/scenarios.py`, proving a forgotten record vanishes from recall while its tombstone and merge log stay readable
   - Verify: `pytest -q tests/evaluation/test_forget_roundtrip.py`
 - [ ] T053 [P] [US5] Ship the record-versus-retrieve guidance skill and the hook settings block with `graphknows/integrations/claude_code/`
   - Verify: `pytest -q tests/integrations/claude_code/test_guidance_shipped.py`
