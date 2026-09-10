@@ -623,6 +623,10 @@ class SymbolRecall:
     ``ENTITY-[INSTANCE_OF]->CONCEPT`` — for its candidates. What comes back is
     facts with the evidence asserting them, never segments (FR-009) and never a
     fact without its source (SC-002), cut to a budget the caller stated (FR-010).
+
+    Recall is also where deferred identity is settled: a recalled entity's
+    ``SAME_AS_CANDIDATE`` edges commit to one entity, and the commitment is
+    counted in the result (FR-018).
     """
 
     def __init__(self, store: ArcadeStoreBase) -> None:
@@ -643,7 +647,8 @@ class SymbolRecall:
         resolved = await self._resolve(terms)
         uris = sorted(set(resolved.values()))
         rows = await self._activate(uris) if uris else []
-        pool = _facts_with_evidence(rows, bound.max_evidence_per_fact)
+        committed = await self._commit_candidates(_entity_ids(rows))
+        pool = _facts_with_evidence(_unified(rows, committed), bound.max_evidence_per_fact)
         pool.sort(key=lambda item: -item.fact.confidence)
         kept = pool[: bound.max_facts]
         return RecallResult(
@@ -656,6 +661,7 @@ class SymbolRecall:
                 symbols_unresolved=len(set(terms) - set(resolved)),
                 facts_returned=len(kept),
                 facts_truncated_by_budget=len(pool) - len(kept),
+                merges_committed=len(committed),
             ),
         )
 
@@ -675,6 +681,23 @@ class SymbolRecall:
             if label in wanted:
                 resolved[label] = str(row["uri"])
         return resolved
+
+    async def _commit_candidates(self, entity_ids: set[str]) -> dict[str, str]:
+        """Commit the ``SAME_AS_CANDIDATE`` edges of the recalled entities (FR-018).
+
+        Ingest defers weak identity evidence to recall; this is where it is
+        answered. Returns ``{recalled id: the one entity its candidates commit
+        to}``, which is what makes the candidate plane read as well as written.
+        """
+        if not entity_ids:
+            return {}
+        rows = await self._store.query(
+            "MATCH (e:ENTITY)-[c:SAME_AS_CANDIDATE]->(o:ENTITY) "
+            f"WHERE e.id IN {quoted_list(sorted(entity_ids))} "
+            f"AND {not_forgotten('e')} AND {not_forgotten('o')} "
+            "RETURN e.id AS source, o.id AS target, c.at AS at"
+        )
+        return _commitment(rows)
 
     async def _activate(self, uris: list[str]) -> list[dict[str, Any]]:
         """Every fact the activated concepts reach, by either labelling edge."""
@@ -708,6 +731,52 @@ class SymbolRecall:
 def _terms(query: str) -> list[str]:
     """The casefolded word tokens a symbol can answer to."""
     return re.findall(r"[a-z0-9][a-z0-9']*", query.casefold())
+
+
+def _entity_ids(rows: list[dict[str, Any]]) -> set[str]:
+    """The entities the activated facts stand between."""
+    return {str(row[side]) for row in rows for side in ("subject", "object") if row.get(side)}
+
+
+def _commitment(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Fold candidate edges into one committed entity per chain, oldest edge first.
+
+    The edge's direction is the one identity resolution decided when it wrote
+    the candidate, so a chain is followed to the end rather than re-decided.
+    """
+    proposed = {
+        str(row["source"]): str(row["target"])
+        for row in sorted(rows, key=lambda row: str(row.get("at") or ""))
+        if row.get("source") and row.get("target")
+    }
+    return {source: _committed_to(proposed, source) for source in proposed}
+
+
+def _committed_to(proposed: dict[str, str], source: str) -> str:
+    """The end of *source*'s candidate chain: the id no candidate edge leaves."""
+    seen = source
+    for _ in range(len(proposed)):
+        if (further := proposed.get(seen)) is None:
+            break
+        seen = further
+    return seen
+
+
+def _unified(rows: list[dict[str, Any]], committed: dict[str, str]) -> list[dict[str, Any]]:
+    """*rows* with every committed entity id replaced by the id it committed to."""
+    if not committed:
+        return rows
+    return [
+        {
+            **row,
+            **{
+                side: committed[value]
+                for side in ("subject", "object")
+                if (value := str(row.get(side) or "")) in committed
+            },
+        }
+        for row in rows
+    ]
 
 
 def _facts_with_evidence(rows: list[dict[str, Any]], max_evidence: int) -> list[FactWithEvidence]:

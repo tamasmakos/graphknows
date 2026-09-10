@@ -198,7 +198,7 @@ pairwise precision and recall against the labels, and replay every merge from it
   - Verify: `pytest -q tests/ingestion/consolidation/test_entity_resolution_layers.py`
 - [X] T041 [US3] Implement merge replay and undo from the `MERGED_INTO` log alone, and the `merge-replay` scenario in `evaluation/scenarios.py`
   - Verify: `pytest -q tests/ingestion/consolidation/test_merge_replay.py`
-- [ ] T061 [US3] Resolve `SAME_AS` candidate edges at recall time in `graphknows/retrieval/retriever.py`: a recalled entity's candidates are unified into one committed entity and the commitment is reported (FR-018)
+- [X] T061 [US3] Resolve `SAME_AS` candidate edges at recall time in `graphknows/retrieval/retriever.py`: a recalled entity's candidates are unified into one committed entity and the commitment is reported (FR-018)
   - Verify: `pytest -q tests/retrieval/test_candidate_commit.py`
 <!-- T070 added 2026-09-10: measured on the live database — SymbolRecall._resolve matches CONCEPT
 labels only and _terms() splits on word boundaries, so a query naming an entity ("load_packs",
