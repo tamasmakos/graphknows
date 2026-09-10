@@ -200,6 +200,12 @@ pairwise precision and recall against the labels, and replay every merge from it
   - Verify: `pytest -q tests/ingestion/consolidation/test_merge_replay.py`
 - [ ] T061 [US3] Resolve `SAME_AS` candidate edges at recall time in `graphknows/retrieval/retriever.py`: a recalled entity's candidates are unified into one committed entity and the commitment is reported (FR-018)
   - Verify: `pytest -q tests/retrieval/test_candidate_commit.py`
+<!-- T070 added 2026-09-10: measured on the live database — SymbolRecall._resolve matches CONCEPT
+labels only and _terms() splits on word boundaries, so a query naming an entity ("load_packs",
+"graphknows/memory.py") resolves to nothing and the symbol-keyed hooks (FR-032, FR-033) would
+inject nothing. -->
+- [ ] T070 [US3] Resolve query terms to entities as well as concepts in `graphknows/retrieval/retriever.py`: keep identifier-shaped terms whole (snake_case, dotted paths, slashes), match them against `ENTITY.name_norm` through the same normalisation ingest uses, and activate the facts those entities are subject of (FR-032, FR-033)
+  - Verify: `pytest -q tests/retrieval/test_entity_resolution_recall.py`
 - [ ] T042 [US3] Implement the `resolve-scaling` scenario in `evaluation/scenarios.py`, failing when per-batch wall clock at ten times the namespace size is not under twice the base (SC-006)
   - Verify: `pytest -q tests/evaluation/test_resolve_scaling.py`
 
