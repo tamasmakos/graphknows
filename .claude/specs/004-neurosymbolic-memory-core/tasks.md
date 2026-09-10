@@ -192,7 +192,7 @@ pairwise precision and recall against the labels, and replay every merge from it
 
 - [X] T038 [P] [US3] Implement blocking keys (`name_norm[:4]` + dominant type) in `graphknows/ingestion/consolidation/blocking.py`
   - Verify: `pytest -q tests/ingestion/consolidation/test_blocking.py`
-- [ ] T039 [P] [US3] Implement bounded vector-index candidate generation with a `candidates_truncated` counter in `graphknows/ingestion/consolidation/candidates.py`
+- [X] T039 [P] [US3] Implement bounded vector-index candidate generation with a `candidates_truncated` counter in `graphknows/ingestion/consolidation/candidates.py`
   - Verify: `pytest -q tests/ingestion/consolidation/test_candidates.py`
 - [ ] T040 [US3] Rewrite `graphknows/ingestion/consolidation/entity_resolution.py` with the mention layer, veto → strong → weak ladder, type histogram and `MERGED_INTO` log written before any structural change
   - Verify: `pytest -q tests/ingestion/consolidation/test_entity_resolution_layers.py`
