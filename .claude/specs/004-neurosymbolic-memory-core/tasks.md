@@ -245,7 +245,7 @@ end.
   - Verify: `pytest -q tests/integrations/claude_code/test_hooks.py`
 - [X] T050 [US5] Implement per-transcript checkpointing by record `uuid` in `graphknows/integrations/claude_code/hooks.py`, never advancing past a malformed trailing record
   - Verify: `pytest -q tests/integrations/claude_code/test_checkpoint.py`
-- [ ] T051 [P] [US5] Add the subprocess test asserting `torch`, `transformers`, `spacy`, `sentence_transformers` and `gliner` are absent from `sys.modules` after importing the hook module, at `tests/integrations/claude_code/test_no_ml_imports.py`
+- [X] T051 [P] [US5] Add the subprocess test asserting `torch`, `transformers`, `spacy`, `sentence_transformers` and `gliner` are absent from `sys.modules` after importing the hook module, at `tests/integrations/claude_code/test_no_ml_imports.py`
   - Verify: `pytest -q tests/integrations/claude_code/test_no_ml_imports.py`
 - [ ] T031 [US5] Implement forget as a tombstone in the store, cascading from a forgotten `Segment` to the facts it evidences and counting `facts_excluded_tombstoned`, and expose the `memory_forget` tool in `graphknows/server/mcp/`
   - Verify: `pytest -q tests/mcp_server/test_forget_tool.py`
