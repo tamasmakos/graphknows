@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from evaluation.common.baseline import _ROW_MODULES
+from evaluation.common.baseline import ROW_MODULES
 from evaluation.common.datamodels import EvalCase, IngestUnit, RetrievedPassage
 from evaluation.common.pipeline import BenchmarkAdapter
 from evaluation.repo.adapter import RepoAdapter
@@ -142,7 +142,7 @@ class TestRepoDataset:
 class TestRepoAdapter:
     def test_runs_through_the_shared_pipeline_and_joins_the_panel(self) -> None:
         assert issubclass(RepoAdapter, BenchmarkAdapter)
-        assert _ROW_MODULES["repo"] == "evaluation.repo.cli"
+        assert ROW_MODULES["repo"] == "evaluation.repo.cli"
 
     @pytest.mark.asyncio
     async def test_answer_extracts_after_marker(self) -> None:

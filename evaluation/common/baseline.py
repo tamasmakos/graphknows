@@ -29,20 +29,20 @@ from evaluation.common.reporting import BaselineMetric, PanelRow
 
 # Row -> the benchmark CLI whose `run_one` drives it, as `evaluation.__main__`
 # maps commands to modules. The metrics a baseline records, per row.
-_ROW_MODULES = {
+ROW_MODULES = {
     "locomo": "evaluation.locomo.cli",
     "longmem": "evaluation.longmem.cli",
     "beam": "evaluation.beam.cli",
     "repo": "evaluation.repo.cli",
 }
-_EXTRACTORS = {"llm_free": "local", "llm_assisted": "llm"}
+EXTRACTORS = {"llm_free": "local", "llm_assisted": "llm"}
 _METRICS = ("accuracy", "evidence_recall")
 _DEFAULT_OUT = Path(__file__).resolve().parents[2] / "evaluation" / "results" / "baseline"
 
 
-def _row_list(value: str) -> list[str]:
+def row_list(value: str) -> list[str]:
     rows = [row.strip() for row in value.split(",") if row.strip()]
-    if unknown := sorted(set(rows) - set(_ROW_MODULES)):
+    if unknown := sorted(set(rows) - set(ROW_MODULES)):
         raise argparse.ArgumentTypeError(f"unknown rows: {', '.join(unknown)}")
     return rows
 
@@ -51,33 +51,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="evaluation baseline", description=__doc__)
     parser.add_argument(
         "--rows",
-        type=_row_list,
-        default=list(_ROW_MODULES),
-        help=f"Comma-separated panel rows ({', '.join(_ROW_MODULES)}).",
+        type=row_list,
+        default=list(ROW_MODULES),
+        help=f"Comma-separated panel rows ({', '.join(ROW_MODULES)}).",
     )
     parser.add_argument("--repeats", type=int, default=3, help="Runs per row (contract: 3).")
     parser.add_argument("--limit", type=int, default=1, help="Questions per row and run.")
-    parser.add_argument("--mode", choices=sorted(_EXTRACTORS), default="llm_free")
+    parser.add_argument("--mode", choices=sorted(EXTRACTORS), default="llm_free")
     parser.add_argument(
         "--out", type=Path, default=_DEFAULT_OUT, help="Where the rows are written."
     )
     return parser
 
 
-def _head_commit() -> str:
+def head_commit() -> str:
     """The commit the baseline is recorded against."""
     proc = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
     return proc.stdout.strip()
 
 
-async def _run_row(row: str, args: argparse.Namespace, *, reuse_ingest: bool = False) -> PanelRow:
+async def run_row(row: str, args: argparse.Namespace, *, reuse_ingest: bool = False) -> PanelRow:
     """Run one row once and report it in the panel's row shape.
 
     ``reuse_ingest`` answers repeats two and three against the graph repeat one
     built: the band measures generation and judge noise, not re-ingest.
     """
-    extractor = _EXTRACTORS[args.mode]
-    module = importlib.import_module(_ROW_MODULES[row])
+    extractor = EXTRACTORS[args.mode]
+    module = importlib.import_module(ROW_MODULES[row])
     ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     try:
         run, _paths = await module.run_one(args.mode, args.limit, 0, ts, reuse_ingest=reuse_ingest)
@@ -97,7 +97,7 @@ async def _run_row(row: str, args: argparse.Namespace, *, reuse_ingest: bool = F
     )
 
 
-def _record(repeats: list[PanelRow], commit: str) -> dict[str, Any]:
+def record_row(repeats: list[PanelRow], commit: str) -> dict[str, Any]:
     """Collapse a row's repeated runs into one baseline record per metric."""
     last = repeats[-1]
     record: dict[str, Any] = {
@@ -117,12 +117,12 @@ async def amain(argv: list[str] | None = None) -> int:
     load_dotenv(override=True)
     args = build_parser().parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
-    commit = _head_commit()
+    commit = head_commit()
 
     for row in args.rows:
-        repeats = [await _run_row(row, args, reuse_ingest=i > 0) for i in range(args.repeats)]
+        repeats = [await run_row(row, args, reuse_ingest=i > 0) for i in range(args.repeats)]
         path = args.out / f"{row}.json"
-        path.write_text(json.dumps(_record(repeats, commit), indent=2), encoding="utf-8")
+        path.write_text(json.dumps(record_row(repeats, commit), indent=2), encoding="utf-8")
         print(f"[baseline] {row}: {args.repeats} runs -> {path}")
     return 0
 

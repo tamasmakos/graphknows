@@ -42,7 +42,7 @@ def fake_rows(monkeypatch):
     async def run_one(mode, limit, offset, ts, **kwargs):
         return _report(next(accuracies)), None
 
-    monkeypatch.setattr(baseline, "_head_commit", lambda: "abc123")
+    monkeypatch.setattr(baseline, "head_commit", lambda: "abc123")
     monkeypatch.setattr(
         baseline.importlib, "import_module", lambda name: SimpleNamespace(run_one=run_one)
     )
@@ -66,11 +66,11 @@ def test_each_row_is_written_with_median_band_runs_and_commit(fake_rows, tmp_pat
     assert record["evidence_recall"]["runs"] == [0.9, 0.9, 0.9]
 
 
-def test_a_row_that_cannot_run_is_recorded_not_omitted(monkeypatch, tmp_path) -> None:
+def test_a_row_that_cannot_run_isrecorded_not_omitted(monkeypatch, tmp_path) -> None:
     async def run_one(mode, limit, offset, ts, **kwargs):
         raise FileNotFoundError("corpus not downloaded")
 
-    monkeypatch.setattr(baseline, "_head_commit", lambda: "abc123")
+    monkeypatch.setattr(baseline, "head_commit", lambda: "abc123")
     monkeypatch.setattr(
         baseline.importlib, "import_module", lambda name: SimpleNamespace(run_one=run_one)
     )
