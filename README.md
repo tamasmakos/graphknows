@@ -138,6 +138,13 @@ episode → `flush_memory`) covers any framework — see
 [docs/integrations.md](https://github.com/tamasmakos/graphknows/blob/main/docs/integrations.md) and
 [examples/langgraph_agent.py](https://github.com/tamasmakos/graphknows/blob/main/examples/langgraph_agent.py).
 
+Domain vocabulary is data, not code: a **domain pack** supplies the concepts,
+predicates, labels and identity rules of one domain, and `load_packs` merges
+them all-or-nothing — see
+[docs/packs.md](https://github.com/tamasmakos/graphknows/blob/main/docs/packs.md).
+For Claude Code, the shipped hook block maps each event to one verb of `python -m
+graphknows.integrations.claude_code`.
+
 
 ### LangGraph
 
@@ -197,6 +204,7 @@ Full index: **[docs/](https://github.com/tamasmakos/graphknows/blob/main/docs/RE
 - [docs/architecture.md](https://github.com/tamasmakos/graphknows/blob/main/docs/architecture.md) — lifecycle states, consolidation, RRF retrieval
 - [docs/modes.md](https://github.com/tamasmakos/graphknows/blob/main/docs/modes.md) — llm_free vs llm_assisted
 - [docs/ontology.md](https://github.com/tamasmakos/graphknows/blob/main/docs/ontology.md) — the bundled CCO ontology, and injecting your own
+- [docs/packs.md](https://github.com/tamasmakos/graphknows/blob/main/docs/packs.md) — domain packs: the shipped code and agent vocabularies
 - [docs/configuration.md](https://github.com/tamasmakos/graphknows/blob/main/docs/configuration.md) — full settings reference
 - [docs/integrations.md](https://github.com/tamasmakos/graphknows/blob/main/docs/integrations.md) — framework integration recipe
 - [docs/multi-tenancy.md](https://github.com/tamasmakos/graphknows/blob/main/docs/multi-tenancy.md) — namespaces, isolation and scaling

@@ -52,6 +52,41 @@ store = GraphKnowsStore(memory)          # namespace tuple → session_id
 app = graph.compile(store=store)         # store.search → recall_memory
 ```
 
+## Claude Code hooks (shipped)
+
+The hook integration wires each Claude Code event to one verb of
+`python -m graphknows.integrations.claude_code`. Each verb reads the hook event
+as JSON on stdin and writes a `hookSpecificOutput` block on stdout, or nothing
+at all:
+
+| Event | Verb | What it does |
+| --- | --- | --- |
+| `SessionStart` | `context` | Opens the session with what memory already holds. |
+| `UserPromptSubmit` | `recall` | Injects the facts the prompt's symbols activate. |
+| `PreToolUse` (Edit, Write) | `preview` | Surfaces what memory knows about what is about to change. |
+| `PostToolUse` (Read, Grep) | `observe` | Records what the session looked at. |
+| `Stop` | `remember` | Ingests the turns added since the last checkpoint. |
+| `PreCompact` | `catchup` | Ingests the transcript before the harness compacts it. |
+
+Injection is symbol-keyed: a query that resolves to no symbol injects nothing,
+so an unrelated prompt costs no context. The hook process reaches memory only
+over `graphknows.integrations.client`, so it loads no machine-learning
+dependency and stays fast enough to run on every prompt.
+
+Both data files ship inside the wheel, readable without a checkout:
+
+```python
+from graphknows.integrations.claude_code import guidance, settings_block
+
+settings_block()   # the hook block to merge into a Claude Code settings.json
+guidance()         # the skill telling an agent when to record and when to retrieve
+```
+
+A transcript is still being appended to while the session that writes it fires
+its `Stop` and `PreCompact` hooks, so reading stops at the first line that is
+not whole JSON and the checkpoint only ever names a whole record — the
+half-written line is picked up on the next event, and no turn is ingested twice.
+
 ## Claude Agent SDK (sketch)
 
 Claude Code / the Agent SDK already speak MCP, so the cleanest integration is
