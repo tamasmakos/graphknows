@@ -243,7 +243,7 @@ end.
 
 - [ ] T049 [US5] Implement the `context`, `recall`, `preview`, `observe`, `remember` and `catchup` verbs in `graphknows/integrations/claude_code/hooks.py`, talking only to the service through `graphknows/integrations/client/`
   - Verify: `pytest -q tests/integrations/claude_code/test_hooks.py`
-- [ ] T050 [US5] Implement per-transcript checkpointing by record `uuid` in `graphknows/integrations/claude_code/hooks.py`, never advancing past a malformed trailing record
+- [X] T050 [US5] Implement per-transcript checkpointing by record `uuid` in `graphknows/integrations/claude_code/hooks.py`, never advancing past a malformed trailing record
   - Verify: `pytest -q tests/integrations/claude_code/test_checkpoint.py`
 - [ ] T051 [P] [US5] Add the subprocess test asserting `torch`, `transformers`, `spacy`, `sentence_transformers` and `gliner` are absent from `sys.modules` after importing the hook module, at `tests/integrations/claude_code/test_no_ml_imports.py`
   - Verify: `pytest -q tests/integrations/claude_code/test_no_ml_imports.py`
