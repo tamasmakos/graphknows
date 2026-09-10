@@ -190,7 +190,7 @@ scenarios pass; dialogue rows report not-run and the repository row joins the ga
 **Independent Test**: ingest a corpus with known duplicates and known distinct entities, check
 pairwise precision and recall against the labels, and replay every merge from its log.
 
-- [ ] T038 [P] [US3] Implement blocking keys (`name_norm[:4]` + dominant type) in `graphknows/ingestion/consolidation/blocking.py`
+- [X] T038 [P] [US3] Implement blocking keys (`name_norm[:4]` + dominant type) in `graphknows/ingestion/consolidation/blocking.py`
   - Verify: `pytest -q tests/ingestion/consolidation/test_blocking.py`
 - [ ] T039 [P] [US3] Implement bounded vector-index candidate generation with a `candidates_truncated` counter in `graphknows/ingestion/consolidation/candidates.py`
   - Verify: `pytest -q tests/ingestion/consolidation/test_candidates.py`
