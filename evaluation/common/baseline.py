@@ -33,6 +33,7 @@ _ROW_MODULES = {
     "locomo": "evaluation.locomo.cli",
     "longmem": "evaluation.longmem.cli",
     "beam": "evaluation.beam.cli",
+    "repo": "evaluation.repo.cli",
 }
 _EXTRACTORS = {"llm_free": "local", "llm_assisted": "llm"}
 _METRICS = ("accuracy", "evidence_recall")

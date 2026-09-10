@@ -1,6 +1,7 @@
 """Command dispatcher: ``python -m evaluation <command> [flags]``.
 
-Benchmarks: ``locomo`` (default), ``longmem`` (LongMemEval), ``beam`` (BEAM).
+Benchmarks: ``locomo`` (default), ``longmem`` (LongMemEval), ``beam`` (BEAM) and
+``repo`` (this repository's own agent transcripts).
 Also ``audit`` — the stratified triplet audit, which measures graph quality
 directly rather than through a benchmark — and the harness commands
 ``baseline``, ``panel``, ``deadweight``, ``identity``, ``scenario`` and
@@ -16,7 +17,7 @@ import importlib
 import sys
 
 # command name -> the module whose `main(argv)` drives it. Only `locomo`,
-# `longmem` and `beam` are benchmarks; the rest measure the core directly
+# `longmem`, `beam` and `repo` are benchmarks; the rest measure the core directly
 # (graph quality, panel gate, dead weight, identity, scenarios) or provision
 # corpora. They all dispatch identically, so one table serves them all rather
 # than growing a second entry point.
@@ -24,6 +25,7 @@ _COMMANDS = {
     "locomo": "evaluation.locomo.cli",
     "longmem": "evaluation.longmem.cli",
     "beam": "evaluation.beam.cli",
+    "repo": "evaluation.repo.cli",
     "audit": "evaluation.audit.cli",
     "baseline": "evaluation.common.baseline",
     "panel": "evaluation.common.panel",

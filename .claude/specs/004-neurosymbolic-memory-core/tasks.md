@@ -267,7 +267,7 @@ same way as every other row.
 
 **Independent Test**: run the new row end to end and get a report with the same metric shape.
 
-- [ ] T054 [US6] Implement the repository-transcript row adapter in `evaluation/repo/` running through `evaluation/common/pipeline.py`
+- [X] T054 [US6] Implement the repository-transcript row adapter in `evaluation/repo/` running through `evaluation/common/pipeline.py`
   - Verify: `pytest -q tests/evaluation/test_repo_row.py`
 - [ ] T055 [US6] Build the gold set in `evaluation/repo/` covering decision location, change rationale and test coverage of a symbol
   - Verify: `pytest -q tests/evaluation/test_repo_row_kinds.py`
