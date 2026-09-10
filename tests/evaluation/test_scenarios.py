@@ -122,5 +122,11 @@ class TestConcurrentIngest:
         assert "lock timeout" in result.detail
 
 
-def test_the_cli_offers_exactly_the_three_gating_scenarios() -> None:
-    assert set(SCENARIOS) == {"two-packs", "schema-refusal", "concurrent-ingest"}
+def test_the_cli_offers_every_gating_scenario() -> None:
+    assert set(SCENARIOS) == {
+        "two-packs",
+        "schema-refusal",
+        "concurrent-ingest",
+        "merge-replay",
+        "resolve-scaling",
+    }

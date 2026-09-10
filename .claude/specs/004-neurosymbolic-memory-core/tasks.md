@@ -164,6 +164,9 @@ frame types before T027/T029 leaves their readers dangling. They are cutover del
   - Verify: `pytest -q tests/memory/test_cutover.py`
 - [X] T063 [Cutover] Implement exact-key-only identity on the cut-over core — no `MERGED_INTO` and no `SAME_AS` edge is written — and the cutover-report line that states it (FR-048)
   - Verify: `pytest -q tests/ingestion/consolidation/test_exact_key_interim.py`
+<!-- T063's interim guard (tests/ingestion/consolidation/test_exact_key_interim.py, the
+EXACT_KEY_ONLY banner) was deleted on 2026-09-10 when T040 landed: FR-048 scopes exact-key-only
+identity to the window *between cutover and the identity story*, and that window closed. -->
 <!-- T066-T068 added 2026-09-10: the cutover run (T037) deleted modules but left the old core's
 read/write paths inside graph_store.py, memory.py and retriever.py; tests/storage/test_read_types.py
 (T014) is the signal — 24 read methods still declare CHUNK/TURN/FRAME types the golden schema no

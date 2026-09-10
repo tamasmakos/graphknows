@@ -23,8 +23,6 @@ CORE = Path(graphknows.__file__).resolve().parent
 DELETED_MODULES = (
     "graphknows.symbolic.wordnet",
     "graphknows.worth",
-    "graphknows.ingestion.consolidation",
-    "graphknows.ingestion.consolidation.entity_resolution",
 )
 
 KEPT_MODULES = ("graphknows.bounds", "graphknows.nlp", "graphknows.linguistics")
@@ -46,7 +44,6 @@ def test_no_module_still_imports_the_deleted_core() -> None:
     dead_names = (
         "graphknows.worth",
         "graphknows.symbolic.wordnet",
-        "graphknows.ingestion.consolidation",
         "worth_extracting",
     )
     offenders = {
