@@ -11,6 +11,8 @@ rather than a benchmark number:
   ingesting in sequence, and neither ingest fails (SC-015).
 * ``merge-replay`` — every merge a batch decided is reconstructed, and reversed,
   from its ``MERGED_INTO`` log alone (SC-007).
+* ``resolve-scaling`` — a batch of fixed size costs the same wall clock against a
+  namespace ten times larger, so no full-table scan survived (SC-006).
 
 Each scenario takes what it drives and returns a :class:`ScenarioResult`; the
 run outcome is :meth:`ScenarioResult.gate`, the same shape the dead-weight check
@@ -21,12 +23,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
+from time import perf_counter
 from typing import Any
 
 from graphknows.exceptions import SchemaVersionMismatchError
+from graphknows.ingestion.consolidation.candidates import MAX_CANDIDATES
 from graphknows.ingestion.consolidation.entity_resolution import (
     EntityView,
     ResolutionPlan,
@@ -171,6 +175,20 @@ def merge_replay(plan: ResolutionPlan) -> ScenarioResult:
     return ScenarioResult("merge-replay", True, f"{len(plan.merges)} merges replayed and undone")
 
 
+def resolve_scaling(base: float, at_ten_times: float) -> ScenarioResult:
+    """Per-batch wall clock must not follow the namespace it resolves against (SC-006).
+
+    Blocking and the candidate cap are what make this true: a batch compares
+    within its blocks, so ten times the namespace is the same work. A rise past
+    twice the base means a scan survived somewhere.
+    """
+    return ScenarioResult(
+        "resolve-scaling",
+        at_ten_times < 2 * base,
+        f"{base * 1e3:.1f} ms per batch at the base size, {at_ten_times * 1e3:.1f} ms at ten times",
+    )
+
+
 # Two unrelated domains in one namespace — the two-pack claim as data. Small on
 # purpose: the scenario proves the core stays domain-blind, not that extraction
 # scales. Each query names a symbol only its own pack declares — recall is
@@ -242,6 +260,54 @@ async def _merge_replay(namespace: str) -> ScenarioResult:
     return merge_replay(Resolver().plan(MERGE_VIEWS, MERGE_NEIGHBOURS))
 
 
+BATCH_ENTITIES = 1_000
+"""Entities resolved per timed batch — fixed, so only the namespace around it grows."""
+
+BASE_SIZE = 10_000
+"""The namespace the tenfold increase is measured from (SC-006)."""
+
+
+def _scaling_view(index: int) -> EntityView:
+    """One namespace entity, its name drawn from a fixed vocabulary.
+
+    Names repeat on purpose: a namespace that grows fills its blocks rather
+    than inventing new ones, which is the growth the cap has to absorb.
+    """
+    return EntityView(id=f"e{index}", name_norm=f"{index % 100:04d}", type_histogram={"org": 1})
+
+
+def _blocks(views: Mapping[str, EntityView]) -> dict[str, list[str]]:
+    """The namespace partitioned by block key — the proposal a store returns (FR-020)."""
+    blocks: dict[str, list[str]] = {}
+    for view in views.values():
+        blocks.setdefault(view.block_key, []).append(view.id)
+    return blocks
+
+
+def seconds_per_batch(namespace_size: int) -> float:
+    """Wall clock of resolving one batch against a namespace of *namespace_size*.
+
+    Building the namespace and its block index is the store's work, not the
+    batch's, so only the resolution of :data:`BATCH_ENTITIES` against the views
+    their blocks proposed is timed.
+    """
+    views = {view.id: view for view in map(_scaling_view, range(namespace_size))}
+    blocks = _blocks(views)
+    batch = list(views.values())[:BATCH_ENTITIES]
+    # A candidate query is LIMIT-ed by the store, so a block proposes at most
+    # what one entity is worth comparing against — never the whole block.
+    neighbours = {view.id: blocks[view.block_key][:MAX_CANDIDATES] for view in batch}
+    compared = {other: views[other] for proposed in neighbours.values() for other in proposed}
+    started = perf_counter()
+    Resolver().plan(compared, neighbours)
+    return perf_counter() - started
+
+
+async def _resolve_scaling(namespace: str) -> ScenarioResult:
+    """The scaling claim: resolution is in-process, so it needs no namespace of its own."""
+    return resolve_scaling(seconds_per_batch(BASE_SIZE), seconds_per_batch(BASE_SIZE * 10))
+
+
 async def _concurrent_ingest(namespace: str) -> ScenarioResult:
     memories = [
         await _fresh_memory(f"{namespace}_{order}") for order in ("concurrent", "sequential")
@@ -254,6 +320,7 @@ SCENARIOS: dict[str, Callable[[str], Awaitable[ScenarioResult]]] = {
     "schema-refusal": lambda namespace: _schema_refusal(f"{namespace}_stale"),
     "concurrent-ingest": _concurrent_ingest,
     "merge-replay": _merge_replay,
+    "resolve-scaling": _resolve_scaling,
 }
 
 

@@ -206,7 +206,7 @@ labels only and _terms() splits on word boundaries, so a query naming an entity 
 inject nothing. -->
 - [X] T070 [US3] Resolve query terms to entities as well as concepts in `graphknows/retrieval/retriever.py`: keep identifier-shaped terms whole (snake_case, dotted paths, slashes), match them against `ENTITY.name_norm` through the same normalisation ingest uses, and activate the facts those entities are subject of (FR-032, FR-033)
   - Verify: `pytest -q tests/retrieval/test_entity_resolution_recall.py`
-- [ ] T042 [US3] Implement the `resolve-scaling` scenario in `evaluation/scenarios.py`, failing when per-batch wall clock at ten times the namespace size is not under twice the base (SC-006)
+- [X] T042 [US3] Implement the `resolve-scaling` scenario in `evaluation/scenarios.py`, failing when per-batch wall clock at ten times the namespace size is not under twice the base (SC-006)
   - Verify: `pytest -q tests/evaluation/test_resolve_scaling.py`
 
 **Checkpoint**: SC-006 and SC-007 hold.
