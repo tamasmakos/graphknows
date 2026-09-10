@@ -194,7 +194,7 @@ pairwise precision and recall against the labels, and replay every merge from it
   - Verify: `pytest -q tests/ingestion/consolidation/test_blocking.py`
 - [X] T039 [P] [US3] Implement bounded vector-index candidate generation with a `candidates_truncated` counter in `graphknows/ingestion/consolidation/candidates.py`
   - Verify: `pytest -q tests/ingestion/consolidation/test_candidates.py`
-- [ ] T040 [US3] Rewrite `graphknows/ingestion/consolidation/entity_resolution.py` with the mention layer, veto → strong → weak ladder, type histogram and `MERGED_INTO` log written before any structural change
+- [X] T040 [US3] Rewrite `graphknows/ingestion/consolidation/entity_resolution.py` with the mention layer, veto → strong → weak ladder, type histogram and `MERGED_INTO` log written before any structural change
   - Verify: `pytest -q tests/ingestion/consolidation/test_entity_resolution_layers.py`
 - [ ] T041 [US3] Implement merge replay and undo from the `MERGED_INTO` log alone, and the `merge-replay` scenario in `evaluation/scenarios.py`
   - Verify: `pytest -q tests/ingestion/consolidation/test_merge_replay.py`
