@@ -13,6 +13,8 @@ rather than a benchmark number:
   from its ``MERGED_INTO`` log alone (SC-007).
 * ``resolve-scaling`` — a batch of fixed size costs the same wall clock against a
   namespace ten times larger, so no full-table scan survived (SC-006).
+* ``transcript-drift`` — a transcript the parser no longer fully recognises is
+  counted, never fatal, and its sound records still land (SC-014).
 
 Each scenario takes what it drives and returns a :class:`ScenarioResult`; the
 run outcome is :meth:`ScenarioResult.gate`, the same shape the dead-weight check
@@ -38,8 +40,10 @@ from graphknows.ingestion.consolidation.entity_resolution import (
     replay,
     undo,
 )
+from graphknows.ingestion.parsers.transcript import TranscriptParser
 from graphknows.memory import Memory
 from graphknows.models import Segment, SegmentKind, Source
+from graphknows.models.report import Counters
 from graphknows.packs.agent import AgentPack
 from graphknows.packs.code import CodePack
 from graphknows.settings import get_settings
@@ -173,6 +177,39 @@ def merge_replay(plan: ResolutionPlan) -> ScenarioResult:
     if stuck:
         return ScenarioResult("merge-replay", False, f"not undone: {', '.join(stuck)}")
     return ScenarioResult("merge-replay", True, f"{len(plan.merges)} merges replayed and undone")
+
+
+DRIFT_COUNTERS = (
+    "records_skipped_malformed",
+    "records_skipped_unknown_type",
+    "blocks_skipped_unknown_type",
+)
+"""The counters drift has to show up in — one per way a transcript can drift."""
+
+
+def transcript_drift(
+    parse: Callable[[], tuple[Sequence[Segment], Counters]],
+) -> ScenarioResult:
+    """Drift must be counted, and the records around it must survive it (SC-014).
+
+    *parse* reads a transcript carrying one of each drift alongside sound
+    records. Raising is the failure the scenario exists to catch, so it is
+    reported rather than propagated.
+    """
+    try:
+        segments, counters = parse()
+    except Exception as aborted:
+        return ScenarioResult("transcript-drift", False, f"parse aborted: {aborted}")
+    if uncounted := [name for name in DRIFT_COUNTERS if not getattr(counters, name)]:
+        return ScenarioResult("transcript-drift", False, f"drift uncounted: {', '.join(uncounted)}")
+    if not segments:
+        return ScenarioResult("transcript-drift", False, "the sound records were dropped with it")
+    counted = sum(getattr(counters, name) for name in DRIFT_COUNTERS)
+    return ScenarioResult(
+        "transcript-drift",
+        True,
+        f"{counted} drifted parts counted, {len(segments)} segments kept",
+    )
 
 
 def resolve_scaling(base: float, at_ten_times: float) -> ScenarioResult:
@@ -315,12 +352,34 @@ async def _concurrent_ingest(namespace: str) -> ScenarioResult:
     return await concurrent_ingest(memories, PROBES)
 
 
+# One sound record, then a drift of each kind the parser counts: an unparsable
+# line, a record type it does not keep, and a block type it does not know.
+DRIFTED_TRANSCRIPT = b"""\
+{"type": "user", "uuid": "u1", "message": {"content": "rebuild the namespace"}}
+{"type": "user", "uuid": "u2", "message":
+{"type": "summary", "uuid": "u3", "message": {"content": "a type from a later harness"}}
+{"type": "assistant", "uuid": "u4", "message": {"content": [{"type": "hologram"}]}}
+"""
+
+
+async def _transcript_drift(namespace: str) -> ScenarioResult:
+    """The drift claim: parsing is in-process, so it needs no namespace of its own."""
+    source = Source(
+        uri="scenario://agent/drifted.jsonl",
+        content_hash=sha256(DRIFTED_TRANSCRIPT).hexdigest(),
+        mime="application/x-ndjson",
+    )
+    parser = TranscriptParser()
+    return transcript_drift(lambda: (parser.parse(source, DRIFTED_TRANSCRIPT), parser.counters))
+
+
 SCENARIOS: dict[str, Callable[[str], Awaitable[ScenarioResult]]] = {
     "two-packs": _two_packs,
     "schema-refusal": lambda namespace: _schema_refusal(f"{namespace}_stale"),
     "concurrent-ingest": _concurrent_ingest,
     "merge-replay": _merge_replay,
     "resolve-scaling": _resolve_scaling,
+    "transcript-drift": _transcript_drift,
 }
 
 

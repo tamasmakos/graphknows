@@ -129,4 +129,5 @@ def test_the_cli_offers_every_gating_scenario() -> None:
         "concurrent-ingest",
         "merge-replay",
         "resolve-scaling",
+        "transcript-drift",
     }
