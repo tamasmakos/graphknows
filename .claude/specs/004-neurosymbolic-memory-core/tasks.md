@@ -241,7 +241,7 @@ back without being asked.
 symbol-resolved facts, an unrelated prompt injects nothing, and the session is ingested at the
 end.
 
-- [ ] T049 [US5] Implement the `context`, `recall`, `preview`, `observe`, `remember` and `catchup` verbs in `graphknows/integrations/claude_code/hooks.py`, talking only to the service through `graphknows/integrations/client/`
+- [X] T049 [US5] Implement the `context`, `recall`, `preview`, `observe`, `remember` and `catchup` verbs in `graphknows/integrations/claude_code/hooks.py`, talking only to the service through `graphknows/integrations/client/`
   - Verify: `pytest -q tests/integrations/claude_code/test_hooks.py`
 - [X] T050 [US5] Implement per-transcript checkpointing by record `uuid` in `graphknows/integrations/claude_code/hooks.py`, never advancing past a malformed trailing record
   - Verify: `pytest -q tests/integrations/claude_code/test_checkpoint.py`
