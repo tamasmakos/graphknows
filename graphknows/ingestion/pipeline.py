@@ -10,7 +10,7 @@ activation reads exactly those two edges back.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 
 from graphknows.ingestion.extraction.protocol import Extractor, PackGuidance
@@ -30,6 +30,27 @@ from graphknows.storage.arcadedb.writers import (
     SourceWriter,
     SymbolWriter,
 )
+from graphknows.storage.embedder import embed
+
+Embedder = Callable[[Sequence[str]], list[list[float]]]
+"""Texts in, one float vector per text out — the representation layer's encoder."""
+
+
+def _embed_texts(texts: Sequence[str]) -> list[list[float]]:
+    """The configured embedder, as plain float lists the writers can inline."""
+    return [[float(x) for x in row] for row in embed(list(texts))]
+
+
+def _reader(pack: PackGuidance, fallback: Extractor) -> Extractor:
+    """The extractor that reads *pack*'s domain: its own when it ships one.
+
+    A pack that reads its domain off the syntax is authoritative for it
+    (FR-030), and the core learns that by asking rather than by importing —
+    ``extractor`` is an optional member of a pack, not of the guidance the core
+    declares. The configured decoder stays the fallback for packs shipping none.
+    """
+    own: Callable[[], Extractor] | None = getattr(pack, "extractor", None)
+    return fallback if own is None else own()
 
 
 def _concepts_by_label(packs: Sequence[PackGuidance]) -> dict[str, ConceptRef]:
@@ -68,19 +89,22 @@ class IngestPipeline:
         store: ArcadeStoreBase,
         extractor: Extractor,
         packs: Sequence[PackGuidance],
+        embed: Embedder = _embed_texts,
     ) -> None:
         self._sources = SourceWriter(store)
         self._segments = SegmentWriter(store)
         self._entities = EntityWriter(store)
         self._facts = FactWriter(store)
         self._symbols = SymbolWriter(store)
-        self._extractor = extractor
+        self._embed = embed
         self._packs = tuple(packs)
+        self._readers = tuple(_reader(pack, extractor) for pack in self._packs)
         self._concepts = _concepts_by_label(self._packs)
         self._functional = _functional_predicate_ids(self._packs)
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}({self._extractor.name!r}, {len(self._packs)} packs)"
+        readers = ", ".join(reader.name for reader in self._readers)
+        return f"{type(self).__name__}({len(self._packs)} packs: {readers})"
 
     async def ingest(self, source: Source, segments: Sequence[Segment]) -> IngestReport:
         """Write *source* and *segments* with everything the extractors read in them.
@@ -96,10 +120,15 @@ class IngestPipeline:
         await self._sources.write(source)
         entities: set[str] = set()
         facts_written = 0
-        for segment in segments:
-            await self._segments.write(segment)
-            for pack in self._packs:
-                mentions, facts = self._extractor.extract(segment, pack)
+        previous: str | None = None
+        vectors = self._embed([segment.text for segment in segments])
+        for segment, vector in zip(segments, vectors, strict=True):
+            await self._segments.write(segment, vector)
+            if previous is not None:
+                await self._segments.link_next(previous, segment.id)
+            previous = segment.id
+            for pack, reader in zip(self._packs, self._readers, strict=True):
+                mentions, facts = reader.extract(segment, pack)
                 await self._write_mentions(mentions)
                 await self._label(segment, mentions)
                 await self._write_facts(segment, facts)
@@ -112,14 +141,38 @@ class IngestPipeline:
             entities_touched=len(entities),
         )
 
+    async def write_symbols(self) -> None:
+        """Write every loaded pack's concepts and predicates — the symbolic index.
+
+        Idempotent, run once when a namespace opens for writing: labelling
+        MATCHes these vertices, so a concept never written is a label bottom-up
+        can give and top-down can never activate. A concept is indexed by the
+        embedding of its definition — the vector is the symbol's "DNA".
+        """
+        for pack in self._packs:
+            concepts = list(pack.concepts())
+            vectors = self._embed([concept.definition for concept in concepts])
+            for concept, vector in zip(concepts, vectors, strict=True):
+                await self._symbols.write_concept(concept, vector)
+            for predicate in pack.predicates():
+                await self._symbols.write_predicate(predicate)
+
     async def _write_mentions(self, mentions: Sequence[Mention]) -> None:
-        """Write each mention's entity and the evidence edge that cites its surface."""
-        for mention in mentions:
+        """Write each mention's entity and the evidence edge that cites its surface.
+
+        The entity carries the embedding of its surface — the ANN candidate
+        generator's key (FR-020) — and one count under the label it was read
+        with, which the writer folds into the stored histogram.
+        """
+        vectors = self._embed([mention.surface for mention in mentions])
+        for mention, vector in zip(mentions, vectors, strict=True):
             await self._entities.write(
                 EntityWrite(
                     id=mention.entity_id,
                     name=mention.surface,
                     name_norm=name_norm(mention.surface),
+                    embedding=vector,
+                    type_histogram={mention.label: 1} if mention.label else {},
                 )
             )
             await self._entities.write_mention(mention)

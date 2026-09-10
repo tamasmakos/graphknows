@@ -230,9 +230,11 @@ class Memory:
             from graphknows.ingestion.pipeline import IngestPipeline
 
             await self._get_retriever()  # connects the store + ensures schema
-            self._pipeline = IngestPipeline(
-                self._store, _build_extractor(self.settings), self._packs
-            )
+            pipeline = IngestPipeline(self._store, _build_extractor(self.settings), self._packs)
+            # The symbolic index the packs bring, written before the first
+            # source: labelling edges MATCH these vertices.
+            await pipeline.write_symbols()
+            self._pipeline = pipeline
         return self._pipeline
 
     async def ingest(self, source: Source, segments: Sequence[Segment]) -> IngestReport:

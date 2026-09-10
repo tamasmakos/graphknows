@@ -2,27 +2,31 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from graphknows.models.symbols import ConceptRef, PredicateRef
+from graphknows.storage.arcadedb._sql import vector_literal
 from graphknows.storage.arcadedb.writers._base import _Writer
 
 
 class SymbolWriter(_Writer):
     """Writes CONCEPT and PREDICATE vertices — the symbolic index layer."""
 
-    async def write_concept(self, concept: ConceptRef, embedding: list[float]) -> str:
+    async def write_concept(self, concept: ConceptRef, embedding: Sequence[float]) -> str:
         """MERGE the CONCEPT vertex and return its uri.
 
         The embedding of the definition is written with the symbol, not beside
-        it: it is what makes the concept retrievable at all.
+        it: it is what makes the concept retrievable at all. Inlined, because
+        a LIST parameter is rejected on a vector-indexed property; an empty one
+        is left unset.
         """
+        embedding_sql = f", c.embedding = {vector_literal(embedding)}" if embedding else ""
         await self._store.command(
             "MERGE (c:CONCEPT {uri: $uri}) "
-            "SET c.label = $label, c.definition = $definition, "
-            "c.embedding = $embedding, c.pack = $pack",
+            f"SET c.label = $label, c.definition = $definition, c.pack = $pack{embedding_sql}",
             uri=concept.uri,
             label=concept.label,
             definition=concept.definition,
-            embedding=embedding,
             pack=concept.pack,
         )
         return concept.uri

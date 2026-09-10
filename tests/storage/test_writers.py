@@ -53,7 +53,8 @@ def _fact() -> Fact:
 async def test_source_writer_merges_the_source_vertex(store: ArcadeStoreBase) -> None:
     source = Source(uri="file:///notes.md", content_hash="abc", mime="text/markdown")
     assert await SourceWriter(store).write(source) == source.id
-    assert "MERGE (s:SOURCE {id: $id})" in _statements(store)[0]
+    assert "UPDATE SOURCE SET" in _statements(store)[0]
+    assert "UPSERT WHERE id = :id" in _statements(store)[0]
     assert _params(store, 0)["content_hash"] == "abc"
 
 
@@ -63,25 +64,55 @@ async def test_segment_writer_attaches_the_segment_to_its_source(
     segment = Segment(
         source_id="s1", text="Mel works at Acme.", kind=SegmentKind.prose, byte_range=(0, 18)
     )
-    assert await SegmentWriter(store).write(segment) == segment.id
+    assert await SegmentWriter(store).write(segment, [0.5, 0.25]) == segment.id
     vertex, edge = _statements(store)
     assert "MERGE (g:SEGMENT {id: $id})" in vertex
+    assert "g.embedding = [0.5,0.25]" in vertex
     assert "MERGE (g)-[:PART_OF]->(s)" in edge
     assert _params(store, 0)["byte_end"] == 18
+
+
+async def test_segment_writer_leaves_an_empty_embedding_unset(store: ArcadeStoreBase) -> None:
+    """A zero-length vector is refused by the index, so none is sent."""
+    segment = Segment(source_id="s1", text="x", kind=SegmentKind.prose, byte_range=(0, 1))
+    await SegmentWriter(store).write(segment)
+    assert "embedding" not in _statements(store)[0]
+
+
+async def test_segment_writer_links_consecutive_segments(store: ArcadeStoreBase) -> None:
+    await SegmentWriter(store).link_next("g1", "g2")
+    assert "MERGE (a)-[:NEXT]->(b)" in _statements(store)[0]
+    assert _params(store, 0) == {"previous_id": "g1", "segment_id": "g2"}
 
 
 async def test_entity_writer_writes_the_entity_and_its_mention(
     store: ArcadeStoreBase,
 ) -> None:
     writer = EntityWriter(store)
-    await writer.write(EntityWrite(id="e1", name="Acme", name_norm="acme"))
+    await writer.write(
+        EntityWrite(
+            id="e1", name="Acme", name_norm="acme", embedding=[0.5], type_histogram={"org": 1}
+        )
+    )
     await writer.write_mention(
         Mention(segment_id="g1", entity_id="e1", surface="Acme", span=(13, 17))
     )
     entity, mention = _statements(store)
-    assert "MERGE (e:ENTITY {id: $id})" in entity
+    assert "UPDATE ENTITY SET" in entity and "UPSERT WHERE id = :id" in entity
+    assert "embedding = [0.5]" in entity
+    assert _params(store, 0)["type_histogram"] == {"org": 1}
     assert "MENTIONS" in mention
     assert _params(store, 1)["span"] == "13:17"
+
+
+async def test_entity_writer_accumulates_the_type_histogram(store: ArcadeStoreBase) -> None:
+    """A second read under a label adds to the tally instead of resetting it."""
+    store.client.query = AsyncMock(return_value=[{"histogram": {"org": 2, "place": 1}}])
+    await EntityWriter(store).write(
+        EntityWrite(id="e1", name="Acme", name_norm="acme", type_histogram={"org": 1})
+    )
+    assert _params(store, 0)["type_histogram"] == {"org": 3, "place": 1}
+    assert "embedding" not in _statements(store)[0]
 
 
 async def test_symbol_writer_writes_concepts_with_their_embedding(
@@ -99,7 +130,8 @@ async def test_symbol_writer_writes_concepts_with_their_embedding(
     )
     assert await writer.write_concept(concept, [0.1, 0.2]) == concept.uri
     assert await writer.write_predicate(predicate) == predicate.id
-    assert _params(store, 0)["embedding"] == [0.1, 0.2]
+    assert "c.embedding = [0.1,0.2]" in _statements(store)[0]
+    assert "embedding" not in _params(store, 0)
     assert _params(store, 1)["functional"] is True
 
 

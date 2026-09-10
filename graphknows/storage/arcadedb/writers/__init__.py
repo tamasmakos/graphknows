@@ -24,6 +24,7 @@ WRITTEN_TYPES = frozenset(
         "FACT",
         # The edges those families are written with.
         "PART_OF",
+        "NEXT",
         "MENTIONS",
         "EVOKES",
         "INSTANCE_OF",

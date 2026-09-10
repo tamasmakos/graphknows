@@ -57,14 +57,13 @@ async def test_det_retriever_returns_results_after_ingest(scratch_store: GraphSt
     Writes one session SOURCE with one SEGMENT carrying its embedding, so the
     semantic ANN branch can return it, then runs retrieve() scoped to that
     session and asserts non-empty fused_results. The SOURCE is written with
-    raw Cypher: ``SourceWriter`` passes ``meta`` as a MAP param, which
-    ArcadeDB's Cypher rejects (a T020 writer defect, not a retrieval one).
+    raw Cypher so this test fails on the retriever alone, never on a writer.
     """
     from graphknows.models.segment import Segment, SegmentKind
     from graphknows.models.source import session_uri
     from graphknows.retrieval.retriever import DETRetriever
     from graphknows.settings import GraphKnowsSettings
-    from graphknows.storage.arcadedb.graph_store import _emb_sql
+    from graphknows.storage.arcadedb._sql import vector_literal
     from graphknows.storage.arcadedb.writers import SegmentWriter
     from graphknows.storage.embedder import embed_dim, embed_one
 
@@ -84,7 +83,7 @@ async def test_det_retriever_returns_results_after_ingest(scratch_store: GraphSt
         source_id="src-1", text=test_text, kind=SegmentKind.turn, byte_range=(0, len(test_text))
     )
     await SegmentWriter(store).write(segment)
-    embedding = _emb_sql(embed_one(test_text, s.embed_model))
+    embedding = vector_literal(embed_one(test_text, s.embed_model))
     await store.command(
         f"MATCH (g:SEGMENT {{id: $id}}) SET g.embedding = {embedding}",
         id=segment.id,

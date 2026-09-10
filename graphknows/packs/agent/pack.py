@@ -56,6 +56,12 @@ class AgentPack:
         """The label set offered to the decoder; it replaces the core's."""
         return ("session", "prompt", "decision", "file", "tool")
 
+    def extractor(self) -> Any:
+        """This pack reads its own domain: tool calls and stated decisions (FR-030)."""
+        from graphknows.packs.agent.extractor import AgentExtractor
+
+        return AgentExtractor()
+
     def prompt_addendum(self) -> str:
         """How to spot a decision in what the user and the assistant wrote."""
         return _PROMPT_ADDENDUM

@@ -29,6 +29,9 @@ from graphknows.memory import Memory
 from graphknows.models import Segment, SegmentKind, Source
 from graphknows.packs.agent import AgentPack
 from graphknows.packs.code import CodePack
+from graphknows.settings import get_settings
+from graphknows.storage import build_graph_store
+from graphknows.storage.embedder import embed_dim
 
 
 @dataclass(frozen=True)
@@ -141,19 +144,21 @@ async def concurrent_ingest(
 
 # Two unrelated domains in one namespace — the two-pack claim as data. Small on
 # purpose: the scenario proves the core stays domain-blind, not that extraction
-# scales.
+# scales. Each query names a symbol only its own pack declares — recall is
+# symbol-keyed (FR-002), so the query a probe is answered by is a concept label,
+# never one of its own surfaces.
 PROBES = (
     PackProbe(
         uri="scenario://code/loader.py",
         text="def load_packs(packs): return LoadedPacks(packs)",
         kind=SegmentKind.code,
-        query="load_packs",
+        query="which function calls what",
     ),
     PackProbe(
         uri="scenario://agent/session.md",
         text="The agent decided to rebuild the namespace instead of migrating it.",
         kind=SegmentKind.prose,
-        query="rebuild the namespace",
+        query="what decision was settled",
     ),
 )
 
@@ -163,14 +168,47 @@ def _memory(namespace: str) -> Memory:
     return Memory(namespace=namespace, packs=(CodePack(), AgentPack()))
 
 
+async def _fresh_memory(namespace: str) -> Memory:
+    """A memory over an emptied *namespace*: two ingests compare only from nothing."""
+    memory = _memory(namespace)
+    await memory.drop_namespace()
+    return memory
+
+
+async def _stale_namespace(namespace: str) -> None:
+    """Rebuild *namespace* stamped by a version no code runs — the refusal's precondition."""
+    settings = get_settings()
+    store = build_graph_store(settings, namespace)
+    await store.connect()
+    try:
+        await store.drop_database()
+        await store.ensure_schema(settings.embed_dimensions or embed_dim())
+        await store.command("MATCH (s:SCHEMA_STAMP) SET s.version = $version", version="stale")
+    finally:
+        await store.close()
+
+
+async def _two_packs(namespace: str) -> ScenarioResult:
+    """The two-pack claim, proved from nothing: content already stored never re-extracts."""
+    return await two_packs(await _fresh_memory(namespace), PROBES)
+
+
+async def _schema_refusal(namespace: str) -> ScenarioResult:
+    await _stale_namespace(namespace)
+    return await schema_refusal(lambda: _memory(namespace).recall("schema stamp"))
+
+
+async def _concurrent_ingest(namespace: str) -> ScenarioResult:
+    memories = [
+        await _fresh_memory(f"{namespace}_{order}") for order in ("concurrent", "sequential")
+    ]
+    return await concurrent_ingest(memories, PROBES)
+
+
 SCENARIOS: dict[str, Callable[[str], Awaitable[ScenarioResult]]] = {
-    "two-packs": lambda namespace: two_packs(_memory(namespace), PROBES),
-    "schema-refusal": lambda namespace: schema_refusal(
-        lambda: _memory(namespace).recall("schema stamp")
-    ),
-    "concurrent-ingest": lambda namespace: concurrent_ingest(
-        (_memory(namespace), _memory(f"{namespace}_sequential")), PROBES
-    ),
+    "two-packs": _two_packs,
+    "schema-refusal": lambda namespace: _schema_refusal(f"{namespace}_stale"),
+    "concurrent-ingest": _concurrent_ingest,
 }
 
 

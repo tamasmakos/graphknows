@@ -34,6 +34,15 @@ def quoted_list(values: Iterable[str]) -> str:
     return "[" + ",".join(quote(v) for v in values) + "]"
 
 
+def vector_literal(values: Iterable[float]) -> str:
+    """Return an embedding as an inline array literal: ``[0.1,0.2]``.
+
+    Inline rather than bound: ArcadeDB rejects a LIST parameter as the value
+    of an LSM_VECTOR-indexed property, in SQL and Cypher alike.
+    """
+    return "[" + ",".join(str(v) for v in values) + "]"
+
+
 def is_missing_type(exc: Exception) -> bool:
     """True when an error only means the vertex type does not exist yet.
 

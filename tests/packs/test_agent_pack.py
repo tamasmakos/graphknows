@@ -110,8 +110,47 @@ def test_a_tool_call_naming_no_path_evidences_no_fact() -> None:
     assert facts == []
 
 
-def test_prose_segments_are_left_to_the_decoder() -> None:
+def test_prose_settling_nothing_evidences_nothing() -> None:
     segment = Segment(source_id="s1", text="Read(x)", kind=SegmentKind.turn, path="uuid/1")
+    assert AgentExtractor().extract(segment, AgentPack()) == ([], [])
+
+
+def _prose(text: str, role: str = "") -> Segment:
+    return Segment(source_id="s1", text=text, kind=SegmentKind.prose, path="uuid/1", role=role)
+
+
+def test_a_settled_choice_is_a_decision_of_its_session() -> None:
+    segment = _prose("The agent decided to rebuild the namespace. It then did so.")
+
+    mentions, facts = AgentExtractor().extract(segment, AgentPack())
+
+    assert [mention.surface for mention in mentions] == ["rebuild the namespace", "s1"]
+    assert [mention.label for mention in mentions] == ["decision", "session"]
+    assert [fact.predicate for fact in facts] == ["agent:decided_in"]
+    assert (facts[0].subject, facts[0].object) == (mentions[0].entity_id, mentions[1].entity_id)
+
+
+def test_a_decision_is_cited_where_the_segment_states_it() -> None:
+    segment = _prose("The agent decided to rebuild the namespace. It then did so.")
+
+    mentions, _ = AgentExtractor().extract(segment, AgentPack())
+
+    start, end = mentions[0].span
+    assert segment.text.encode()[start:end].decode() == "rebuild the namespace"
+
+
+def test_what_the_user_asked_was_asked_in_the_session() -> None:
+    segment = _prose("Rebuild the namespace. Then run the gate.", role="user")
+
+    mentions, facts = AgentExtractor().extract(segment, AgentPack())
+
+    assert [mention.surface for mention in mentions] == ["Rebuild the namespace", "s1"]
+    assert [fact.predicate for fact in facts] == ["agent:asked_in"]
+
+
+def test_what_the_assistant_wrote_is_not_a_prompt() -> None:
+    segment = _prose("Rebuild the namespace.", role="assistant")
+
     assert AgentExtractor().extract(segment, AgentPack()) == ([], [])
 
 

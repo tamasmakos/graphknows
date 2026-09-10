@@ -66,6 +66,16 @@ class CodePack:
         """The concept labels, which are the only labels a code mention may carry."""
         return tuple(concept["label"] for concept in _data()["concepts"])
 
+    def extractor(self) -> Any:
+        """This pack reads its own domain: the syntax tree, not a model (FR-030).
+
+        Imported here rather than at module scope because the extractor mints
+        its ids with :func:`symbol_id` from this module.
+        """
+        from graphknows.packs.code.extractor import CodeExtractor
+
+        return CodeExtractor()
+
     def prompt_addendum(self) -> str:
         """Guidance for the assisted path; the deterministic one never reads it."""
         return (

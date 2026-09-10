@@ -33,6 +33,7 @@ from graphknows.storage.arcadedb._sql import (
     quote,
     quoted_list,
     sanitize,
+    vector_literal,
 )
 from graphknows.storage.arcadedb.client import ArcadeDBClient
 
@@ -95,11 +96,6 @@ def reads(*types: str) -> Callable[[_ReadMethod], _ReadMethod]:
     return decorate
 
 
-def _emb_sql(emb: list[float]) -> str:
-    """Format an embedding as an ArcadeDB SQL array literal (inline, not a param)."""
-    return "[" + ",".join(str(x) for x in emb) + "]"
-
-
 def _vec_search_sql(index: str, emb: list[float], k: int) -> str:
     """Return SQL for a vectorNeighbors ANN search.
 
@@ -107,7 +103,7 @@ def _vec_search_sql(index: str, emb: list[float], k: int) -> str:
     makes ArcadeDB invoke vectorNeighbors once *per vertex*, returning N*k rows
     and making deduplication order-dependent.
     """
-    return f'SELECT expand(vectorNeighbors("{index}", {_emb_sql(emb)}, {k}))'
+    return f'SELECT expand(vectorNeighbors("{index}", {vector_literal(emb)}, {k}))'
 
 
 def _name_norm(name: str) -> str:

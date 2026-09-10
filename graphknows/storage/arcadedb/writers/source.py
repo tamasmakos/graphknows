@@ -10,15 +10,17 @@ class SourceWriter(_Writer):
     """Writes SOURCE vertices."""
 
     async def write(self, source: Source) -> str:
-        """MERGE the SOURCE vertex and return its id.
+        """UPSERT the SOURCE vertex and return its id.
 
         Keyed on the source's derived id, so re-importing the same bytes from
-        the same uri updates one vertex rather than forking a second.
+        the same uri updates one vertex rather than forking a second. SQL
+        rather than Cypher: ``meta`` is a MAP, which the Cypher dialect cannot
+        bind as a parameter.
         """
-        await self._store.command(
-            "MERGE (s:SOURCE {id: $id}) "
-            "SET s.uri = $uri, s.mime = $mime, s.content_hash = $content_hash, "
-            "s.imported_at = $imported_at, s.namespace = $namespace, s.meta = $meta",
+        await self._store.sql_command(
+            "UPDATE SOURCE SET uri = :uri, mime = :mime, content_hash = :content_hash, "
+            "imported_at = :imported_at, namespace = :namespace, meta = :meta "
+            "UPSERT WHERE id = :id",
             id=source.id,
             uri=source.uri,
             mime=source.mime,

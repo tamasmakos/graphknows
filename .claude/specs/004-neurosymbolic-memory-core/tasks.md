@@ -174,6 +174,8 @@ longer has. -->
   - Verify: `pytest -q tests/retrieval/test_no_chunk_reads.py tests/retrieval/test_symbol_recall.py`
 - [X] T068 [Cutover] Route `graphknows/memory.py` through `graphknows/ingestion/pipeline.py` only: drop the TURN buffer, the flush-time analytics (pagerank, communities, graph embeddings) and session consolidation; `flush` becomes identity resolution plus the dead-weight report; update `graphknows/storage/namespace.py`, `graphknows/ingestion/extraction/relations/verifier.py` and `graphknows/symbolic/ontology/rdf/store.py` callers (FR-045, FR-046)
   - Verify: `pytest -q tests/memory/test_no_old_core_paths.py tests/memory/test_facade_packs.py`
+- [X] T069 [Cutover] Make ingest and recall work on a live ArcadeDB: each pack reads its own domain with its own deterministic extractor, so facts, `EVOKES`, `INSTANCE_OF`, `NEXT` and the segment embeddings reach the database and a recall returns facts with evidence (FR-002, FR-008, FR-030)
+  - Verify: `pytest -q -m integration tests/storage/test_live_ingest.py`
 
 **Checkpoint**: SC-004 and SC-005 — identity precision and dead weight hold and the three
 scenarios pass; dialogue rows report not-run and the repository row joins the gate in Phase 9

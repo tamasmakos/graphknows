@@ -6,7 +6,7 @@ retired, and that facts anchored at one instant contradict instead.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -19,6 +19,12 @@ from graphknows.models.segment import Segment, SegmentKind
 from graphknows.models.source import Source
 from graphknows.models.symbols import ConceptRef, PredicateRef
 from graphknows.storage.arcadedb._base import ArcadeStoreBase
+
+
+def _no_model(texts: Sequence[str]) -> list[list[float]]:
+    """A stand-in encoder, so no test here loads an embedding model."""
+    return [[1.0] for _ in texts]
+
 
 EARLIER = datetime(2024, 1, 1, tzinfo=UTC)
 LATER = datetime(2025, 1, 1, tzinfo=UTC)
@@ -111,7 +117,7 @@ async def _ingest(store: ArcadeStoreBase, extractor: _StubExtractor, pack: _Stub
         byte_range=(0, 20),
         observed_at=LATER,
     )
-    await IngestPipeline(store, extractor, [pack]).ingest(source, [segment])
+    await IngestPipeline(store, extractor, [pack], embed=_no_model).ingest(source, [segment])
 
 
 async def test_a_newer_fact_supersedes_the_current_one(store: ArcadeStoreBase) -> None:

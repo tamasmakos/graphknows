@@ -7,6 +7,7 @@ short-circuits ingest — no writes, no extractor call — and says so in the
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from unittest.mock import AsyncMock, MagicMock
 
 from graphknows.ingestion.pipeline import IngestPipeline
@@ -14,6 +15,11 @@ from graphknows.models.fact import Fact, Mention
 from graphknows.models.segment import Segment, SegmentKind
 from graphknows.models.source import Source
 from graphknows.storage.arcadedb._base import ArcadeStoreBase
+
+
+def _no_model(texts: Sequence[str]) -> list[list[float]]:
+    """A stand-in encoder, so no test here loads an embedding model."""
+    return [[1.0] for _ in texts]
 
 
 class _FailingExtractor:
@@ -50,7 +56,9 @@ async def test_known_content_is_counted_and_nothing_is_written() -> None:
     store = _store(known=True)
     source = _source()
 
-    report = await IngestPipeline(store, _FailingExtractor(), []).ingest(source, [_segment(source)])
+    report = await IngestPipeline(store, _FailingExtractor(), [], embed=_no_model).ingest(
+        source, [_segment(source)]
+    )
 
     assert report.counters.sources_deduplicated == 1
     assert (report.segments_written, report.facts_written) == (0, 0)
@@ -61,19 +69,21 @@ async def test_unknown_content_is_written_and_not_counted() -> None:
     store = _store(known=False)
     source = _source()
 
-    report = await IngestPipeline(store, _FailingExtractor(), []).ingest(source, [_segment(source)])
+    report = await IngestPipeline(store, _FailingExtractor(), [], embed=_no_model).ingest(
+        source, [_segment(source)]
+    )
 
     assert report.counters.sources_deduplicated == 0
     assert report.segments_written == 1
     statements = [call.args[1] for call in store.client.command.await_args_list]
-    assert any("MERGE (s:SOURCE {id: $id})" in statement for statement in statements)
+    assert any("UPDATE SOURCE SET" in statement for statement in statements)
 
 
 async def test_the_dedup_lookup_is_keyed_on_content_hash() -> None:
     store = _store(known=True)
     source = _source()
 
-    await IngestPipeline(store, _FailingExtractor(), []).ingest(source, [])
+    await IngestPipeline(store, _FailingExtractor(), [], embed=_no_model).ingest(source, [])
 
     cypher, params = store.client.query.await_args.args[1], store.client.query.await_args.kwargs
     assert "content_hash: $content_hash" in cypher

@@ -272,7 +272,7 @@ async def test_graph_store_round_trip_on_scratch_database(arcadedb_required: Non
     from graphknows.models.symbols import PredicateRef
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_arcadedb_client
-    from graphknows.storage.arcadedb.graph_store import _emb_sql
+    from graphknows.storage.arcadedb._sql import vector_literal
     from graphknows.storage.arcadedb.writers import (
         EntityWriter,
         Evidence,
@@ -310,7 +310,7 @@ async def test_graph_store_round_trip_on_scratch_database(arcadedb_required: Non
             b=second.id,
         )
         await store.command(
-            f"MATCH (g:SEGMENT {{id: $id}}) SET g.embedding = {_emb_sql([1.0, 0.0, 0.0, 0.0])}",
+            f"MATCH (g:SEGMENT {{id: $id}}) SET g.embedding = {vector_literal([1.0, 0.0, 0.0, 0.0])}",
             id=first.id,
         )
         for entity_id, name in (("e1", "Melanie"), ("e2", "Yosemite")):
@@ -326,7 +326,7 @@ async def test_graph_store_round_trip_on_scratch_database(arcadedb_required: Non
         )
         await store.command(
             "MERGE (c:CONCEPT {uri: 'c:place'}) SET c.label = 'Place', "
-            f"c.embedding = {_emb_sql([0.0, 1.0, 0.0, 0.0])}"
+            f"c.embedding = {vector_literal([0.0, 1.0, 0.0, 0.0])}"
         )
         symbols = SymbolWriter(store)
         await symbols.write_evokes(first.id, "c:place", 0.8)

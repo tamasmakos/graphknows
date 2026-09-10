@@ -76,6 +76,14 @@ class ArcadeStoreBase:
         """
         return await self._c.command(self._db, cypher, params=params or None)
 
+    async def sql_command(self, sql: str, **params: Any) -> list[dict]:
+        """Run a writing SQL statement against this store's database.
+
+        The writers reach for SQL where Cypher cannot bind a value: the Cypher
+        dialect rejects a MAP parameter outright, SQL accepts it.
+        """
+        return await self._c.command(self._db, sql, language="sql", params=params or None)
+
     async def _apply_ddl(
         self,
         statements: Iterable[str | tuple[str, str]],
