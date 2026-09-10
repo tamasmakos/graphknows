@@ -251,7 +251,7 @@ end.
   - Verify: `pytest -q tests/mcp_server/test_forget_tool.py`
 - [X] T052 [US5] Implement the `forget-roundtrip` scenario in `evaluation/scenarios.py`, proving a forgotten record vanishes from recall while its tombstone and merge log stay readable
   - Verify: `pytest -q tests/evaluation/test_forget_roundtrip.py`
-- [ ] T053 [P] [US5] Ship the record-versus-retrieve guidance skill and the hook settings block with `graphknows/integrations/claude_code/`
+- [X] T053 [P] [US5] Ship the record-versus-retrieve guidance skill and the hook settings block with `graphknows/integrations/claude_code/`
   - Verify: `pytest -q tests/integrations/claude_code/test_guidance_shipped.py`
 - [ ] T062 [US5] Implement the `hook-latency` scenario in `evaluation/scenarios.py`, measuring recall-verb p95 against the 1 s budget and the 5 s ceiling over 200 samples against a warm service (SC-010)
   - Verify: `pytest -q tests/evaluation/test_hook_latency.py`
