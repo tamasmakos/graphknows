@@ -34,6 +34,15 @@ def quoted_list(values: Iterable[str]) -> str:
     return "[" + ",".join(quote(v) for v in values) + "]"
 
 
+def vector_literal(values: Iterable[float]) -> str:
+    """Return an embedding as an inline array literal: ``[0.1,0.2]``.
+
+    Inline rather than bound: ArcadeDB rejects a LIST parameter as the value
+    of an LSM_VECTOR-indexed property, in SQL and Cypher alike.
+    """
+    return "[" + ",".join(str(v) for v in values) + "]"
+
+
 def is_missing_type(exc: Exception) -> bool:
     """True when an error only means the vertex type does not exist yet.
 
@@ -42,3 +51,16 @@ def is_missing_type(exc: Exception) -> bool:
     not be swallowed — a partial delete leaves orphaned nodes behind.
     """
     return "was not found" in str(exc).lower()
+
+
+# ``forget`` marks a record ``forgotten`` instead of deleting it, so merge logs
+# and provenance stay replayable (FR-037). The record is invisible to recall only
+# because every read query composes this fragment for each tombstoned alias it
+# binds — no store-level seam can splice a predicate into arbitrary query text —
+# so this is the single place its text is written.
+_FORGOTTEN = "forgotten"
+
+
+def not_forgotten(alias: str) -> str:
+    """Return the tombstone filter for *alias*: ``e.state <> 'forgotten'``."""
+    return f"{alias}.state <> {quote(_FORGOTTEN)}"

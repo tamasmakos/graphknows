@@ -123,27 +123,27 @@ def _pack_sentences(unit: str, max_tokens: int, overlap: int) -> list[str]:
     return out
 
 
-def _pack_units(units: list[str], joiner: str, max_tokens: int, overlap: int) -> list[str]:
-    """Pack *units* (turns or sentences) into ``<= max_tokens`` bodies, with overlap."""
+def _pack_units(units: list[str], max_tokens: int, overlap: int) -> list[str]:
+    """Pack sentences into ``<= max_tokens`` bodies, with overlap."""
     bodies: list[str] = []
     buf: list[str] = []
     buf_tokens = 0
     for unit in units:
-        # A single unit over budget (a very long turn or prose run): flush the
-        # buffer, then sentence-split the unit so no chunk exceeds the budget.
+        # A single unit over budget (a very long prose run): flush the buffer,
+        # then sentence-split the unit so no chunk exceeds the budget.
         if max(1, _tokens(unit)) > max_tokens:
             if buf:
-                bodies.append(joiner.join(buf))
+                bodies.append(" ".join(buf))
                 buf, buf_tokens = [], 0
             bodies.extend(_pack_sentences(unit, max_tokens, overlap))
             continue
         if buf and buf_tokens + max(1, _tokens(unit)) > max_tokens:
-            bodies.append(joiner.join(buf))
+            bodies.append(" ".join(buf))
             buf, buf_tokens = _tail_units(buf, overlap)
         buf.append(unit)
         buf_tokens += max(1, _tokens(unit))
     if buf:
-        bodies.append(joiner.join(buf))
+        bodies.append(" ".join(buf))
     return bodies
 
 
@@ -302,32 +302,18 @@ class PlainTextParser:
         max_tokens: int,
         overlap: int = MAX_CHUNK_OVERLAP,
     ) -> list[tuple[str, str]]:
-        """Split a large section to ``<= max_tokens``, preserving line/turn boundaries.
+        """Split a large section to ``<= max_tokens``, never breaking a word.
 
-        Dialogue turns are newline-delimited (``HH:MM | Speaker: text``). Packing by
-        line and re-joining with newlines keeps each turn intact and the speaker
-        structure readable — space-joining sentences was flattening turns into
-        multi-topic blobs, dropping the boundaries that line-anchored parsing and
-        readable retrieval depend on. Prose (a single long line/paragraph) and any
-        single over-long turn fall back to spaCy sentence packing so a chunk never
-        breaks a word.
-
-        Consecutive chunks overlap by up to ``overlap`` tokens: when a chunk is
-        flushed, its trailing whole units (turns/sentences) that fit in the overlap
-        budget seed the next chunk, so a fact spanning a chunk boundary is not lost
-        to retrieval.
+        Sentences are the unit, so a chunk boundary always falls where a sentence
+        ends. Consecutive chunks overlap by up to ``overlap`` tokens: when a chunk
+        is flushed, its trailing whole sentences that fit in the overlap budget
+        seed the next chunk, so a fact spanning a chunk boundary is not lost to
+        retrieval.
         """
         from graphknows.ingestion.parsers._sentences import split_sentences
 
         heading_text = path.split(" / ")[-1].strip()
-
-        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
-        if len(lines) > 1:
-            units, joiner = lines, "\n"  # dialogue: one unit per turn
-        else:
-            units, joiner = split_sentences(body), " "  # prose: sentence units
-
-        bodies = _pack_units(units, joiner, max_tokens, overlap)
+        bodies = _pack_units(split_sentences(body), max_tokens, overlap)
 
         return [
             (path, f"{heading_text}\n\n{b}" if heading_text else b) for b in bodies if b.strip()

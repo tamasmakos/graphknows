@@ -8,8 +8,6 @@ import pytest
 @pytest.mark.parametrize(
     "module_path, attr",
     [
-        ("graphknows.worth", "_nlp"),
-        ("graphknows.ingestion.consolidation.entity_resolution", "_parser"),
         ("graphknows.symbolic.ontology.skos", "_lemmatise"),
     ],
 )

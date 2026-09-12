@@ -93,7 +93,6 @@ class IngestResult(BaseModel):
     flush_nodes: int = 0
     flush_edges: int = 0
     flush_chunks: int = 0
-    flush_topics: int = 0
     flush_elapsed_s: float = 0.0
     flush_error_count: int = 0
     # Seconds per named flush stage (drain, resolve, pagerank, node2vec, louvain,

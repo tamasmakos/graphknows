@@ -1,6 +1,6 @@
 """Store errors are redacted for MCP callers but kept whole in the log (FR-031).
 
-``memory_doctor``, ``memory_purge`` and ``flush_memory`` used to return
+``memory_doctor``, ``memory_purge`` and ``flush`` used to return
 ArcadeDB's raw error body — including the request host — straight to an MCP
 caller. Each now returns a generic message carrying a correlation id, while
 the full detail (host, body) lands in a ``logger.error`` call tagged with
@@ -10,7 +10,7 @@ that same id, so redacting for the caller does not blind the operator
 ``doctor`` and ``purge_memory`` are driven against port 1, which refuses the
 connection immediately (no service listens there), so they stay hermetic and
 fast — the same trick ``tests/api/test_public_errors.py`` already relies on.
-``flush_memory`` goes through the embedder before it ever reaches the store,
+``flush`` goes through the embedder before it ever reaches the store,
 so it is driven with a stubbed ``_get_retriever`` instead — the same seam
 ``tests/memory/services/test_flush_step_isolation.py`` uses for its own
 connect-failure case — carrying a ``StoreError`` shaped like the real one.
@@ -78,7 +78,7 @@ async def test_flush_memory_redacts_the_host_but_logs_it(caplog: pytest.LogCaptu
         )
     )
     with caplog.at_level(logging.ERROR, logger="graphknows.memory"):
-        out = await memory.flush_memory("s1")
+        out = await memory.flush()
 
     assert any(e.startswith("connect:") for e in out["errors"]), out["errors"]
     joined = " ".join(out["errors"])

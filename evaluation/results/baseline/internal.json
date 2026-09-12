@@ -1,0 +1,33 @@
+{
+  "not_run": "not run: identity precision needs the old core's resolution output over evaluation/data/identity/labelled.jsonl, fact precision needs the generalised triplet audit over a non-dialogue corpus, and dead weight needs a full panel run; only the LoCoMo row was recorded on 2026-09-09 (see locomo.json). Recorded not_run rather than estimated.",
+  "identity": {
+    "median": 0.0,
+    "band": 0.0,
+    "runs": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "commit": "2d50ebacbd873d2d13d69e823d6aa033235e545f"
+  },
+  "fact_precision": {
+    "median": 0.0,
+    "band": 0.0,
+    "runs": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "commit": "2d50ebacbd873d2d13d69e823d6aa033235e545f"
+  },
+  "dead_weight": {
+    "median": 0.0,
+    "band": 0.0,
+    "runs": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "commit": "2d50ebacbd873d2d13d69e823d6aa033235e545f"
+  }
+}

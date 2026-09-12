@@ -328,6 +328,74 @@ def aggregate(
     return [_tier_precision(tier, by_tier[tier], (populations or {}).get(tier)) for tier in TIERS]
 
 
+@dataclass(frozen=True)
+class FactPrecision:
+    """One run's fact precision: the audit's tiers pooled into a single number.
+
+    The audit itself is corpus-agnostic — it judges REL edges against their
+    evidence chunks, whatever the chunks were made of — so the run-level metric is
+    keyed by *row* rather than assuming the dialogue corpus, and a row with no
+    judged sheet says why instead of being omitted (contracts/panel-report.md).
+    """
+
+    row: str
+    judged: int
+    correct: int
+    precision: float | None
+    ci_low: float
+    ci_high: float
+    by_tier: dict[str, float | None]
+    not_judged: str | None
+
+    def to_record(self) -> dict[str, Any]:
+        """The contract's per-run ``fact_precision`` block."""
+        return {
+            "row": self.row,
+            "judged": self.judged,
+            "correct": self.correct,
+            "precision": None if self.precision is None else round(self.precision, 4),
+            "ci_low": round(self.ci_low, 4),
+            "ci_high": round(self.ci_high, 4),
+            "by_tier": {
+                tier: None if value is None else round(value, 4)
+                for tier, value in self.by_tier.items()
+            },
+            "not_judged": self.not_judged,
+        }
+
+
+def fact_precision(row: str, tiers: Sequence[TierPrecision]) -> FactPrecision:
+    """Pool the joint axis over all tiers into the run's fact-precision metric.
+
+    Args:
+        row: The panel row this audit belongs to (``locomo``, ``repo``, ...).
+        tiers: :func:`aggregate` output, or empty when the row has no audit sheet.
+
+    Returns:
+        A :class:`FactPrecision`. With nothing judged, ``precision`` is ``None``
+        and ``not_judged`` carries the reason — the run still reports the metric.
+    """
+    joint = [tier.axes[JOINT_AXIS] for tier in tiers]
+    judged = sum(axis.judged for axis in joint)
+    correct = sum(axis.correct for axis in joint)
+    low, high = wilson_interval(correct, judged)
+    reason = None
+    if not tiers:
+        reason = f"no audit sheet for row {row!r}"
+    elif not judged:
+        reason = f"audit sheet for row {row!r} has no judged rows"
+    return FactPrecision(
+        row=row,
+        judged=judged,
+        correct=correct,
+        precision=(correct / judged) if judged else None,
+        ci_low=low,
+        ci_high=high,
+        by_tier={tier.tier: tier.axes[JOINT_AXIS].precision for tier in tiers},
+        not_judged=reason,
+    )
+
+
 def caveats(tiers: Sequence[TierPrecision]) -> list[str]:
     """Sample-size honesty, computed from the sheet rather than pasted boilerplate.
 
@@ -377,10 +445,16 @@ def caveats(tiers: Sequence[TierPrecision]) -> list[str]:
 
 
 def build_report(tiers: Sequence[TierPrecision], meta: Mapping[str, Any]) -> dict[str, Any]:
-    """Assemble the JSON-able audit report from per-tier results and run metadata."""
+    """Assemble the JSON-able audit report from per-tier results and run metadata.
+
+    ``meta["row"]`` names the panel row being audited; the report carries its
+    pooled ``fact_precision`` block so any run, dialogue or not, reports one.
+    """
+    row = str(dict(meta).get("row") or "unknown")
     return {
         **dict(meta),
         "axes": [*AXES, JOINT_AXIS],
+        "fact_precision": fact_precision(row, tiers).to_record(),
         "caveats": caveats(tiers),
         "tiers": [
             {
@@ -487,6 +561,16 @@ def _cell(entry: Mapping[str, Any]) -> str:
     return f"{entry['precision']:.2f} [{entry['ci_low']:.2f}-{entry['ci_high']:.2f}]"
 
 
+def _fact_precision_cell(record: Mapping[str, Any]) -> str:
+    """The run's pooled fact precision, or the reason there is none."""
+    if record["precision"] is None:
+        return f"— ({record['not_judged']})"
+    return (
+        f"`{record['row']}` {record['precision']:.2f} "
+        f"[{record['ci_low']:.2f}-{record['ci_high']:.2f}] over {record['judged']} judged rows"
+    )
+
+
 def render_markdown(report: Mapping[str, Any]) -> str:
     """Render the audit report as Markdown."""
     axes = list(report["axes"])
@@ -497,6 +581,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         f"- Database: `{report.get('database', '?')}`",
         f"- Seed: `{report.get('seed', '?')}`",
         f"- Generated: `{report.get('generated_at', '?')}`",
+        f"- Fact precision: {_fact_precision_cell(report['fact_precision'])}",
         "",
         "Precision measured directly on the graph — no retrieval in the loop.",
         "Each cell is `precision [95% Wilson interval]` over the rows judged on that axis.",

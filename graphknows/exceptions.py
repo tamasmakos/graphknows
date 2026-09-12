@@ -33,7 +33,7 @@ class MissingExtraError(GraphKnowsError, ImportError):
 
     #: Extras declared in pyproject.toml. Kept here so the test suite can assert
     #: that every call site names a real one.
-    KNOWN_EXTRAS = frozenset({"langgraph", "observability", "ontology", "srl"})
+    KNOWN_EXTRAS = frozenset({"langgraph", "observability", "ontology"})
 
     def __init__(self, feature: str, extra: str) -> None:
         super().__init__(
@@ -126,3 +126,21 @@ class MissingModelError(GraphKnowsError, OSError):
             f"Install it with:  python -m spacy download {model}"
         )
         self.model = model
+
+
+class PackConflictError(ConfigurationError):
+    """Two loaded packs claim the same concept URI or predicate id.
+
+    Loading is all-or-nothing (FR-025): the message names both packs and the
+    contested key so the operator can drop one of them, and no pack is left
+    loaded.
+    """
+
+    def __init__(self, key: str, first_pack: str, second_pack: str) -> None:
+        super().__init__(
+            f"Packs '{first_pack}' and '{second_pack}' both claim '{key}'. "
+            f"No pack was loaded — remove one of them or rename the key."
+        )
+        self.key = key
+        self.first_pack = first_pack
+        self.second_pack = second_pack

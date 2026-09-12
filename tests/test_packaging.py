@@ -301,6 +301,43 @@ def test_built_wheel_ships_the_default_ontology_assets(tmp_path: Path) -> None:
         assert expected in names, f"{wheels[0].name}: missing bundled ontology asset {expected!r}"
 
 
+def test_pack_data_ships_in_the_wheel(tmp_path: Path) -> None:
+    """Domain packs are JSON data, and data files are easy to lose.
+
+    `[tool.hatch.build.targets.wheel] artifacts` declares them explicitly, so a
+    future ignore rule matching `*.json` cannot silently produce an installed
+    package whose pack loader has nothing to load. The archive check is what
+    proves the declaration reaches the wheel.
+    """
+    wheel_target = _pyproject()["tool"]["hatch"]["build"]["targets"]["wheel"]
+    assert "graphknows/packs/data/**/*.json" in wheel_target.get("artifacts", []), (
+        "pack data is not declared to the build backend"
+    )
+
+    packs = sorted((PKG_ROOT / "packs" / "data").rglob("*.json"))
+    assert packs, "no pack data files on disk to ship"
+
+    if shutil.which("uv") is None:
+        pytest.skip("uv not on PATH; cannot build a wheel here")
+
+    result = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"uv build --wheel failed:\n{result.stderr}"
+
+    wheels = sorted(tmp_path.glob("*.whl"))
+    assert len(wheels) == 1, f"expected exactly one built wheel in {tmp_path}, found {wheels}"
+
+    names = set(zipfile.ZipFile(wheels[0]).namelist())
+    for pack in packs:
+        expected = pack.relative_to(REPO_ROOT).as_posix()
+        assert expected in names, f"{wheels[0].name}: missing pack data {expected!r}"
+
+
 def test_every_imported_third_party_module_is_declared() -> None:
     """No graphknows module may import a distribution the package never declares.
 

@@ -27,8 +27,9 @@ Coverage — which edges this gate is responsible for:
   quality signal. The flat ENTITY→ENTITY co-role projection that WOULD have
   been verifiable was removed (see ``write_frame_instances``' docstring), so
   this is a labelled gap, not an oversight.
-* Coverage is reported per tier on every flush, so a future producer that
-  skips the gate shows up as a number rather than going unnoticed.
+* Every producer is gated at the funnel, so a future producer that skips the
+  gate writes an unscored edge — there is no flush-time coverage sweep behind
+  it to catch one.
 """
 
 from __future__ import annotations

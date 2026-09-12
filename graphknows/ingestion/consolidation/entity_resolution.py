@@ -1,475 +1,296 @@
-"""Layered entity resolution for the consolidation (flush) path.
+"""Identity: which entities are one, on what evidence, and reversibly.
 
-Run before ``consolidate_session`` to declutter the golden ENTITY graph. The
-entity table is read ONCE per flush into :class:`_Namespace`, which is pruned in
-place as drops and merges succeed — so a later layer still sees the earlier
-layers' effects without re-reading an unbounded table. The layers are ordered
-most-confident-first:
-
-1. **Junk/hub filter** — DETACH DELETE generic non-referential nouns that SVO
-   object extraction emits as junk hub entities ("others", "many", "kind").
-2. **Name-standardization merge** — collapse morphological (plural) variants of
-   *non-person* entities onto one node (paths->path, dance competitions->dance
-   competition). Persons are skipped here so proper names ending in ``s``
-   (Chris, James) are never singularized into a false collision.
-3. **Person-nickname merge** — collapse a short name into its person superstring
-   (Mel -> Melanie), gated on the anchor being a known person (spaCy PERSON type
-   or a session speaker) and the short being a single-token alphabetic prefix.
-
-Two further layers — a speaker-prefix merge for ``"X: utterance"`` spans and a
-temporal/junk drop over the whole entity set — were deleted: both existed only
-to repair graphs written before the mint-point gates landed, and every write
-now passes ``extractor._reduce_speaker_span`` and ``is_graph_entity_name``
-before an ENTITY node exists at all.
-
-Embedding / graph-similarity thresholds are deliberately NOT used as the primary
-mechanism: on conv-26 a true nickname pair (Mel~Melanie: emb 0.528) scores BELOW
-two distinct co-occurring people (Melanie~Caroline: emb 0.497 / jaccard 0.367),
-so a similarity threshold corrupts the graph. A conservative same-type
-co-occurring emb>=0.92 layer is left as a documented, off-by-default hook (see
-``resolve_entities``); it is not implemented for v1.
+Three things keep this honest. The **mention layer** is the input — an entity is
+what its mentions say it is, so its surfaces stay attached to their segments and
+its type is a histogram of every label it was read under, never the first one
+seen (FR-016, FR-021). The **ladder** is the decision — veto, then strong, then
+weak — and it stops at the first rung that answers: a pack veto or disjoint
+sibling concepts forbid both merge and candidate (FR-019), an identical
+normalised key within a block with agreeing concepts merges (FR-017), and
+anything weaker is a scored candidate the recall path commits (FR-018). The
+**plan** is the output: every :class:`Link` of a batch is decided before a
+single one is applied, so the ``MERGED_INTO`` log exists before the structural
+change it records and a merge is replayable — and undoable — from the log alone.
 """
 
 from __future__ import annotations
 
-import logging
-from dataclasses import dataclass
-from typing import Any
+import math
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import StrEnum
 
-from graphknows.storage.arcadedb.graph_store import name_norm
-
-log = logging.getLogger(__name__)
-
-# Layer 1: generic non-referential nouns SVO object extraction surfaces as junk
-# hub entities. Matched on name_norm (casefolded, whitespace-collapsed).
-_JUNK_ENTITIES: frozenset[str] = frozenset(
-    {
-        "others",
-        "many",
-        "kind",
-        "thing",
-        "things",
-        "everyone",
-        "someone",
-        "anyone",
-        "everything",
-        "nothing",
-        "lot",
-        "lots",
-        "one",
-        "ones",
-        "some",
-        "all",
-        "none",
-        "way",
-        "ways",
-        "bit",
-        "part",
-    }
-)
-
-# Leading determiners / possessives stripped when building a standardization key.
-_LEADING_DET: frozenset[str] = frozenset(
-    {
-        "the",
-        "a",
-        "an",
-        "this",
-        "that",
-        "these",
-        "those",
-        "my",
-        "your",
-        "his",
-        "her",
-        "its",
-        "our",
-        "their",
-    }
-)
+from graphknows.ingestion.consolidation.blocking import block_key
+from graphknows.ingestion.consolidation.candidates import bounded_candidates
+from graphknows.models.fact import Mention
+from graphknows.models.report import Counters
 
 
-def _singularize(word: str) -> str:
-    """Best-effort English plural -> singular for the standardization key.
+class Layer(StrEnum):
+    """The rung of the ladder that decided a pair — recorded on every link."""
 
-    Rule-based (no spaCy/inflect dependency) — handles the regular plural
-    families that actually create duplicate common-noun nodes: paths->path,
-    competitions->competition, successes->success, stories->story, glasses->
-    glass. Gerunds are deliberately NOT stripped (building != build, meeting !=
-    meet, wedding != wed) to avoid over-merging distinct concepts.
-    """
-    w = word.lower()
-    if len(w) <= 3 or w.endswith(("ss", "us", "is")):
-        return w
-    if w.endswith("ies"):
-        return w[:-3] + "y"
-    if w.endswith(("ses", "xes", "zes", "ches", "shes")):
-        return w[:-2]
-    if w.endswith("s"):
-        return w[:-1]
-    return w
+    VETO = "veto"
+    STRONG = "strong"
+    WEAK = "weak"
+    NONE = "none"
 
 
-def _standard_key(name: str) -> str:
-    """Standardized merge key for entity de-duplication.
+@dataclass(frozen=True)
+class EntityView:
+    """One entity as the mention layer sees it: its surfaces and its tallies.
 
-    Casefold + whitespace-collapse (``name_norm``), strip a leading
-    determiner/possessive, singularize the head (last) token.
-    """
-    toks = name_norm(name).split()
-    while len(toks) > 1 and toks[0] in _LEADING_DET:
-        toks = toks[1:]
-    if not toks:
-        return name_norm(name)
-    toks[-1] = _singularize(toks[-1])
-    return " ".join(toks)
-
-
-# spaCy NER types that mark a PROPER-NOUN entity. The morphological
-# standardization layer must never singularize/merge these — a team "Warriors"
-# (ORG) must not collapse onto the common noun "warrior", nor "Philippines" (GPE)
-# onto "philippine". Only untyped / common-noun entities are morphologically merged.
-_PROPER_TYPES: frozenset[str] = frozenset(
-    {
-        "PERSON",
-        "ORG",
-        "GPE",
-        "LOC",
-        "FAC",
-        "NORP",
-        "PRODUCT",
-        "EVENT",
-        "WORK_OF_ART",
-        "LAW",
-        "LANGUAGE",
-    }
-)
-
-
-def _is_person(entity: dict[str, Any], speakers: set[str]) -> bool:
-    """Direct person signal: spaCy PERSON type, or a known session speaker."""
-    return (entity.get("type") or "").upper() == "PERSON" or entity["name_norm"] in speakers
-
-
-def _is_proper(entity: dict[str, Any]) -> bool:
-    """True when the entity's spaCy NER type marks it a proper noun."""
-    return (entity.get("type") or "").upper() in _PROPER_TYPES
-
-
-def _canonical(members: list[dict[str, Any]]) -> dict[str, Any]:
-    """Pick the canonical entity of a merge group: most mentions, then longest surface.
-
-    Correct for the nickname and speaker-prefix layers, where the longer surface
-    IS the fuller name ("mel" -> "Melanie"). Wrong for the standardization layer
-    — see :func:`_standard_canonical`.
-    """
-    return max(members, key=lambda m: (m.get("mention_count", 0), len(m["name"])))
-
-
-def _standard_canonical(key: str, members: list[dict[str, Any]]) -> dict[str, Any]:
-    """Canonical entity of a plural-variant group: the SINGULAR surface.
-
-    ``_canonical``'s longest-surface tiebreak elects the plural every time in a
-    {style, styles} group, so a layer whose whole job is to "collapse
-    morphological (plural) variants" standardised onto the plural. Measured on
-    conv-30: 38 of 2491 MENTIONS edges pointed at a name absent from their own
-    chunk text — ``downs`` x8, ``dreams`` x7, ``customers``, ``plans``,
-    ``projects`` — because the surviving node was named for a form that chunk
-    never used. ``downs`` (EMOTION), minted from "don't let it get you down", is
-    the shape of it.
-
-    ``key`` is the group's standard key, which is already the singularized form,
-    so the member matching it is the singular. Falls back to ``_canonical`` when
-    no member does (every variant is plural).
-    """
-    exact = [m for m in members if str(m["name_norm"]) == key]
-    return _canonical(exact) if exact else _canonical(members)
-
-
-@dataclass(slots=True)
-class _Namespace:
-    """One flush's working entity set — fetched once, pruned as layers succeed.
-
-    Every layer used to re-read the whole (unbounded) ENTITY table plus the
-    speaker list to see its predecessors' effects: five table scans per flush.
-    The shrinking set lives here instead, so the reads happen once and the
-    pruning is local.
+    Attributes:
+        id: The entity's normalised-key id.
+        name_norm: The resolver's normalised name.
+        surfaces: Every surface form observed, in the order first read. Kept as
+            evidence-bearing surfaces, never flattened into an alias string.
+        type_histogram: Observations per pack label (FR-021).
+        concepts: Concept uris the entity's labels resolved to.
+        embedding: The entity's definition vector, the weak rung's only signal.
     """
 
-    store: Any
-    entities: dict[str, dict[str, Any]]
-    speakers: set[str]
-
-    @classmethod
-    async def load(cls, store: Any) -> _Namespace:
-        """The one read of the entity table and the speaker list per flush."""
-        entities = await store.list_entities()
-        speakers = set(await store.distinct_speakers())
-        return cls(store, {e["name_norm"]: e for e in entities}, speakers)
+    id: str
+    name_norm: str
+    surfaces: tuple[str, ...] = ()
+    type_histogram: Mapping[str, int] = field(default_factory=dict)
+    concepts: frozenset[str] = frozenset()
+    embedding: tuple[float, ...] = ()
 
     @property
-    def persons(self) -> list[dict[str, Any]]:
-        """Live person-like entities — the nickname layer's whole domain."""
-        return [e for e in self.entities.values() if _is_person(e, self.speakers)]
+    def block_key(self) -> str:
+        """The block this entity is compared within (FR-020)."""
+        return block_key(self.name_norm, self.type_histogram)
 
     @property
-    def commons(self) -> list[dict[str, Any]]:
-        """Live common nouns — what the morphological and syntactic layers may merge."""
-        return [
-            e
-            for e in self.entities.values()
-            if not _is_person(e, self.speakers) and not _is_proper(e)
-        ]
-
-    async def drop(self, name_norms: list[str]) -> int:
-        dropped = await self.store.drop_entities(name_norms)
-        for norm in name_norms:
-            self.entities.pop(norm, None)
-        return dropped
-
-    async def merge(self, winner: dict[str, Any], members: list[dict[str, Any]]) -> int:
-        """Merge every member but ``winner`` into it; prune what the store accepted."""
-        merged = 0
-        for m in members:
-            loser = m["name_norm"]
-            if loser == winner["name_norm"]:
-                continue
-            if await self.store.merge_entities(winner["name_norm"], loser):
-                # Mirror the store's roll-up: layer 4 ranks anchors by mentions.
-                winner["mention_count"] = winner.get("mention_count", 0) + m.get("mention_count", 0)
-                self.entities.pop(loser, None)
-                merged += 1
-        return merged
+    def observations(self) -> int:
+        """How often the entity was mentioned — the merge direction's tiebreak."""
+        return sum(self.type_histogram.values())
 
 
-async def _drop_junk(ns: _Namespace) -> int:
-    """Layer 1 — delete generic non-referential hub entities."""
-    junk = [name for name in ns.entities if name in _JUNK_ENTITIES]
-    return await ns.drop(junk) if junk else 0
+def mention_layer(mentions: Iterable[Mention]) -> dict[str, EntityView]:
+    """The entities *mentions* refer to, keyed by id.
 
-
-async def _merge_standardized(ns: _Namespace) -> int:
-    """Layer 2 — collapse morphological (plural) variants of non-person entities."""
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for e in ns.commons:  # persons -> nickname layer; other proper nouns never singularized
-        groups.setdefault(_standard_key(e["name"]), []).append(e)
-
-    merged = 0
-    for key, members in groups.items():
-        if len(members) > 1:
-            merged += await ns.merge(_standard_canonical(key, members), members)
-    return merged
-
-
-def _parser() -> Any:
-    """The shared spaCy pipeline, memoized by :func:`graphknows.nlp.load_spacy_model`."""
-    from graphknows.nlp import load_spacy_model
-    from graphknows.settings import get_settings
-
-    return load_spacy_model(get_settings().spacy_model)
-
-
-def _head_key(name: str, nlp: Any) -> str:
-    """The mention reduced to its NAMING core — head noun plus compounds.
-
-    Determiners, adjectives and trailing prepositional phrases describe a
-    mention; the head and its compound modifiers name it. So::
-
-        "the ideal dance studio by the water" -> "dance studio"
-        "Jon's new store"                     -> "store"
-
-    ``_standard_key`` above cannot reach these: it strips a leading determiner
-    and singularizes, which leaves "ideal dance studio" and "dance studio" as
-    two nodes. Measured on a conv-30 run, one dance studio was split across six
-    surfaces, and the duplicates produced self-referential edges that look like
-    structure and carry nothing.
-
-    Returns "" when reduction is unsafe — a proper-noun HEAD ("Door Dash") names
-    a thing and must survive whole, whereas a proper noun in MODIFIER position
-    is a possessor whose claim belongs in a relation, not in the node's name.
+    Nothing is resolved here: this is the bottom-up half, folding surfaces and
+    labels into one view per entity so the ladder reads observations rather
+    than a single extractor's first guess.
     """
-    return _reduce_to_head(nlp(_parse_text(name)))
-
-
-def _parse_text(name: str) -> str:
-    """The surface handed to spaCy: whitespace-collapsed, otherwise verbatim."""
-    return " ".join(name.split())
-
-
-def _reduce_to_head(doc: Any) -> str:
-    """:func:`_head_key`'s reduction, over an already-parsed doc."""
-    head = next((t for t in doc if t.dep_ == "ROOT"), None)
-    if head is None or head.pos_ != "NOUN":
-        return ""
-    # Compared by INDEX: spaCy rebuilds Token objects per access, so `is`
-    # identity never holds and the reduction silently returns nothing.
-    parts = [t for t in doc if t.i == head.i or (t.head.i == head.i and t.dep_ == "compound")]
-    reduced = " ".join(t.lemma_.lower() for t in sorted(parts, key=lambda t: t.i))
-    return reduced.strip()
-
-
-# ponytail: hard cap on the spaCy parses one flush may spend. The highest-mention
-# names are reduced first; the tail keeps its duplicate nodes until a later flush
-# promotes it. Raise it, or move the reduction to ingest time, if the tail matters.
-_MAX_HEAD_PARSE = 2000
-
-
-def _head_groups(ns: _Namespace, nlp: Any) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    """Common-noun entities grouped by (syntactic head, type), at most ``_MAX_HEAD_PARSE``.
-
-    Type is part of the key: a Facility "store" and an Organization "store" are
-    genuinely different nodes even when spelled alike.
-
-    The docs are produced by ``nlp.pipe`` — one batched parse for the whole
-    flush rather than a fresh pipeline call per distinct name.
-    """
-    candidates = ns.commons
-    if len(candidates) > _MAX_HEAD_PARSE:
-        log.warning(
-            "syntactic head merge capped: parsing %d of %d entities",
-            _MAX_HEAD_PARSE,
-            len(candidates),
+    surfaces: dict[str, list[str]] = {}
+    histograms: dict[str, dict[str, int]] = {}
+    for mention in mentions:
+        seen = surfaces.setdefault(mention.entity_id, [])
+        if mention.surface not in seen:
+            seen.append(mention.surface)
+        if mention.label:
+            histogram = histograms.setdefault(mention.entity_id, {})
+            histogram[mention.label] = histogram.get(mention.label, 0) + 1
+    return {
+        entity_id: EntityView(
+            id=entity_id,
+            name_norm=entity_id,
+            surfaces=tuple(forms),
+            type_histogram=histograms.get(entity_id, {}),
         )
-        candidates = sorted(candidates, key=lambda e: -e.get("mention_count", 0))
-        candidates = candidates[:_MAX_HEAD_PARSE]
-
-    docs = nlp.pipe([_parse_text(str(e["name"])) for e in candidates])
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for e, doc in zip(candidates, docs, strict=True):
-        if key := _reduce_to_head(doc):
-            groups.setdefault((key, str(e.get("type") or "")), []).append(e)
-    return groups
+        for entity_id, forms in surfaces.items()
+    }
 
 
-async def _merge_syntactic_heads(ns: _Namespace) -> int:
-    """Layer 3 — collapse mentions sharing a syntactic head and a type."""
-    try:
-        nlp = _parser()
-    except Exception as exc:  # a missing model must not take the flush down
-        log.warning("Syntactic entity merge skipped: spaCy unavailable (%s)", exc)
-        return 0
+@dataclass(frozen=True)
+class Verdict:
+    """What the ladder concluded about a pair, before it is given a direction."""
 
-    merged = 0
-    for members in _head_groups(ns, nlp).values():
-        if len(members) < 2:
-            continue
-        # The shortest surface wins: it carries the fewest of one mention's
-        # incidental modifiers, so it reads as the thing rather than an instance
-        # of describing it.
-        winner = min(members, key=lambda m: (len(str(m["name"])), str(m["name"])))
-        merged += await ns.merge(winner, members)
-    if merged:
-        log.info("syntactic head merge collapsed %d duplicate mentions", merged)
-    return merged
+    layer: Layer
+    evidence: str
+    score: float
 
 
-# Multi-anchor disambiguation: when a short prefix matches several person
-# superstrings, merge into the top only if it dominates the runner-up by this
-# factor (else the anchors are genuinely different people -> skip). This lets
-# "mel" collapse into "Melanie" (63 mentions) despite a stray "Mell" typo (1),
-# while keeping "ann" split across "Anna"/"Anne" (close counts).
-_ANCHOR_DOMINANCE = 2
+@dataclass(frozen=True)
+class Link:
+    """One decided pair, as both merge log and candidate plane record it.
 
-
-async def _merge_nicknames(ns: _Namespace) -> int:
-    """Layer 4 — merge a short person name into its person superstring.
-
-    A candidate ``s`` merges into anchor ``l`` when: BOTH are person-like (spaCy
-    PERSON type or a known speaker — the strict gate that keeps common nouns like
-    "mile"/"art"/"path" out), ``s`` is a strict case-insensitive prefix of ``l``
-    (len(s) >= 3, single alphabetic token), a single dominant such anchor exists
-    (most mentions, and — when several match — dominating the runner-up by
-    ``_ANCHOR_DOMINANCE`` so genuinely distinct names like Anna/Anne are left
-    split), and both co-occur in the namespace. Merges Mel -> Melanie while
-    leaving Caroline (not a prefix) and non-person prefixes untouched.
+    A ``STRONG`` link is a ``MERGED_INTO`` log entry, a ``WEAK`` one a
+    ``SAME_AS_CANDIDATE`` edge; both carry the layer, the evidence and the time,
+    which is everything a replay needs to reconstruct — or reverse — the merge.
     """
-    persons = ns.persons
-    anchors_by_prefix = _anchor_buckets(persons)
 
-    merged = 0
-    for e in persons:  # the short side must itself be person-like
-        s = e["name_norm"]
-        if len(s) < 3 or " " in s or not s.isalpha() or s in _JUNK_ENTITIES:
-            continue
-        anchors = sorted(
-            (
-                p
-                for p in anchors_by_prefix.get(s[:3], ())
-                if p["name_norm"] != s and p["name_norm"].startswith(s)
-            ),
-            key=lambda p: (p.get("mention_count", 0), len(p["name_norm"])),
-            reverse=True,
+    source_id: str
+    target_id: str
+    layer: Layer
+    evidence: str
+    score: float
+    at: datetime
+
+
+@dataclass(frozen=True)
+class ResolutionPlan:
+    """Every decision of one batch, complete before any of it is applied.
+
+    Attributes:
+        merges: The ``MERGED_INTO`` log, oldest decision first.
+        candidates: Scored same-as candidates, left for recall to commit.
+        vetoed: Pairs the veto rung stopped.
+        truncated: Candidates the comparison cap dropped.
+    """
+
+    merges: tuple[Link, ...] = ()
+    candidates: tuple[Link, ...] = ()
+    vetoed: int = 0
+    truncated: int = 0
+
+    @property
+    def counters(self) -> Counters:
+        """This plan as the R9 counter set ingest reports."""
+        return Counters(
+            merges_committed=len(self.merges),
+            candidate_edges_written=len(self.candidates),
+            merges_vetoed=self.vetoed,
+            candidates_truncated=self.truncated,
         )
-        if not anchors:
-            continue  # not a nickname
-        anchor = anchors[0]
-        if len(anchors) > 1:
-            runner_up = anchors[1].get("mention_count", 0)
-            if anchor.get("mention_count", 0) < _ANCHOR_DOMINANCE * max(runner_up, 1):
-                continue  # ambiguous between distinct people
-        if not _co_occurs(e, anchor, ns.speakers):
-            continue
-        if await ns.merge(anchor, [e]):
-            merged += 1
-    return merged
 
 
-def _anchor_buckets(persons: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Candidate anchors keyed by their first three characters.
+def _no_veto(a: str, b: str) -> bool:
+    """The identity veto of a namespace with no pack rule: it forbids nothing."""
+    return False
 
-    A candidate short name is at least 3 characters and must be a strict prefix
-    of its anchor, so the two always agree on those three characters — the
-    bucket is exact, and it replaces a scan of every person per person (O(P^2))
-    with a lookup into one small bucket.
 
-    A malformed "X: utterance" name never anchors: "caroline" is a prefix of
-    "caroline: thanks, melanie", and merging the REAL person into the junk name
-    inverts the repair this layer performs.
+@dataclass(frozen=True)
+class Resolver:
+    """The ladder, holding the rules it climbs with.
+
+    Attributes:
+        veto: The pack's identity veto: True when these two ids never merge.
+        disjoint: Concept pairs that cannot describe one thing.
+        floor: Cosine below which the embedding says nothing.
+        margin: How far past the floor a cosine must reach to be evidence.
     """
-    buckets: dict[str, list[dict[str, Any]]] = {}
-    for p in persons:
-        norm = p["name_norm"]
-        if len(norm) >= 3 and ":" not in norm:
-            buckets.setdefault(norm[:3], []).append(p)
-    return buckets
+
+    veto: Callable[[str, str], bool] = _no_veto
+    disjoint: frozenset[frozenset[str]] = frozenset()
+    floor: float = 0.80
+    margin: float = 0.05
+
+    def resolve(self, left: EntityView, right: EntityView) -> Link:
+        """The first rung that answers for this pair, as a directed link."""
+        return _link((left, right), self.verdict(left, right))
+
+    def verdict(self, left: EntityView, right: EntityView) -> Verdict:
+        """The first rung of the ladder that answers for this pair.
+
+        The ladder is ordered by what it costs to be wrong: a veto is cheap and
+        final, a merge is the expensive commitment, a candidate defers.
+        """
+        if self.veto(left.id, right.id) or self._disjoint(left, right):
+            return Verdict(Layer.VETO, "veto", 0.0)
+        if self._strong(left, right):
+            return Verdict(Layer.STRONG, f"key={left.name_norm}", 1.0)
+        similarity = _cosine(left.embedding, right.embedding)
+        if shared := left.concepts & right.concepts:
+            evidence = f"concept={','.join(sorted(shared))}"
+            return Verdict(Layer.WEAK, evidence, max(similarity, self.floor))
+        if similarity >= self.floor + self.margin:
+            return Verdict(Layer.WEAK, f"cosine={similarity:.3f}", similarity)
+        return Verdict(Layer.NONE, "", similarity)
+
+    def plan(
+        self,
+        views: Mapping[str, EntityView],
+        neighbours: Mapping[str, Sequence[str]],
+    ) -> ResolutionPlan:
+        """Resolve every entity in *views* against the neighbours proposed for it.
+
+        *neighbours* is the proposal stream of blocking and the vector index, in
+        priority order; the cap in :mod:`.candidates` is what keeps this off a
+        full-table scan (FR-020). Nothing is written here — the plan is the
+        whole batch's decisions, so the log precedes every structural change.
+        """
+        merges: list[Link] = []
+        candidates: list[Link] = []
+        decided: set[tuple[str, str]] = set()
+        vetoed = truncated = 0
+        for entity_id, view in views.items():
+            pool = bounded_candidates(entity_id, neighbours.get(entity_id, ()))
+            truncated += pool.truncated
+            for other_id in pool.ids:
+                other = views.get(other_id)
+                # A pair is decided once: the reverse proposal is the same pair.
+                pair = (min(entity_id, other_id), max(entity_id, other_id))
+                if other is None or pair in decided:
+                    continue
+                decided.add(pair)
+                link = self.resolve(view, other)
+                if link.layer is Layer.STRONG:
+                    merges.append(link)
+                elif link.layer is Layer.WEAK:
+                    candidates.append(link)
+                elif link.layer is Layer.VETO:
+                    vetoed += 1
+        return ResolutionPlan(tuple(merges), tuple(candidates), vetoed, truncated)
+
+    def _disjoint(self, left: EntityView, right: EntityView) -> bool:
+        """True when the pair's concepts include a disjoint sibling pair."""
+        return any(
+            frozenset((one, other)) in self.disjoint
+            for one in left.concepts
+            for other in right.concepts
+            if one != other
+        )
+
+    def _strong(self, left: EntityView, right: EntityView) -> bool:
+        """Identical key within one block, under concepts that do not disagree."""
+        if left.name_norm != right.name_norm or left.block_key != right.block_key:
+            return False
+        return not (left.concepts and right.concepts) or bool(left.concepts & right.concepts)
 
 
-def _co_occurs(a: dict[str, Any], b: dict[str, Any], speakers: set[str]) -> bool:
-    """Both endpoints appear in the namespace (mentioned, or a known speaker)."""
+def replay(log: Iterable[Link]) -> dict[str, str]:
+    """Where each merged id ends up, folded out of the ``MERGED_INTO`` log alone.
 
-    def present(e: dict[str, Any]) -> bool:
-        return e.get("mention_count", 0) > 0 or e["name_norm"] in speakers
-
-    return present(a) and present(b)
-
-
-async def resolve_entities(store: Any, session_id: str = "") -> dict[str, int]:
-    """Run the layered resolver over the namespace ENTITY graph.
-
-    Entities are namespace-global (like ``consolidate_session``'s entity
-    promotion), so resolution is namespace-wide; ``session_id`` is accepted for
-    call-site symmetry with the rest of the flush path.
-
-    Returns ``{"dropped": n, "merged": n, "considered": n}``.
-
-    A conservative 4th layer (emb>=0.92 AND same-type AND co-occurring) is left
-    as a deliberate, off-by-default hook: it is not run here because embedding
-    similarity does not cleanly separate nickname merges from distinct
-    co-occurring people (see module docstring).
+    The log is replayed oldest decision first, then every chain is followed to
+    its end, so the result is the surviving id for each id the batch merged
+    away — the merge reconstructed without the entities it was decided from
+    (SC-007).
     """
-    ns = await _Namespace.load(store)
-    considered = len(ns.entities)
-    dropped = await _drop_junk(ns)
-    merged_morph = await _merge_standardized(ns)
-    merged_head = await _merge_syntactic_heads(ns)
-    merged_nick = await _merge_nicknames(ns)
-    merged = merged_morph + merged_head + merged_nick
-    log.info(
-        "resolve_entities: dropped=%d merged=%d (morphological=%d syntactic=%d nickname=%d)",
-        dropped,
-        merged,
-        merged_morph,
-        merged_head,
-        merged_nick,
+    merged = {link.source_id: link.target_id for link in sorted(log, key=lambda e: e.at)}
+    return {source: _survivor(merged, source) for source in merged}
+
+
+def _survivor(merged: Mapping[str, str], source: str) -> str:
+    """The end of *source*'s merge chain: the id no entry of the log merged away."""
+    seen = source
+    for _ in range(len(merged)):
+        if (further := merged.get(seen)) is None:
+            break
+        seen = further
+    return seen
+
+
+def undo(log: Sequence[Link], entry: Link) -> dict[str, str]:
+    """The same replay with *entry* dropped: one merge reversed from the log alone."""
+    return replay(link for link in log if link != entry)
+
+
+def _link(pair: tuple[EntityView, EntityView], verdict: Verdict) -> Link:
+    """*verdict* given a direction: the better-observed side survives the merge.
+
+    Direction is decided by observations then id, never by which view arrived
+    first — a batch reordered by the store must plan the same merge.
+    """
+    source, target = sorted(pair, key=lambda view: (view.observations, view.id))
+    return Link(
+        source_id=source.id,
+        target_id=target.id,
+        layer=verdict.layer,
+        evidence=verdict.evidence,
+        score=verdict.score,
+        at=datetime.now(UTC),
     )
-    return {"dropped": dropped, "merged": merged, "considered": considered}
+
+
+def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
+    """Cosine of two vectors, or ``0.0`` when either says nothing."""
+    if len(left) != len(right) or not left:
+        return 0.0
+    norms = math.sqrt(sum(value * value for value in left)) * math.sqrt(
+        sum(value * value for value in right)
+    )
+    return sum(a * b for a, b in zip(left, right, strict=True)) / norms if norms else 0.0

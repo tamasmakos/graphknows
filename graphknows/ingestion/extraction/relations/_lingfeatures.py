@@ -11,7 +11,7 @@ ontology properties nearest the chunk embedding; see
 
 None of the three helpers below is relation mining, and each still has a caller:
 
-* :func:`_resolve`        — ``relations/frame_srl.py`` speaker-resolves role fillers
+* :func:`_resolve`        — :func:`resolve_deixis` below speaker-resolves surfaces
 * :func:`noun_supersense` — ``entities/extractor.py::_arg_type`` types arguments
 * :func:`parse_speaker`   — ``entities/extractor.py::_line_speakers`` reads turns
 

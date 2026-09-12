@@ -1,0 +1,271 @@
+{"referent": "evaluation.__main__", "kind": "module", "mentions": ["evaluation.__main__", "evaluation/__main__.py"]}
+{"referent": "evaluation.audit.cli", "kind": "module", "mentions": ["audit/cli.py", "evaluation.audit.cli", "evaluation/audit/cli.py"]}
+{"referent": "evaluation.audit.core", "kind": "module", "mentions": ["audit/core.py", "evaluation.audit.core", "evaluation/audit/core.py"]}
+{"referent": "evaluation.beam.adapter", "kind": "module", "mentions": ["beam/adapter.py", "evaluation.beam.adapter", "evaluation/beam/adapter.py"]}
+{"referent": "evaluation.beam.cli", "kind": "module", "mentions": ["beam/cli.py", "evaluation.beam.cli", "evaluation/beam/cli.py"]}
+{"referent": "evaluation.beam.config", "kind": "module", "mentions": ["beam/config.py", "evaluation.beam.config", "evaluation/beam/config.py"]}
+{"referent": "evaluation.beam.dataset", "kind": "module", "mentions": ["beam/dataset.py", "evaluation.beam.dataset", "evaluation/beam/dataset.py"]}
+{"referent": "evaluation.beam.prompts", "kind": "module", "mentions": ["beam/prompts.py", "evaluation.beam.prompts", "evaluation/beam/prompts.py"]}
+{"referent": "evaluation.common.baseline", "kind": "module", "mentions": ["baseline.py", "common/baseline.py", "evaluation.common.baseline", "evaluation/common/baseline.py"]}
+{"referent": "evaluation.common.cache", "kind": "module", "mentions": ["common/cache.py", "evaluation.common.cache", "evaluation/common/cache.py"]}
+{"referent": "evaluation.common.config", "kind": "module", "mentions": ["common/config.py", "evaluation.common.config", "evaluation/common/config.py"]}
+{"referent": "evaluation.common.datamodels", "kind": "module", "mentions": ["common/datamodels.py", "datamodels.py", "evaluation.common.datamodels", "evaluation/common/datamodels.py"]}
+{"referent": "evaluation.common.dataset", "kind": "module", "mentions": ["common/dataset.py", "evaluation.common.dataset", "evaluation/common/dataset.py"]}
+{"referent": "evaluation.common.download", "kind": "module", "mentions": ["common/download.py", "download.py", "evaluation.common.download", "evaluation/common/download.py"]}
+{"referent": "evaluation.common.dspy_judge", "kind": "module", "mentions": ["common/dspy_judge.py", "dspy_judge.py", "evaluation.common.dspy_judge", "evaluation/common/dspy_judge.py"]}
+{"referent": "evaluation.common.ingestion", "kind": "module", "mentions": ["common/ingestion.py", "evaluation.common.ingestion", "evaluation/common/ingestion.py", "ingestion.py"]}
+{"referent": "evaluation.common.lexical", "kind": "module", "mentions": ["common/lexical.py", "evaluation.common.lexical", "evaluation/common/lexical.py"]}
+{"referent": "evaluation.common.llm", "kind": "module", "mentions": ["common/llm.py", "evaluation.common.llm", "evaluation/common/llm.py"]}
+{"referent": "evaluation.common.memories", "kind": "module", "mentions": ["common/memories.py", "evaluation.common.memories", "evaluation/common/memories.py", "memories.py"]}
+{"referent": "evaluation.common.pipeline", "kind": "module", "mentions": ["common/pipeline.py", "evaluation.common.pipeline", "evaluation/common/pipeline.py"]}
+{"referent": "evaluation.common.reporting", "kind": "module", "mentions": ["common/reporting.py", "evaluation.common.reporting", "evaluation/common/reporting.py", "reporting.py"]}
+{"referent": "evaluation.common.retrieval", "kind": "module", "mentions": ["common/retrieval.py", "evaluation.common.retrieval", "evaluation/common/retrieval.py"]}
+{"referent": "evaluation.common.tracing", "kind": "module", "mentions": ["common/tracing.py", "evaluation.common.tracing", "evaluation/common/tracing.py", "tracing.py"]}
+{"referent": "evaluation.deadweight", "kind": "module", "mentions": ["deadweight.py", "evaluation.deadweight", "evaluation/deadweight.py"]}
+{"referent": "evaluation.identity", "kind": "module", "mentions": ["evaluation.identity", "evaluation/identity.py", "identity.py"]}
+{"referent": "evaluation.locomo.adapter", "kind": "module", "mentions": ["evaluation.locomo.adapter", "evaluation/locomo/adapter.py", "locomo/adapter.py"]}
+{"referent": "evaluation.locomo.cli", "kind": "module", "mentions": ["evaluation.locomo.cli", "evaluation/locomo/cli.py", "locomo/cli.py"]}
+{"referent": "evaluation.locomo.config", "kind": "module", "mentions": ["evaluation.locomo.config", "evaluation/locomo/config.py", "locomo/config.py"]}
+{"referent": "evaluation.locomo.dataset", "kind": "module", "mentions": ["evaluation.locomo.dataset", "evaluation/locomo/dataset.py", "locomo/dataset.py"]}
+{"referent": "evaluation.locomo.prompts", "kind": "module", "mentions": ["evaluation.locomo.prompts", "evaluation/locomo/prompts.py", "locomo/prompts.py"]}
+{"referent": "evaluation.longmem.adapter", "kind": "module", "mentions": ["evaluation.longmem.adapter", "evaluation/longmem/adapter.py", "longmem/adapter.py"]}
+{"referent": "evaluation.longmem.cli", "kind": "module", "mentions": ["evaluation.longmem.cli", "evaluation/longmem/cli.py", "longmem/cli.py"]}
+{"referent": "evaluation.longmem.config", "kind": "module", "mentions": ["evaluation.longmem.config", "evaluation/longmem/config.py", "longmem/config.py"]}
+{"referent": "evaluation.longmem.dataset", "kind": "module", "mentions": ["evaluation.longmem.dataset", "evaluation/longmem/dataset.py", "longmem/dataset.py"]}
+{"referent": "evaluation.longmem.prompts", "kind": "module", "mentions": ["evaluation.longmem.prompts", "evaluation/longmem/prompts.py", "longmem/prompts.py"]}
+{"referent": "evaluation.scripts.convert_locomo", "kind": "module", "mentions": ["convert_locomo.py", "evaluation.scripts.convert_locomo", "evaluation/scripts/convert_locomo.py", "scripts/convert_locomo.py"]}
+{"referent": "evaluation.scripts.locomo_langgraph", "kind": "module", "mentions": ["evaluation.scripts.locomo_langgraph", "evaluation/scripts/locomo_langgraph.py", "locomo_langgraph.py", "scripts/locomo_langgraph.py"]}
+{"referent": "evaluation.scripts.retrieval_probe", "kind": "module", "mentions": ["evaluation.scripts.retrieval_probe", "evaluation/scripts/retrieval_probe.py", "retrieval_probe.py", "scripts/retrieval_probe.py"]}
+{"referent": "graphknows._version", "kind": "module", "mentions": ["_version.py", "graphknows._version", "graphknows/_version.py"]}
+{"referent": "graphknows.bounds", "kind": "module", "mentions": ["bounds.py", "graphknows.bounds", "graphknows/bounds.py"]}
+{"referent": "graphknows.channels._shared", "kind": "module", "mentions": ["channels/_shared.py", "graphknows.channels._shared", "graphknows/channels/_shared.py"]}
+{"referent": "graphknows.channels.base", "kind": "module", "mentions": ["channels/base.py", "graphknows.channels.base", "graphknows/channels/base.py"]}
+{"referent": "graphknows.channels.frame_facts", "kind": "module", "mentions": ["channels/frame_facts.py", "frame_facts.py", "graphknows.channels.frame_facts", "graphknows/channels/frame_facts.py"]}
+{"referent": "graphknows.channels.frames", "kind": "module", "mentions": ["channels/frames.py", "graphknows.channels.frames", "graphknows/channels/frames.py"]}
+{"referent": "graphknows.channels.ontology", "kind": "module", "mentions": ["channels/ontology.py", "graphknows.channels.ontology", "graphknows/channels/ontology.py"]}
+{"referent": "graphknows.channels.registry", "kind": "module", "mentions": ["channels/registry.py", "graphknows.channels.registry", "graphknows/channels/registry.py"]}
+{"referent": "graphknows.cli.topics", "kind": "module", "mentions": ["cli/topics.py", "graphknows.cli.topics", "graphknows/cli/topics.py"]}
+{"referent": "graphknows.exceptions", "kind": "module", "mentions": ["exceptions.py", "graphknows.exceptions", "graphknows/exceptions.py"]}
+{"referent": "graphknows.ingestion.consolidation.entity_resolution", "kind": "module", "mentions": ["entity_resolution.py", "graphknows.ingestion.consolidation.entity_resolution", "graphknows/ingestion/consolidation/entity_resolution.py", "ingestion/consolidation/entity_resolution.py"]}
+{"referent": "graphknows.ingestion.extraction.entities.extractor", "kind": "module", "mentions": ["extractor.py", "graphknows.ingestion.extraction.entities.extractor", "graphknows/ingestion/extraction/entities/extractor.py", "ingestion/extraction/entities/extractor.py"]}
+{"referent": "graphknows.ingestion.extraction.entities.gliner_model", "kind": "module", "mentions": ["gliner_model.py", "graphknows.ingestion.extraction.entities.gliner_model", "graphknows/ingestion/extraction/entities/gliner_model.py", "ingestion/extraction/entities/gliner_model.py"]}
+{"referent": "graphknows.ingestion.extraction.entities.hygiene", "kind": "module", "mentions": ["graphknows.ingestion.extraction.entities.hygiene", "graphknows/ingestion/extraction/entities/hygiene.py", "hygiene.py", "ingestion/extraction/entities/hygiene.py"]}
+{"referent": "graphknows.ingestion.extraction.entities.typing_model", "kind": "module", "mentions": ["graphknows.ingestion.extraction.entities.typing_model", "graphknows/ingestion/extraction/entities/typing_model.py", "ingestion/extraction/entities/typing_model.py", "typing_model.py"]}
+{"referent": "graphknows.ingestion.extraction.llm.anchor", "kind": "module", "mentions": ["anchor.py", "graphknows.ingestion.extraction.llm.anchor", "graphknows/ingestion/extraction/llm/anchor.py", "ingestion/extraction/llm/anchor.py"]}
+{"referent": "graphknows.ingestion.extraction.llm.decoder", "kind": "module", "mentions": ["decoder.py", "graphknows.ingestion.extraction.llm.decoder", "graphknows/ingestion/extraction/llm/decoder.py", "ingestion/extraction/llm/decoder.py"]}
+{"referent": "graphknows.ingestion.extraction.llm.retry", "kind": "module", "mentions": ["graphknows.ingestion.extraction.llm.retry", "graphknows/ingestion/extraction/llm/retry.py", "ingestion/extraction/llm/retry.py", "retry.py"]}
+{"referent": "graphknows.ingestion.extraction.llm.schema", "kind": "module", "mentions": ["graphknows.ingestion.extraction.llm.schema", "graphknows/ingestion/extraction/llm/schema.py", "ingestion/extraction/llm/schema.py"]}
+{"referent": "graphknows.ingestion.extraction.relations._gliner2_verifier", "kind": "module", "mentions": ["_gliner2_verifier.py", "graphknows.ingestion.extraction.relations._gliner2_verifier", "graphknows/ingestion/extraction/relations/_gliner2_verifier.py", "ingestion/extraction/relations/_gliner2_verifier.py"]}
+{"referent": "graphknows.ingestion.extraction.relations._lingfeatures", "kind": "module", "mentions": ["_lingfeatures.py", "graphknows.ingestion.extraction.relations._lingfeatures", "graphknows/ingestion/extraction/relations/_lingfeatures.py", "ingestion/extraction/relations/_lingfeatures.py"]}
+{"referent": "graphknows.ingestion.extraction.relations.filter", "kind": "module", "mentions": ["graphknows.ingestion.extraction.relations.filter", "graphknows/ingestion/extraction/relations/filter.py", "ingestion/extraction/relations/filter.py"]}
+{"referent": "graphknows.ingestion.extraction.relations.frame_srl", "kind": "module", "mentions": ["frame_srl.py", "graphknows.ingestion.extraction.relations.frame_srl", "graphknows/ingestion/extraction/relations/frame_srl.py", "ingestion/extraction/relations/frame_srl.py"]}
+{"referent": "graphknows.ingestion.extraction.relations.verifier", "kind": "module", "mentions": ["graphknows.ingestion.extraction.relations.verifier", "graphknows/ingestion/extraction/relations/verifier.py", "ingestion/extraction/relations/verifier.py", "verifier.py"]}
+{"referent": "graphknows.ingestion.parsers._sentences", "kind": "module", "mentions": ["_sentences.py", "graphknows.ingestion.parsers._sentences", "graphknows/ingestion/parsers/_sentences.py", "ingestion/parsers/_sentences.py"]}
+{"referent": "graphknows.ingestion.parsers.text", "kind": "module", "mentions": ["graphknows.ingestion.parsers.text", "graphknows/ingestion/parsers/text.py", "ingestion/parsers/text.py"]}
+{"referent": "graphknows.ingestion.stm._attribution", "kind": "module", "mentions": ["_attribution.py", "graphknows.ingestion.stm._attribution", "graphknows/ingestion/stm/_attribution.py", "ingestion/stm/_attribution.py"]}
+{"referent": "graphknows.ingestion.stm._deixis", "kind": "module", "mentions": ["_deixis.py", "graphknows.ingestion.stm._deixis", "graphknows/ingestion/stm/_deixis.py", "ingestion/stm/_deixis.py"]}
+{"referent": "graphknows.ingestion.stm.ingest", "kind": "module", "mentions": ["graphknows.ingestion.stm.ingest", "graphknows/ingestion/stm/ingest.py", "ingestion/stm/ingest.py"]}
+{"referent": "graphknows.ingestion.stm.service", "kind": "module", "mentions": ["graphknows.ingestion.stm.service", "graphknows/ingestion/stm/service.py", "ingestion/stm/service.py"]}
+{"referent": "graphknows.integrations.client.mcp", "kind": "module", "mentions": ["graphknows.integrations.client.mcp", "graphknows/integrations/client/mcp.py", "integrations/client/mcp.py", "mcp.py"]}
+{"referent": "graphknows.integrations.langgraph._hooks", "kind": "module", "mentions": ["_hooks.py", "graphknows.integrations.langgraph._hooks", "graphknows/integrations/langgraph/_hooks.py", "integrations/langgraph/_hooks.py"]}
+{"referent": "graphknows.integrations.langgraph._session", "kind": "module", "mentions": ["_session.py", "graphknows.integrations.langgraph._session", "graphknows/integrations/langgraph/_session.py", "integrations/langgraph/_session.py"]}
+{"referent": "graphknows.integrations.langgraph._store", "kind": "module", "mentions": ["graphknows.integrations.langgraph._store", "graphknows/integrations/langgraph/_store.py", "integrations/langgraph/_store.py"]}
+{"referent": "graphknows.linguistics", "kind": "module", "mentions": ["graphknows.linguistics", "graphknows/linguistics.py", "linguistics.py"]}
+{"referent": "graphknows.llm", "kind": "module", "mentions": ["graphknows.llm", "graphknows/llm.py"]}
+{"referent": "graphknows.memory", "kind": "module", "mentions": ["graphknows.memory", "graphknows/memory.py"]}
+{"referent": "graphknows.models.hit", "kind": "module", "mentions": ["graphknows.models.hit", "graphknows/models/hit.py", "hit.py", "models/hit.py"]}
+{"referent": "graphknows.models.ingest", "kind": "module", "mentions": ["graphknows.models.ingest", "graphknows/models/ingest.py", "models/ingest.py"]}
+{"referent": "graphknows.models.ingest_options", "kind": "module", "mentions": ["graphknows.models.ingest_options", "graphknows/models/ingest_options.py", "ingest_options.py", "models/ingest_options.py"]}
+{"referent": "graphknows.models.memory_class", "kind": "module", "mentions": ["graphknows.models.memory_class", "graphknows/models/memory_class.py", "memory_class.py", "models/memory_class.py"]}
+{"referent": "graphknows.models.message", "kind": "module", "mentions": ["graphknows.models.message", "graphknows/models/message.py", "models/message.py"]}
+{"referent": "graphknows.models.scope", "kind": "module", "mentions": ["graphknows.models.scope", "graphknows/models/scope.py", "models/scope.py", "scope.py"]}
+{"referent": "graphknows.nlp", "kind": "module", "mentions": ["graphknows.nlp", "graphknows/nlp.py", "nlp.py"]}
+{"referent": "graphknows.ranking.frame_boost", "kind": "module", "mentions": ["frame_boost.py", "graphknows.ranking.frame_boost", "graphknows/ranking/frame_boost.py", "ranking/frame_boost.py"]}
+{"referent": "graphknows.ranking.rrf", "kind": "module", "mentions": ["graphknows.ranking.rrf", "graphknows/ranking/rrf.py", "ranking/rrf.py", "rrf.py"]}
+{"referent": "graphknows.retrieval.models.context", "kind": "module", "mentions": ["graphknows.retrieval.models.context", "graphknows/retrieval/models/context.py", "retrieval/models/context.py"]}
+{"referent": "graphknows.retrieval.retriever", "kind": "module", "mentions": ["graphknows.retrieval.retriever", "graphknows/retrieval/retriever.py", "retrieval/retriever.py"]}
+{"referent": "graphknows.server.mcp._app", "kind": "module", "mentions": ["_app.py", "graphknows.server.mcp._app", "graphknows/server/mcp/_app.py", "server/mcp/_app.py"]}
+{"referent": "graphknows.server.mcp._bounded", "kind": "module", "mentions": ["_bounded.py", "graphknows.server.mcp._bounded", "graphknows/server/mcp/_bounded.py", "server/mcp/_bounded.py"]}
+{"referent": "graphknows.server.mcp._state", "kind": "module", "mentions": ["graphknows.server.mcp._state", "graphknows/server/mcp/_state.py", "server/mcp/_state.py"]}
+{"referent": "graphknows.server.mcp.stdio_server", "kind": "module", "mentions": ["graphknows.server.mcp.stdio_server", "graphknows/server/mcp/stdio_server.py", "server/mcp/stdio_server.py", "stdio_server.py"]}
+{"referent": "graphknows.server.mcp.tools.admin", "kind": "module", "mentions": ["admin.py", "graphknows.server.mcp.tools.admin", "graphknows/server/mcp/tools/admin.py", "server/mcp/tools/admin.py"]}
+{"referent": "graphknows.server.mcp.tools.corpus", "kind": "module", "mentions": ["corpus.py", "graphknows.server.mcp.tools.corpus", "graphknows/server/mcp/tools/corpus.py", "server/mcp/tools/corpus.py"]}
+{"referent": "graphknows.server.mcp.tools.ltm", "kind": "module", "mentions": ["graphknows.server.mcp.tools.ltm", "graphknows/server/mcp/tools/ltm.py", "ltm.py", "server/mcp/tools/ltm.py"]}
+{"referent": "graphknows.server.mcp.tools.query", "kind": "module", "mentions": ["graphknows.server.mcp.tools.query", "graphknows/server/mcp/tools/query.py", "server/mcp/tools/query.py"]}
+{"referent": "graphknows.server.mcp.tools.stm", "kind": "module", "mentions": ["graphknows.server.mcp.tools.stm", "graphknows/server/mcp/tools/stm.py", "server/mcp/tools/stm.py", "stm.py"]}
+{"referent": "graphknows.server.mcp.tools.topics", "kind": "module", "mentions": ["graphknows.server.mcp.tools.topics", "graphknows/server/mcp/tools/topics.py", "server/mcp/tools/topics.py"]}
+{"referent": "graphknows.settings", "kind": "module", "mentions": ["graphknows.settings", "graphknows/settings.py", "settings.py"]}
+{"referent": "graphknows.storage.arcadedb._base", "kind": "module", "mentions": ["graphknows.storage.arcadedb._base", "graphknows/storage/arcadedb/_base.py", "storage/arcadedb/_base.py"]}
+{"referent": "graphknows.storage.arcadedb._schema", "kind": "module", "mentions": ["graphknows.storage.arcadedb._schema", "graphknows/storage/arcadedb/_schema.py", "storage/arcadedb/_schema.py"]}
+{"referent": "graphknows.storage.arcadedb._sql", "kind": "module", "mentions": ["_sql.py", "graphknows.storage.arcadedb._sql", "graphknows/storage/arcadedb/_sql.py", "storage/arcadedb/_sql.py"]}
+{"referent": "graphknows.storage.arcadedb.client", "kind": "module", "mentions": ["graphknows.storage.arcadedb.client", "graphknows/storage/arcadedb/client.py", "storage/arcadedb/client.py"]}
+{"referent": "graphknows.storage.arcadedb.graph_store", "kind": "module", "mentions": ["graph_store.py", "graphknows.storage.arcadedb.graph_store", "graphknows/storage/arcadedb/graph_store.py", "storage/arcadedb/graph_store.py"]}
+{"referent": "graphknows.storage.embedder", "kind": "module", "mentions": ["embedder.py", "graphknows.storage.embedder", "graphknows/storage/embedder.py", "storage/embedder.py"]}
+{"referent": "graphknows.storage.namespace", "kind": "module", "mentions": ["graphknows.storage.namespace", "graphknows/storage/namespace.py", "namespace.py", "storage/namespace.py"]}
+{"referent": "graphknows.symbolic.framenet.fe", "kind": "module", "mentions": ["fe.py", "graphknows.symbolic.framenet.fe", "graphknows/symbolic/framenet/fe.py", "symbolic/framenet/fe.py"]}
+{"referent": "graphknows.symbolic.framenet.framenet", "kind": "module", "mentions": ["framenet.py", "graphknows.symbolic.framenet.framenet", "graphknows/symbolic/framenet/framenet.py", "symbolic/framenet/framenet.py"]}
+{"referent": "graphknows.symbolic.framenet.index", "kind": "module", "mentions": ["graphknows.symbolic.framenet.index", "graphknows/symbolic/framenet/index.py", "symbolic/framenet/index.py"]}
+{"referent": "graphknows.symbolic.framenet.relations", "kind": "module", "mentions": ["graphknows.symbolic.framenet.relations", "graphknows/symbolic/framenet/relations.py", "relations.py", "symbolic/framenet/relations.py"]}
+{"referent": "graphknows.symbolic.framenet.srl", "kind": "module", "mentions": ["graphknows.symbolic.framenet.srl", "graphknows/symbolic/framenet/srl.py", "srl.py", "symbolic/framenet/srl.py"]}
+{"referent": "graphknows.symbolic.index", "kind": "module", "mentions": ["graphknows.symbolic.index", "graphknows/symbolic/index.py", "symbolic/index.py"]}
+{"referent": "graphknows.symbolic.match", "kind": "module", "mentions": ["graphknows.symbolic.match", "graphknows/symbolic/match.py", "symbolic/match.py"]}
+{"referent": "graphknows.symbolic.ontology.catalog", "kind": "module", "mentions": ["catalog.py", "graphknows.symbolic.ontology.catalog", "graphknows/symbolic/ontology/catalog.py", "symbolic/ontology/catalog.py"]}
+{"referent": "graphknows.symbolic.ontology.digest", "kind": "module", "mentions": ["digest.py", "graphknows.symbolic.ontology.digest", "graphknows/symbolic/ontology/digest.py", "symbolic/ontology/digest.py"]}
+{"referent": "graphknows.symbolic.ontology.labels", "kind": "module", "mentions": ["graphknows.symbolic.ontology.labels", "graphknows/symbolic/ontology/labels.py", "symbolic/ontology/labels.py"]}
+{"referent": "graphknows.symbolic.ontology.lexical", "kind": "module", "mentions": ["graphknows.symbolic.ontology.lexical", "graphknows/symbolic/ontology/lexical.py", "symbolic/ontology/lexical.py"]}
+{"referent": "graphknows.symbolic.ontology.loader", "kind": "module", "mentions": ["graphknows.symbolic.ontology.loader", "graphknows/symbolic/ontology/loader.py", "symbolic/ontology/loader.py"]}
+{"referent": "graphknows.symbolic.ontology.rdf.__main__", "kind": "module", "mentions": ["graphknows.symbolic.ontology.rdf.__main__", "graphknows/symbolic/ontology/rdf/__main__.py", "symbolic/ontology/rdf/__main__.py"]}
+{"referent": "graphknows.symbolic.ontology.rdf.digest_export", "kind": "module", "mentions": ["digest_export.py", "graphknows.symbolic.ontology.rdf.digest_export", "graphknows/symbolic/ontology/rdf/digest_export.py", "symbolic/ontology/rdf/digest_export.py"]}
+{"referent": "graphknows.symbolic.ontology.rdf.prefixes", "kind": "module", "mentions": ["graphknows.symbolic.ontology.rdf.prefixes", "graphknows/symbolic/ontology/rdf/prefixes.py", "prefixes.py", "symbolic/ontology/rdf/prefixes.py"]}
+{"referent": "graphknows.symbolic.ontology.rdf.projection", "kind": "module", "mentions": ["graphknows.symbolic.ontology.rdf.projection", "graphknows/symbolic/ontology/rdf/projection.py", "projection.py", "symbolic/ontology/rdf/projection.py"]}
+{"referent": "graphknows.symbolic.ontology.rdf.store", "kind": "module", "mentions": ["graphknows.symbolic.ontology.rdf.store", "graphknows/symbolic/ontology/rdf/store.py", "symbolic/ontology/rdf/store.py"]}
+{"referent": "graphknows.symbolic.ontology.rdf.taxonomy", "kind": "module", "mentions": ["graphknows.symbolic.ontology.rdf.taxonomy", "graphknows/symbolic/ontology/rdf/taxonomy.py", "symbolic/ontology/rdf/taxonomy.py"]}
+{"referent": "graphknows.symbolic.ontology.rdf_io", "kind": "module", "mentions": ["graphknows.symbolic.ontology.rdf_io", "graphknows/symbolic/ontology/rdf_io.py", "rdf_io.py", "symbolic/ontology/rdf_io.py"]}
+{"referent": "graphknows.symbolic.ontology.scheme", "kind": "module", "mentions": ["graphknows.symbolic.ontology.scheme", "graphknows/symbolic/ontology/scheme.py", "scheme.py", "symbolic/ontology/scheme.py"]}
+{"referent": "graphknows.symbolic.ontology.senses", "kind": "module", "mentions": ["graphknows.symbolic.ontology.senses", "graphknows/symbolic/ontology/senses.py", "senses.py", "symbolic/ontology/senses.py"]}
+{"referent": "graphknows.symbolic.ontology.skos", "kind": "module", "mentions": ["graphknows.symbolic.ontology.skos", "graphknows/symbolic/ontology/skos.py", "skos.py", "symbolic/ontology/skos.py"]}
+{"referent": "graphknows.symbolic.wordnet", "kind": "module", "mentions": ["graphknows.symbolic.wordnet", "graphknows/symbolic/wordnet.py", "symbolic/wordnet.py", "wordnet.py"]}
+{"referent": "graphknows.temporal", "kind": "module", "mentions": ["graphknows.temporal", "graphknows/temporal.py", "temporal.py"]}
+{"referent": "graphknows.topics.builder", "kind": "module", "mentions": ["builder.py", "graphknows.topics.builder", "graphknows/topics/builder.py", "topics/builder.py"]}
+{"referent": "graphknows.topics.config", "kind": "module", "mentions": ["graphknows.topics.config", "graphknows/topics/config.py", "topics/config.py"]}
+{"referent": "graphknows.topics.metrics", "kind": "module", "mentions": ["graphknows.topics.metrics", "graphknows/topics/metrics.py", "topics/metrics.py"]}
+{"referent": "graphknows.topics.model", "kind": "module", "mentions": ["graphknows.topics.model", "graphknows/topics/model.py", "topics/model.py"]}
+{"referent": "graphknows.topics.persist", "kind": "module", "mentions": ["graphknows.topics.persist", "graphknows/topics/persist.py", "persist.py", "topics/persist.py"]}
+{"referent": "graphknows.topics.summarize", "kind": "module", "mentions": ["graphknows.topics.summarize", "graphknows/topics/summarize.py", "summarize.py", "topics/summarize.py"]}
+{"referent": "graphknows.worth", "kind": "module", "mentions": ["graphknows.worth", "graphknows/worth.py", "worth.py"]}
+{"referent": "graphknows.storage.arcadedb.client.ArcadeDBClient", "kind": "class", "mentions": ["ArcadeDBClient", "graphknows.storage.arcadedb.client.ArcadeDBClient", "graphknows/storage/arcadedb/client.py::ArcadeDBClient"]}
+{"referent": "graphknows.storage.arcadedb._base.ArcadeStoreBase", "kind": "class", "mentions": ["ArcadeStoreBase", "graphknows.storage.arcadedb._base.ArcadeStoreBase", "graphknows/storage/arcadedb/_base.py::ArcadeStoreBase"]}
+{"referent": "evaluation.audit.core.AxisPrecision", "kind": "class", "mentions": ["AxisPrecision", "evaluation.audit.core.AxisPrecision", "evaluation/audit/core.py::AxisPrecision"]}
+{"referent": "evaluation.common.config.BaseEvalConfig", "kind": "class", "mentions": ["BaseEvalConfig", "evaluation.common.config.BaseEvalConfig", "evaluation/common/config.py::BaseEvalConfig"]}
+{"referent": "evaluation.common.reporting.BaselineMetric", "kind": "class", "mentions": ["BaselineMetric", "evaluation.common.reporting.BaselineMetric", "evaluation/common/reporting.py::BaselineMetric"]}
+{"referent": "evaluation.beam.adapter.BeamAdapter", "kind": "class", "mentions": ["BeamAdapter", "evaluation.beam.adapter.BeamAdapter", "evaluation/beam/adapter.py::BeamAdapter"]}
+{"referent": "evaluation.beam.config.BeamConfig", "kind": "class", "mentions": ["BeamConfig", "evaluation.beam.config.BeamConfig", "evaluation/beam/config.py::BeamConfig"]}
+{"referent": "evaluation.common.pipeline.BenchmarkAdapter", "kind": "class", "mentions": ["BenchmarkAdapter", "evaluation.common.pipeline.BenchmarkAdapter", "evaluation/common/pipeline.py::BenchmarkAdapter"]}
+{"referent": "graphknows.exceptions.BrokenInstallError", "kind": "class", "mentions": ["BrokenInstallError", "graphknows.exceptions.BrokenInstallError", "graphknows/exceptions.py::BrokenInstallError"]}
+{"referent": "evaluation.common.datamodels.CaseResult", "kind": "class", "mentions": ["CaseResult", "evaluation.common.datamodels.CaseResult", "evaluation/common/datamodels.py::CaseResult"]}
+{"referent": "graphknows.channels.base.Channel", "kind": "class", "mentions": ["graphknows.channels.base.Channel", "graphknows/channels/base.py::Channel"]}
+{"referent": "graphknows.channels.base.ChannelContext", "kind": "class", "mentions": ["ChannelContext", "graphknows.channels.base.ChannelContext", "graphknows/channels/base.py::ChannelContext"]}
+{"referent": "evaluation.common.llm.ChatLLM", "kind": "class", "mentions": ["ChatLLM", "evaluation.common.llm.ChatLLM", "evaluation/common/llm.py::ChatLLM"]}
+{"referent": "graphknows.symbolic.ontology.rdf_io.Closure", "kind": "class", "mentions": ["graphknows.symbolic.ontology.rdf_io.Closure", "graphknows/symbolic/ontology/rdf_io.py::Closure"]}
+{"referent": "graphknows.symbolic.ontology.skos.Concept", "kind": "class", "mentions": ["graphknows.symbolic.ontology.skos.Concept", "graphknows/symbolic/ontology/skos.py::Concept"]}
+{"referent": "graphknows.exceptions.ConfigurationError", "kind": "class", "mentions": ["ConfigurationError", "graphknows.exceptions.ConfigurationError", "graphknows/exceptions.py::ConfigurationError"]}
+{"referent": "evaluation.common.llm.CreditExhaustedError", "kind": "class", "mentions": ["CreditExhaustedError", "evaluation.common.llm.CreditExhaustedError", "evaluation/common/llm.py::CreditExhaustedError"]}
+{"referent": "graphknows.retrieval.retriever.DETRetriever", "kind": "class", "mentions": ["DETRetriever", "graphknows.retrieval.retriever.DETRetriever", "graphknows/retrieval/retriever.py::DETRetriever"]}
+{"referent": "evaluation.common.dspy_judge.DSPyJudge", "kind": "class", "mentions": ["DSPyJudge", "evaluation.common.dspy_judge.DSPyJudge", "evaluation/common/dspy_judge.py::DSPyJudge"]}
+{"referent": "evaluation.deadweight.DeadWeight", "kind": "class", "mentions": ["DeadWeight", "evaluation.deadweight.DeadWeight", "evaluation/deadweight.py::DeadWeight"]}
+{"referent": "graphknows.ingestion.extraction.llm.schema.DecodeRequest", "kind": "class", "mentions": ["DecodeRequest", "graphknows.ingestion.extraction.llm.schema.DecodeRequest", "graphknows/ingestion/extraction/llm/schema.py::DecodeRequest"]}
+{"referent": "graphknows.ingestion.extraction.llm.schema.DecodeResponse", "kind": "class", "mentions": ["DecodeResponse", "graphknows.ingestion.extraction.llm.schema.DecodeResponse", "graphknows/ingestion/extraction/llm/schema.py::DecodeResponse"]}
+{"referent": "graphknows.ingestion.extraction.llm.schema.DecodedEntity", "kind": "class", "mentions": ["DecodedEntity", "graphknows.ingestion.extraction.llm.schema.DecodedEntity", "graphknows/ingestion/extraction/llm/schema.py::DecodedEntity"]}
+{"referent": "graphknows.ingestion.extraction.llm.schema.DecodedFrameInstance", "kind": "class", "mentions": ["DecodedFrameInstance", "graphknows.ingestion.extraction.llm.schema.DecodedFrameInstance", "graphknows/ingestion/extraction/llm/schema.py::DecodedFrameInstance"]}
+{"referent": "graphknows.ingestion.extraction.llm.schema.DecodedItems", "kind": "class", "mentions": ["DecodedItems", "graphknows.ingestion.extraction.llm.schema.DecodedItems", "graphknows/ingestion/extraction/llm/schema.py::DecodedItems"]}
+{"referent": "graphknows.ingestion.extraction.llm.schema.DecodedRelation", "kind": "class", "mentions": ["DecodedRelation", "graphknows.ingestion.extraction.llm.schema.DecodedRelation", "graphknows/ingestion/extraction/llm/schema.py::DecodedRelation"]}
+{"referent": "graphknows.settings.Decoder", "kind": "class", "mentions": ["graphknows.settings.Decoder", "graphknows/settings.py::Decoder"]}
+{"referent": "graphknows.settings.Env", "kind": "class", "mentions": ["graphknows.settings.Env", "graphknows/settings.py::Env"]}
+{"referent": "evaluation.common.datamodels.EvalCase", "kind": "class", "mentions": ["EvalCase", "evaluation.common.datamodels.EvalCase", "evaluation/common/datamodels.py::EvalCase"]}
+{"referent": "evaluation.common.datamodels.EvalDocument", "kind": "class", "mentions": ["EvalDocument", "evaluation.common.datamodels.EvalDocument", "evaluation/common/datamodels.py::EvalDocument"]}
+{"referent": "graphknows.ingestion.stm.ingest.ExtractedChunk", "kind": "class", "mentions": ["ExtractedChunk", "graphknows.ingestion.stm.ingest.ExtractedChunk", "graphknows/ingestion/stm/ingest.py::ExtractedChunk"]}
+{"referent": "graphknows.ingestion.extraction.entities.extractor.ExtractionResult", "kind": "class", "mentions": ["ExtractionResult", "graphknows.ingestion.extraction.entities.extractor.ExtractionResult", "graphknows/ingestion/extraction/entities/extractor.py::ExtractionResult"]}
+{"referent": "evaluation.audit.core.FactPrecision", "kind": "class", "mentions": ["FactPrecision", "evaluation.audit.core.FactPrecision", "evaluation/audit/core.py::FactPrecision"]}
+{"referent": "graphknows.ingestion.extraction.llm.schema.FrameCandidate", "kind": "class", "mentions": ["FrameCandidate", "graphknows.ingestion.extraction.llm.schema.FrameCandidate", "graphknows/ingestion/extraction/llm/schema.py::FrameCandidate"]}
+{"referent": "graphknows.channels.frames.FrameChannel", "kind": "class", "mentions": ["FrameChannel", "graphknows.channels.frames.FrameChannel", "graphknows/channels/frames.py::FrameChannel"]}
+{"referent": "graphknows.symbolic.framenet.fe.FrameElement", "kind": "class", "mentions": ["FrameElement", "graphknows.symbolic.framenet.fe.FrameElement", "graphknows/symbolic/framenet/fe.py::FrameElement"]}
+{"referent": "graphknows.channels.frame_facts.FrameFactChannel", "kind": "class", "mentions": ["FrameFactChannel", "graphknows.channels.frame_facts.FrameFactChannel", "graphknows/channels/frame_facts.py::FrameFactChannel"]}
+{"referent": "graphknows.symbolic.framenet.srl.FrameHit", "kind": "class", "mentions": ["FrameHit", "graphknows.symbolic.framenet.srl.FrameHit", "graphknows/symbolic/framenet/srl.py::FrameHit"]}
+{"referent": "graphknows.ingestion.extraction.relations.frame_srl.FrameInstance", "kind": "class", "mentions": ["FrameInstance", "graphknows.ingestion.extraction.relations.frame_srl.FrameInstance", "graphknows/ingestion/extraction/relations/frame_srl.py::FrameInstance"]}
+{"referent": "graphknows.ingestion.extraction.relations.frame_srl.FrameTrigger", "kind": "class", "mentions": ["FrameTrigger", "graphknows.ingestion.extraction.relations.frame_srl.FrameTrigger", "graphknows/ingestion/extraction/relations/frame_srl.py::FrameTrigger"]}
+{"referent": "graphknows.ingestion.extraction.entities.extractor.GLiNER2EntityExtractor", "kind": "class", "mentions": ["GLiNER2EntityExtractor", "graphknows.ingestion.extraction.entities.extractor.GLiNER2EntityExtractor", "graphknows/ingestion/extraction/entities/extractor.py::GLiNER2EntityExtractor"]}
+{"referent": "graphknows.ingestion.extraction.llm.anchor.GatedDecode", "kind": "class", "mentions": ["GatedDecode", "graphknows.ingestion.extraction.llm.anchor.GatedDecode", "graphknows/ingestion/extraction/llm/anchor.py::GatedDecode"]}
+{"referent": "graphknows.exceptions.GraphKnowsError", "kind": "class", "mentions": ["GraphKnowsError", "graphknows.exceptions.GraphKnowsError", "graphknows/exceptions.py::GraphKnowsError"]}
+{"referent": "graphknows.integrations.client.mcp.GraphKnowsMCPClient", "kind": "class", "mentions": ["GraphKnowsMCPClient", "graphknows.integrations.client.mcp.GraphKnowsMCPClient", "graphknows/integrations/client/mcp.py::GraphKnowsMCPClient"]}
+{"referent": "graphknows.integrations.langgraph._session.GraphKnowsMemory", "kind": "class", "mentions": ["GraphKnowsMemory", "graphknows.integrations.langgraph._session.GraphKnowsMemory", "graphknows/integrations/langgraph/_session.py::GraphKnowsMemory"]}
+{"referent": "graphknows.settings.GraphKnowsSettings", "kind": "class", "mentions": ["GraphKnowsSettings", "graphknows.settings.GraphKnowsSettings", "graphknows/settings.py::GraphKnowsSettings"]}
+{"referent": "graphknows.integrations.langgraph._store.GraphKnowsStore", "kind": "class", "mentions": ["GraphKnowsStore", "graphknows.integrations.langgraph._store.GraphKnowsStore", "graphknows/integrations/langgraph/_store.py::GraphKnowsStore"]}
+{"referent": "graphknows.storage.arcadedb.graph_store.GraphStore", "kind": "class", "mentions": ["graphknows.storage.arcadedb.graph_store.GraphStore", "graphknows/storage/arcadedb/graph_store.py::GraphStore"]}
+{"referent": "graphknows.symbolic.ontology.rdf.taxonomy.Hier", "kind": "class", "mentions": ["graphknows.symbolic.ontology.rdf.taxonomy.Hier", "graphknows/symbolic/ontology/rdf/taxonomy.py::Hier"]}
+{"referent": "graphknows.models.hit.Hit", "kind": "class", "mentions": ["graphknows.models.hit.Hit", "graphknows/models/hit.py::Hit"]}
+{"referent": "evaluation.identity.IdentityScore", "kind": "class", "mentions": ["IdentityScore", "evaluation.identity.IdentityScore", "evaluation/identity.py::IdentityScore"]}
+{"referent": "graphknows.models.ingest_options.IngestOptions", "kind": "class", "mentions": ["IngestOptions", "graphknows.models.ingest_options.IngestOptions", "graphknows/models/ingest_options.py::IngestOptions"]}
+{"referent": "evaluation.common.datamodels.IngestUnit", "kind": "class", "mentions": ["IngestUnit", "evaluation.common.datamodels.IngestUnit", "evaluation/common/datamodels.py::IngestUnit"]}
+{"referent": "evaluation.common.ingestion.Ingestor", "kind": "class", "mentions": ["evaluation.common.ingestion.Ingestor", "evaluation/common/ingestion.py::Ingestor"]}
+{"referent": "evaluation.common.reporting.InternalMetrics", "kind": "class", "mentions": ["InternalMetrics", "evaluation.common.reporting.InternalMetrics", "evaluation/common/reporting.py::InternalMetrics"]}
+{"referent": "evaluation.common.cache.JudgeCache", "kind": "class", "mentions": ["JudgeCache", "evaluation.common.cache.JudgeCache", "evaluation/common/cache.py::JudgeCache"]}
+{"referent": "evaluation.common.dspy_judge.JudgeSignature", "kind": "class", "mentions": ["JudgeSignature", "evaluation.common.dspy_judge.JudgeSignature", "evaluation/common/dspy_judge.py::JudgeSignature"]}
+{"referent": "graphknows.ingestion.extraction.llm.decoder.LLMDecoder", "kind": "class", "mentions": ["LLMDecoder", "graphknows.ingestion.extraction.llm.decoder.LLMDecoder", "graphknows/ingestion/extraction/llm/decoder.py::LLMDecoder"]}
+{"referent": "graphknows.symbolic.ontology.rdf.taxonomy.Link", "kind": "class", "mentions": ["graphknows.symbolic.ontology.rdf.taxonomy.Link", "graphknows/symbolic/ontology/rdf/taxonomy.py::Link"]}
+{"referent": "evaluation.scripts.locomo_langgraph.LoCoMoSessionSchema", "kind": "class", "mentions": ["LoCoMoSessionSchema", "evaluation.scripts.locomo_langgraph.LoCoMoSessionSchema", "evaluation/scripts/locomo_langgraph.py::LoCoMoSessionSchema"]}
+{"referent": "graphknows.symbolic.ontology.loader.LoadedOntology", "kind": "class", "mentions": ["LoadedOntology", "graphknows.symbolic.ontology.loader.LoadedOntology", "graphknows/symbolic/ontology/loader.py::LoadedOntology"]}
+{"referent": "evaluation.locomo.adapter.LocomoAdapter", "kind": "class", "mentions": ["LocomoAdapter", "evaluation.locomo.adapter.LocomoAdapter", "evaluation/locomo/adapter.py::LocomoAdapter"]}
+{"referent": "evaluation.locomo.config.LocomoConfig", "kind": "class", "mentions": ["LocomoConfig", "evaluation.locomo.config.LocomoConfig", "evaluation/locomo/config.py::LocomoConfig"]}
+{"referent": "evaluation.longmem.adapter.LongMemAdapter", "kind": "class", "mentions": ["LongMemAdapter", "evaluation.longmem.adapter.LongMemAdapter", "evaluation/longmem/adapter.py::LongMemAdapter"]}
+{"referent": "evaluation.longmem.config.LongMemConfig", "kind": "class", "mentions": ["LongMemConfig", "evaluation.longmem.config.LongMemConfig", "evaluation/longmem/config.py::LongMemConfig"]}
+{"referent": "graphknows.integrations.client.mcp.MCPClientError", "kind": "class", "mentions": ["MCPClientError", "graphknows.integrations.client.mcp.MCPClientError", "graphknows/integrations/client/mcp.py::MCPClientError"]}
+{"referent": "graphknows.memory.Memory", "kind": "class", "mentions": ["graphknows.memory.Memory", "graphknows/memory.py::Memory"]}
+{"referent": "graphknows.models.memory_class.MemoryClass", "kind": "class", "mentions": ["MemoryClass", "graphknows.models.memory_class.MemoryClass", "graphknows/models/memory_class.py::MemoryClass"]}
+{"referent": "graphknows.settings.MemoryMode", "kind": "class", "mentions": ["MemoryMode", "graphknows.settings.MemoryMode", "graphknows/settings.py::MemoryMode"]}
+{"referent": "graphknows.models.scope.MemoryScope", "kind": "class", "mentions": ["MemoryScope", "graphknows.models.scope.MemoryScope", "graphknows/models/scope.py::MemoryScope"]}
+{"referent": "graphknows.models.message.Message", "kind": "class", "mentions": ["graphknows.models.message.Message", "graphknows/models/message.py::Message"]}
+{"referent": "graphknows.exceptions.MissingExtraError", "kind": "class", "mentions": ["MissingExtraError", "graphknows.exceptions.MissingExtraError", "graphknows/exceptions.py::MissingExtraError"]}
+{"referent": "graphknows.exceptions.MissingModelError", "kind": "class", "mentions": ["MissingModelError", "graphknows.exceptions.MissingModelError", "graphknows/exceptions.py::MissingModelError"]}
+{"referent": "graphknows.linguistics.Modality", "kind": "class", "mentions": ["graphknows.linguistics.Modality", "graphknows/linguistics.py::Modality"]}
+{"referent": "graphknows.symbolic.ontology.rdf.projection.NodeMeta", "kind": "class", "mentions": ["graphknows.symbolic.ontology.rdf.projection.NodeMeta", "graphknows/symbolic/ontology/rdf/projection.py::NodeMeta"]}
+{"referent": "graphknows.ingestion.extraction.relations.verifier.NullRelationVerifier", "kind": "class", "mentions": ["NullRelationVerifier", "graphknows.ingestion.extraction.relations.verifier.NullRelationVerifier", "graphknows/ingestion/extraction/relations/verifier.py::NullRelationVerifier"]}
+{"referent": "graphknows.channels.ontology.OntologyChannel", "kind": "class", "mentions": ["OntologyChannel", "graphknows.channels.ontology.OntologyChannel", "graphknows/channels/ontology.py::OntologyChannel"]}
+{"referent": "graphknows.symbolic.ontology.catalog.OntologyIndex", "kind": "class", "mentions": ["OntologyIndex", "graphknows.symbolic.ontology.catalog.OntologyIndex", "graphknows/symbolic/ontology/catalog.py::OntologyIndex"]}
+{"referent": "graphknows.ingestion.extraction.relations.filter.OntologyPredicateMapper", "kind": "class", "mentions": ["OntologyPredicateMapper", "graphknows.ingestion.extraction.relations.filter.OntologyPredicateMapper", "graphknows/ingestion/extraction/relations/filter.py::OntologyPredicateMapper"]}
+{"referent": "graphknows.symbolic.ontology.loader.OntologyTerm", "kind": "class", "mentions": ["OntologyTerm", "graphknows.symbolic.ontology.loader.OntologyTerm", "graphknows/symbolic/ontology/loader.py::OntologyTerm"]}
+{"referent": "evaluation.common.reporting.PanelRow", "kind": "class", "mentions": ["PanelRow", "evaluation.common.reporting.PanelRow", "evaluation/common/reporting.py::PanelRow"]}
+{"referent": "graphknows.ingestion.parsers.text.ParsedFile", "kind": "class", "mentions": ["ParsedFile", "graphknows.ingestion.parsers.text.ParsedFile", "graphknows/ingestion/parsers/text.py::ParsedFile"]}
+{"referent": "graphknows.ingestion.parsers.text.PlainTextParser", "kind": "class", "mentions": ["PlainTextParser", "graphknows.ingestion.parsers.text.PlainTextParser", "graphknows/ingestion/parsers/text.py::PlainTextParser"]}
+{"referent": "graphknows.symbolic.ontology.rdf.projection.PredInfo", "kind": "class", "mentions": ["graphknows.symbolic.ontology.rdf.projection.PredInfo", "graphknows/symbolic/ontology/rdf/projection.py::PredInfo"]}
+{"referent": "graphknows.symbolic.ontology.rdf.prefixes.Prefixes", "kind": "class", "mentions": ["graphknows.symbolic.ontology.rdf.prefixes.Prefixes", "graphknows/symbolic/ontology/rdf/prefixes.py::Prefixes"]}
+{"referent": "evaluation.scripts.locomo_langgraph.QAState", "kind": "class", "mentions": ["QAState", "evaluation.scripts.locomo_langgraph.QAState", "evaluation/scripts/locomo_langgraph.py::QAState"]}
+{"referent": "graphknows.symbolic.ontology.loader.RdfOntologyManifest", "kind": "class", "mentions": ["RdfOntologyManifest", "graphknows.symbolic.ontology.loader.RdfOntologyManifest", "graphknows/symbolic/ontology/loader.py::RdfOntologyManifest"]}
+{"referent": "graphknows.ingestion.extraction.relations._gliner2_verifier.RelationVerifier", "kind": "class", "mentions": ["RelationVerifier", "graphknows.ingestion.extraction.relations._gliner2_verifier.RelationVerifier", "graphknows/ingestion/extraction/relations/_gliner2_verifier.py::RelationVerifier"]}
+{"referent": "graphknows.ingestion.extraction.relations.verifier.RelationVerifierGate", "kind": "class", "mentions": ["RelationVerifierGate", "graphknows.ingestion.extraction.relations.verifier.RelationVerifierGate", "graphknows/ingestion/extraction/relations/verifier.py::RelationVerifierGate"]}
+{"referent": "graphknows.ingestion.extraction.relations._gliner2_verifier.RelationVerifierModel", "kind": "class", "mentions": ["RelationVerifierModel", "graphknows.ingestion.extraction.relations._gliner2_verifier.RelationVerifierModel", "graphknows/ingestion/extraction/relations/_gliner2_verifier.py::RelationVerifierModel"]}
+{"referent": "graphknows.storage.arcadedb.graph_store.RelationWrite", "kind": "class", "mentions": ["RelationWrite", "graphknows.storage.arcadedb.graph_store.RelationWrite", "graphknows/storage/arcadedb/graph_store.py::RelationWrite"]}
+{"referent": "graphknows.models.hit.RenderedMemories", "kind": "class", "mentions": ["RenderedMemories", "graphknows.models.hit.RenderedMemories", "graphknows/models/hit.py::RenderedMemories"]}
+{"referent": "evaluation.common.reporting.ReportPaths", "kind": "class", "mentions": ["ReportPaths", "evaluation.common.reporting.ReportPaths", "evaluation/common/reporting.py::ReportPaths"]}
+{"referent": "graphknows.ingestion.extraction.llm.anchor.ResponseGates", "kind": "class", "mentions": ["ResponseGates", "graphknows.ingestion.extraction.llm.anchor.ResponseGates", "graphknows/ingestion/extraction/llm/anchor.py::ResponseGates"]}
+{"referent": "graphknows.retrieval.models.context.RetrievalContext", "kind": "class", "mentions": ["RetrievalContext", "graphknows.retrieval.models.context.RetrievalContext", "graphknows/retrieval/models/context.py::RetrievalContext"]}
+{"referent": "evaluation.common.datamodels.RetrievedPassage", "kind": "class", "mentions": ["RetrievedPassage", "evaluation.common.datamodels.RetrievedPassage", "evaluation/common/datamodels.py::RetrievedPassage"]}
+{"referent": "evaluation.common.retrieval.Retriever", "kind": "class", "mentions": ["evaluation.common.retrieval.Retriever", "evaluation/common/retrieval.py::Retriever"]}
+{"referent": "graphknows.ingestion.extraction.llm.retry.RetryBudget", "kind": "class", "mentions": ["RetryBudget", "graphknows.ingestion.extraction.llm.retry.RetryBudget", "graphknows/ingestion/extraction/llm/retry.py::RetryBudget"]}
+{"referent": "graphknows.models.message.Role", "kind": "class", "mentions": ["graphknows.models.message.Role", "graphknows/models/message.py::Role"]}
+{"referent": "evaluation.common.dspy_judge.RubricSignature", "kind": "class", "mentions": ["RubricSignature", "evaluation.common.dspy_judge.RubricSignature", "evaluation/common/dspy_judge.py::RubricSignature"]}
+{"referent": "evaluation.common.datamodels.RunReport", "kind": "class", "mentions": ["RunReport", "evaluation.common.datamodels.RunReport", "evaluation/common/datamodels.py::RunReport"]}
+{"referent": "graphknows.ingestion.stm.service.STMService", "kind": "class", "mentions": ["STMService", "graphknows.ingestion.stm.service.STMService", "graphknows/ingestion/stm/service.py::STMService"]}
+{"referent": "graphknows.exceptions.SchemaVersionMismatchError", "kind": "class", "mentions": ["SchemaVersionMismatchError", "graphknows.exceptions.SchemaVersionMismatchError", "graphknows/exceptions.py::SchemaVersionMismatchError"]}
+{"referent": "graphknows.exceptions.StoreError", "kind": "class", "mentions": ["StoreError", "graphknows.exceptions.StoreError", "graphknows/exceptions.py::StoreError"]}
+{"referent": "graphknows.symbolic.ontology.rdf.taxonomy.Taxon", "kind": "class", "mentions": ["graphknows.symbolic.ontology.rdf.taxonomy.Taxon", "graphknows/symbolic/ontology/rdf/taxonomy.py::Taxon"]}
+{"referent": "graphknows.ingestion.parsers.text.TextSegment", "kind": "class", "mentions": ["TextSegment", "graphknows.ingestion.parsers.text.TextSegment", "graphknows/ingestion/parsers/text.py::TextSegment"]}
+{"referent": "evaluation.audit.core.TierPrecision", "kind": "class", "mentions": ["TierPrecision", "evaluation.audit.core.TierPrecision", "evaluation/audit/core.py::TierPrecision"]}
+{"referent": "graphknows.topics.model.Topic", "kind": "class", "mentions": ["graphknows.topics.model.Topic", "graphknows/topics/model.py::Topic"]}
+{"referent": "graphknows.topics.config.TopicConfig", "kind": "class", "mentions": ["TopicConfig", "graphknows.topics.config.TopicConfig", "graphknows/topics/config.py::TopicConfig"]}
+{"referent": "graphknows.settings.TopicMode", "kind": "class", "mentions": ["TopicMode", "graphknows.settings.TopicMode", "graphknows/settings.py::TopicMode"]}
+{"referent": "graphknows.topics.model.TopicSet", "kind": "class", "mentions": ["TopicSet", "graphknows.topics.model.TopicSet", "graphknows/topics/model.py::TopicSet"]}
+{"referent": "graphknows.topics.summarize.TopicSummarizer", "kind": "class", "mentions": ["TopicSummarizer", "graphknows.topics.summarize.TopicSummarizer", "graphknows/topics/summarize.py::TopicSummarizer"]}
+{"referent": "evaluation.common.dspy_judge.VerdictSignature", "kind": "class", "mentions": ["VerdictSignature", "evaluation.common.dspy_judge.VerdictSignature", "evaluation/common/dspy_judge.py::VerdictSignature"]}
+{"referent": "graphknows.ingestion.extraction.relations._gliner2_verifier.VerifierConfig", "kind": "class", "mentions": ["VerifierConfig", "graphknows.ingestion.extraction.relations._gliner2_verifier.VerifierConfig", "graphknows/ingestion/extraction/relations/_gliner2_verifier.py::VerifierConfig"]}
+{"referent": "graphknows.symbolic.ontology.skos.VocabularyProfile", "kind": "class", "mentions": ["VocabularyProfile", "graphknows.symbolic.ontology.skos.VocabularyProfile", "graphknows/symbolic/ontology/skos.py::VocabularyProfile"]}
+{"referent": "docs/adr/0001-air-gapped-release-image-delivery.md", "kind": "document", "mentions": ["../docs/adr/0001-air-gapped-release-image-delivery.md", "./docs/adr/0001-air-gapped-release-image-delivery.md", "docs/adr/0001-air-gapped-release-image-delivery.md"]}
+{"referent": "docs/adr/0002-air-gapped-delivery-wheel-plus-client-built-image.md", "kind": "document", "mentions": ["../docs/adr/0002-air-gapped-delivery-wheel-plus-client-built-image.md", "./docs/adr/0002-air-gapped-delivery-wheel-plus-client-built-image.md", "docs/adr/0002-air-gapped-delivery-wheel-plus-client-built-image.md"]}
+{"referent": "docs/adr/0003-replacement-decoder-not-a-sidecar.md", "kind": "document", "mentions": ["../docs/adr/0003-replacement-decoder-not-a-sidecar.md", "./docs/adr/0003-replacement-decoder-not-a-sidecar.md", "docs/adr/0003-replacement-decoder-not-a-sidecar.md"]}
+{"referent": "docs/agents/definition-of-done.md", "kind": "document", "mentions": ["../docs/agents/definition-of-done.md", "./docs/agents/definition-of-done.md", "docs/agents/definition-of-done.md"]}
+{"referent": "docs/agents/domain.md", "kind": "document", "mentions": ["../docs/agents/domain.md", "./docs/agents/domain.md", "docs/agents/domain.md"]}
+{"referent": "docs/agents/issue-tracker.md", "kind": "document", "mentions": ["../docs/agents/issue-tracker.md", "./docs/agents/issue-tracker.md", "docs/agents/issue-tracker.md"]}
+{"referent": "docs/agents/prepare-tickets-326-run.md", "kind": "document", "mentions": ["../docs/agents/prepare-tickets-326-run.md", "./docs/agents/prepare-tickets-326-run.md", "docs/agents/prepare-tickets-326-run.md"]}
+{"referent": "docs/agents/triage-labels.md", "kind": "document", "mentions": ["../docs/agents/triage-labels.md", "./docs/agents/triage-labels.md", "docs/agents/triage-labels.md"]}
+{"referent": "docs/agents/workflows.md", "kind": "document", "mentions": ["../docs/agents/workflows.md", "./docs/agents/workflows.md", "docs/agents/workflows.md"]}
+{"referent": "docs/architecture.md", "kind": "document", "mentions": ["../docs/architecture.md", "./docs/architecture.md", "docs/architecture.md"]}
+{"referent": "docs/configuration.md", "kind": "document", "mentions": ["../docs/configuration.md", "./docs/configuration.md", "docs/configuration.md"]}
+{"referent": "docs/deployment.md", "kind": "document", "mentions": ["../docs/deployment.md", "./docs/deployment.md", "docs/deployment.md"]}
+{"referent": "docs/generalisation-audit.md", "kind": "document", "mentions": ["../docs/generalisation-audit.md", "./docs/generalisation-audit.md", "docs/generalisation-audit.md"]}
+{"referent": "docs/integrations.md", "kind": "document", "mentions": ["../docs/integrations.md", "./docs/integrations.md", "docs/integrations.md"]}
+{"referent": "docs/modes.md", "kind": "document", "mentions": ["../docs/modes.md", "./docs/modes.md", "docs/modes.md"]}
+{"referent": "docs/multi-tenancy.md", "kind": "document", "mentions": ["../docs/multi-tenancy.md", "./docs/multi-tenancy.md", "docs/multi-tenancy.md"]}
+{"referent": "docs/ontology.md", "kind": "document", "mentions": ["../docs/ontology.md", "./docs/ontology.md", "docs/ontology.md"]}
+{"referent": "docs/README.md", "kind": "document", "mentions": ["../docs/README.md", "./docs/README.md", "docs/README.md"]}
+{"referent": "docs/services.md", "kind": "document", "mentions": ["../docs/services.md", "./docs/services.md", "docs/services.md"]}
+{"referent": "docs/topics.md", "kind": "document", "mentions": ["../docs/topics.md", "./docs/topics.md", "docs/topics.md"]}
+{"referent": "docs/versioning.md", "kind": "document", "mentions": ["../docs/versioning.md", "./docs/versioning.md", "docs/versioning.md"]}

@@ -55,6 +55,7 @@ def test_request_carries_the_closed_vocabularies_and_is_frozen() -> None:
         "relation_spec",
         "frame_candidates",
         "speaker",
+        "prompt_addendum",
     ]
     with pytest.raises(dataclasses.FrozenInstanceError):
         request.text = "other"  # type: ignore[misc]

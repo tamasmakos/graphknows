@@ -1,32 +1,20 @@
-"""OntologyChannel — ontology-class retrieval signal.
+"""OntologyChannel — the concept-index retrieval signal.
 
-Chunks are class-tagged at ingest by cosine-matching their embedding to the
-ontology's class DEFINITIONS (see ``graphknows.symbolic.ontology.catalog``); each
-ONTOLOGY_CLASS node carries that definition's embedding, so this channel matches
-the query with a namespace-local graph vector search over them, exactly as
-:class:`~graphknows.channels.frames.FrameChannel` does over FRAME nodes.
+Segments are concept-labelled at ingest: every mention's pack label resolves a
+CONCEPT and the segment is written with an ``EVOKES`` edge to it. Each CONCEPT
+carries the embedding of its own definition, so this channel matches the query
+with a namespace-local vector search over the concept index and follows
+``EVOKES`` back to the segments that evoked the matches — the top-down half of
+the traversal, read through one declared store read (``segments_evoking``).
 
-A matched class reaches chunks by one path:
-
-- ``CHUNK-[:MATCHES_CLASS]->ONTOLOGY_CLASS`` — the chunk itself evoked the
-  class. Direct, and the stronger signal.
-
-A second route through ``CHUNK-[:MENTIONS]->ENTITY-[:INSTANCE_OF]->ONTOLOGY_CLASS``
-was measured byte-identical on conv-26 evidence_recall once the pool is
-cosine-reranked, and removed — see the comment in ``graph_store.py``'s
-``search_ontology_classes``. The INSTANCE_OF writer that fed it was itself a
-write-only layer and has since been removed (FR-035).
-
-Where frames give abstract questions a route by the situation a chunk evokes,
-classes give them a route by the KIND of thing a chunk is about — "where did
-they go" reaches chunks through their Place-typed entities without the word
-"place" appearing anywhere. Fully embedding-based, so valid in both profiles.
+Concepts give abstract questions a route by the KIND of thing a segment is
+about — "where did they go" reaches segments through their Place-typed
+mentions without the word "place" appearing anywhere. Fully embedding-based,
+so valid in both profiles.
 
 Additive to the RRF fusion rather than a re-rank: re-ranking the fused list on a
 graph signal has regressed retrieval here before (see the community-detection
 experiment), whereas contributing candidates cannot displace a strong hit.
-
-Schema: ONTOLOGY_CLASS + MATCHES_CLASS live in the GraphStore core DDL.
 """
 
 from __future__ import annotations
@@ -36,8 +24,8 @@ from typing import Any
 
 from graphknows.channels._shared import (
     drop_saturated,
-    rank_chunks,
-    session_chunk_count,
+    rank_segments,
+    segment_count,
     tag_coverage,
 )
 from graphknows.channels.base import Channel, ChannelContext, CollectResult
@@ -45,52 +33,48 @@ from graphknows.settings import get_settings
 
 log = logging.getLogger(__name__)
 
-# Ontology classes considered per query.
-_CLASS_TOP_K: int = 5
+# Concepts considered per query.
+_CONCEPT_TOP_K: int = 5
 
 
 class OntologyChannel(Channel):
-    """Ontology-class retrieval channel (both profiles; inert without an ontology)."""
+    """Concept-index retrieval channel (both profiles; inert without concepts)."""
 
     name = "ontology"
 
     async def collect(self, ctx: ChannelContext, rt: Any, top_k: int) -> CollectResult:
-        """Vector-search the namespace's ontology classes and rank the chunks they tag."""
-        rows = await rt.store.search_ontology_classes(
-            ctx.emb, _CLASS_TOP_K, ctx.session_id or None, ctx.state
-        )
+        """Vector-search the namespace's concepts and rank the segments they label."""
+        rows = await rt.store.segments_evoking(ctx.emb, _CONCEPT_TOP_K, ctx.source_ids)
         if not rows:
             return {}
 
         rows = await self._drop_saturated(rows, ctx, rt)
         if not rows:
             return {}
-        return rank_chunks(rows, top_k, "ontology")
+        return rank_segments(rows, top_k, "ontology")
 
     @staticmethod
     async def _drop_saturated(
         rows: list[dict[str, Any]], ctx: ChannelContext, rt: Any
     ) -> list[dict[str, Any]]:
-        """Drop rows whose class tags more than half the session's chunks.
+        """Drop rows whose concept labels more than half the scope's segments.
 
-        Coverage comes from the GRAPH. It used to be counted from ``rows``, which
-        is the defect the frame channel had already found and fixed: the
-        numerator is bounded by the page size while the denominator is the whole
-        session, so the ratio could not reach the threshold and this guard never
-        dropped anything.
+        Coverage comes from the GRAPH: counted from ``rows``, the numerator is
+        bounded by the page size while the denominator is the whole scope, so
+        the ratio could not reach the threshold and this guard never dropped
+        anything.
 
-        Session-scoped only; without a session there is no corpus to measure
+        Source-scoped only; without a source there is no corpus to measure
         saturation against, so the rows pass through unchanged.
         """
-        if not ctx.session_id:
+        if not ctx.source_ids:
             return rows
-        total = await session_chunk_count(rt, ctx.session_id, ctx.state)
+        total = await segment_count(rt, ctx.source_ids)
         cover = await tag_coverage(
             rt,
-            ctx.session_id,
-            ctx.state,
-            pattern="(c:CHUNK)-[:MATCHES_CLASS]->(o:ONTOLOGY_CLASS)",
-            key="o.uri",
+            ctx.source_ids,
+            pattern="(g:SEGMENT)-[:EVOKES]->(c:CONCEPT)",
+            key="c.uri",
         )
         return drop_saturated(
             rows,

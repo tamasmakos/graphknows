@@ -21,14 +21,14 @@ and benchmarks. This folder is the reference behind it.
 | --- | --- |
 | [modes.md](modes.md) | `llm_free` vs `llm_assisted` — what the preset really switches, and how to mix the knobs. |
 | [configuration.md](configuration.md) | Every `GRAPHKNOWS_*` setting, and how to pick an LLM provider. |
-| [integrations.md](integrations.md) | Wiring GraphKnows into an agent framework (LangGraph is the shipped reference). |
+| [integrations.md](integrations.md) | Wiring GraphKnows into an agent framework (LangGraph is the shipped reference) or into Claude Code's hooks. |
 
 ## Optional layers
 
 | Page | Answers |
 | --- | --- |
 | [ontology.md](ontology.md) | Injecting an RDF/OWL ontology so the graph speaks your domain's vocabulary. |
-| [topics.md](topics.md) | The re-runnable topic stage — clustering, grading, and why it does not reach retrieval. |
+| [packs.md](packs.md) | Domain packs: the shipped code and agent vocabularies, and what a pack must offer. |
 
 ## Operate it
 

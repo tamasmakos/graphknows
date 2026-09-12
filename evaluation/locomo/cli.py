@@ -94,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _run_one(
+async def run_one(
     mode: str,
     limit: int,
     offset: int,
@@ -133,10 +133,10 @@ async def amain(argv: list[str] | None = None) -> int:
         raise SystemExit("LLM_MODEL is not set in .env — set it before running the evaluation.")
 
     # --gen-context-k overrides EVAL_GEN_CONTEXT_K, read by BaseEvalConfig when it
-    # constructs the config inside _run_one (below). probe_k auto-covers it there.
+    # constructs the config inside run_one (below). probe_k auto-covers it there.
     if args.gen_context_k is not None:
         os.environ["EVAL_GEN_CONTEXT_K"] = str(args.gen_context_k)
-    # Same seam: read by BaseEvalConfig when _run_one constructs the config.
+    # Same seam: read by BaseEvalConfig when run_one constructs the config.
     if args.turns:
         os.environ["EVAL_TURN_FED"] = "1"
 
@@ -162,7 +162,7 @@ async def amain(argv: list[str] | None = None) -> int:
             f"[eval] --compare: running llm_free + llm_assisted  "
             f"limit={args.limit} offset={args.offset}"
         )
-        run_free, paths_free = await _run_one(
+        run_free, paths_free = await run_one(
             "llm_free",
             args.limit,
             args.offset,
@@ -170,7 +170,7 @@ async def amain(argv: list[str] | None = None) -> int:
             reuse_ingest=args.no_ingest,
             namespace=args.namespace,
         )
-        run_asst, paths_asst = await _run_one(
+        run_asst, paths_asst = await run_one(
             "llm_assisted",
             args.limit,
             args.offset,
@@ -199,7 +199,7 @@ async def amain(argv: list[str] | None = None) -> int:
         return 0
 
     print(f"[eval] benchmark=locomo mode={args.mode}")
-    run, paths = await _run_one(
+    run, paths = await run_one(
         args.mode,
         args.limit,
         args.offset,

@@ -57,9 +57,9 @@ async def test_remember_preserves_role_from_last_message() -> None:
 async def test_remember_maps_foreign_role_labels(
     incoming: str, expected_role: str, expected_name: str | None
 ) -> None:
-    """Role labels from other frameworks must not reach the Role enum raw.
+    """Role labels from other frameworks must not reach a TURN raw.
 
-    graphknows' Role accepts only user/assistant/system/tool. LangChain's own
+    A TURN role is one of user/assistant/system/tool. LangChain's own
     messages report "human"/"ai", and a multi-party transcript uses participant
     names — passing either through raises a pydantic ValidationError on ingest.
     """

@@ -1,19 +1,19 @@
-"""The channels active for a configuration.
+"""The channels every recall runs — fixed, not configured.
 
-Only optional signals are channels. The four baseline collectors (entity,
-vector, bm25, temporal) are methods on the retriever spine and are always run;
-they used to be wrapped in ``Channel`` subclasses whose entire body was
-``return await rt.<method>(...)``, behind a name-keyed registry and a
-profile filter that never excluded anything.
+There is one set and it is the same for every namespace: the core collectors.
+No opt-in flag chooses them, because a flag on a retrieval leg is an A/B
+knob wearing a setting's clothes — it forks the fusion by environment, so no
+two runs are comparable and no measurement survives the next deploy.
 
-No graph-traversal channel. Measured on conv-30, ``ppr`` returned 367 hits for
-12 gold-bearing ones (3.3% — the worst of six channels) and was the ONLY
-consumer of REL edges, which is why every improvement to the relation layer
-measured flat on retrieval. ``topic`` is gone because nothing on the read path
-consumed what the topic stage wrote: its only retrieval reader was
-``DETRetriever.topic_match``, itself orphaned. (It is *not* gone because
-"topic_mode is none in both presets" — that was the stated reason and it is
-wrong: the ``llm_assisted`` preset sets ``TopicMode.llm``.)
+The four baseline collectors (entity, vector, bm25, temporal) are methods on
+the retriever spine and are always run; the ontology collector is a
+:class:`~graphknows.channels.base.Channel` because it reads structure the
+symbolic layer writes.
+
+Frames are not core: FrameNet is a pack's concept+predicate emitter, so its
+collector belongs to the pack that emits it. A pack-supplied channel arrives
+with the dialogue pack (FR-022) — ``DomainPack`` declares no ``channel()``
+yet, so nothing here reads packs.
 """
 
 from __future__ import annotations
@@ -22,38 +22,13 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from graphknows.channels.base import Channel
-    from graphknows.settings import GraphKnowsSettings
 
 
-def default_channels(settings: GraphKnowsSettings) -> list[Channel]:
-    """Instantiate the optional channels this configuration turns on.
+def core_channels() -> list[Channel]:
+    """Instantiate the core collectors — the same list on every call."""
+    from graphknows.channels.ontology import OntologyChannel
 
-    Both are settings-gated. Frames default ON (``enable_frames``); ontology
-    defaults OFF (``enable_ontology_channel``) because it has never been
-    measured on its own. It used to be gated on ``settings.ontology_source``,
-    which cannot be false — that property always resolves to an ontology — so
-    making injection always-on silently put a sixth leg into the RRF fusion. The
-    next full conv-30 run fused ontology 838 alongside semantic 1875, text 1588,
-    entity 1498, frame 1312, temporal 625 and scored accuracy 0.766 -> 0.722
-    (judge noise ±0.02) with retrieval misses 8 -> 13. That run carried
-    extraction changes as well, so the channel is a suspect, not a convict: this
-    restores the five-channel set the 0.766 was measured on so the next A/B
-    varies one thing. See ``GraphKnowsSettings.enable_ontology_channel``.
-    """
-    channels: list[Channel] = []
-    if settings.enable_frames:
-        from graphknows.channels.frames import FrameChannel
-
-        channels.append(FrameChannel())
-    if settings.enable_frame_facts:
-        from graphknows.channels.frame_facts import FrameFactChannel
-
-        channels.append(FrameFactChannel())
-    if settings.enable_ontology_channel:
-        from graphknows.channels.ontology import OntologyChannel
-
-        channels.append(OntologyChannel())
-    return channels
+    return [OntologyChannel()]
 
 
-__all__ = ["default_channels"]
+__all__ = ["core_channels"]

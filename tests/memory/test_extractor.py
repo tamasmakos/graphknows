@@ -749,68 +749,6 @@ def test_base_entity_labels_ask_for_no_state_or_process_types():
         assert label not in _BASE_ENTITY_LABELS
 
 
-class TestSharedModelApiContract:
-    """frame_srl reuses the extractor's model, so both must speak ONE API.
-
-    Regression: the model swap left frame_srl calling GLiNER2's
-    create_schema()/extract(). It threw AFTER chunks+entities were written, so
-    each document reported failure while leaving a half-built graph — three eval
-    runs scored 0.73-0.78 against graphs with ZERO relations and ZERO frames.
-    """
-
-    def test_fill_roles_uses_inference_not_gliner2_schema_api(self) -> None:
-        from unittest.mock import MagicMock
-
-        from graphknows.ingestion.extraction.relations import frame_srl
-
-        model = MagicMock()
-        # A relex model has NO create_schema; touching it must raise.
-        del model.create_schema
-        model.inference.return_value = (
-            [[{"text": "Caroline", "label": "Employee", "score": 0.9}]],
-            [[]],
-        )
-        roles, conf = frame_srl._fill_roles(
-            "Caroline works as a nurse.", "Being_employed", model, "Caroline", ["Caroline"]
-        )
-        assert model.inference.called, "must call inference(), not the GLiNER2 schema API"
-        assert conf == pytest.approx(0.9)
-
-    def test_fill_roles_handles_entities_only_return(self) -> None:
-        """return_relations=False returns the entities list ALONE, not a tuple."""
-        from unittest.mock import MagicMock
-
-        from graphknows.ingestion.extraction.relations import frame_srl
-
-        model = MagicMock()
-        model.inference.return_value = [[{"text": "Caroline", "label": "Employee", "score": 0.9}]]
-        roles, _conf = frame_srl._fill_roles(
-            "Caroline works as a nurse.", "Being_employed", model, "Caroline", ["Caroline"]
-        )
-        assert roles.get("Employee") == ["Caroline"]
-
-    def test_relex_handles_entities_only_return_when_no_ontology_property_matched(self) -> None:
-        """A chunk with no ontology relation label takes the entities-only branch."""
-        schema = SimpleNamespace(
-            entity_spec={"person": {"description": "p", "threshold": 0.35}},
-            label_to_type={"person": "PERSON"},
-        )
-        schema_miner = MagicMock()
-        schema_miner.build.return_value = schema
-        mock_model = MagicMock()
-        mock_model.inference.return_value = [
-            [{"text": "Caroline", "label": "person", "score": 0.9}]
-        ]
-        extractor = GLiNER2EntityExtractor(
-            model_loader=lambda: mock_model, schema_miner=schema_miner
-        )
-
-        result = extractor.extract("Caroline said hello.")
-
-        assert result.entities == [{"name": "Caroline", "type": "PERSON", "score": 0.9}]
-        assert result.relations == []
-
-
 class TestSurfaceCleaning:
     """Entity surfaces must not carry enclosing quotes.
 

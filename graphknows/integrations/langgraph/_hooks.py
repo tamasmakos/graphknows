@@ -71,10 +71,10 @@ def _message_text(message: Any) -> str:
     return str(content or "")
 
 
-# graphknows' Role is a four-value enum, but the labels that reach a node come
+# A TURN's role is one of four names, but the labels that reach a node come
 # from whatever the caller's framework uses. LangChain's own message objects
-# report ``type`` as "human"/"ai", neither of which is a Role — passing them
-# through raises a pydantic ValidationError on the first real LangChain state.
+# report ``type`` as "human"/"ai", neither of which is one of them — storing
+# them raw would split the same speaker across two role values.
 _ROLE_ALIASES = {"human": "user", "ai": "assistant", "agent": "assistant", "bot": "assistant"}
 _ROLES = {"user", "assistant", "system", "tool"}
 
@@ -104,9 +104,9 @@ def _message_role(message: Any) -> tuple[str, str | None]:
 def resolve_infer(infer: bool | Callable[[str], bool], text: str) -> bool:
     """Apply an extraction policy to one turn's text.
 
-    ``infer`` is either a flat answer or a predicate asked per turn — e.g.
-    :func:`graphknows.worth_extracting`, which skips greetings so they mint no
-    entities. Shared by every write path so the two cannot drift.
+    ``infer`` is either a flat answer or a predicate asked per turn, so a
+    caller can decide per turn whether it mints entities. Shared by every
+    write path so the two cannot drift.
     """
     return bool(infer(text)) if callable(infer) else bool(infer)
 

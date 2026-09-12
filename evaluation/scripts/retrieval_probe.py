@@ -303,7 +303,7 @@ async def _probe(args: argparse.Namespace) -> int:
                 metadata={"anchor_date": doc.anchor_date},
             )
         print(f"[{dlg}] flushing …", flush=True)
-        await runtime.flush_memory(session_id)
+        await runtime.flush()
         print(f"[{dlg}] ready", flush=True)
 
     out_rows: list[dict[str, Any]] = []

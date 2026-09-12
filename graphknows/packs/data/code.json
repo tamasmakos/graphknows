@@ -1,0 +1,56 @@
+{
+  "_comment": "The code pack as data: swap this file and the vocabulary changes, no code edit. Concepts and predicates get their owning pack name from CodePack, so a fork of this file under another pack name does not contest these keys (FR-025).",
+  "concepts": [
+    {
+      "uri": "code:function",
+      "label": "function",
+      "definition": "A named callable defined in source code, including methods."
+    },
+    {
+      "uri": "code:class",
+      "label": "class",
+      "definition": "A named type defined in source code, holding methods and attributes."
+    },
+    {
+      "uri": "code:module",
+      "label": "module",
+      "definition": "An importable unit of source code, named by its dotted import path."
+    },
+    {
+      "uri": "code:file",
+      "label": "file",
+      "definition": "A source file on disk, named by its path within the repository."
+    }
+  ],
+  "predicates": [
+    {
+      "id": "code:calls",
+      "label": "calls",
+      "definition": "The subject's body invokes the object callable.",
+      "canonical": "calls",
+      "domain": "code:function",
+      "range": "code:function"
+    },
+    {
+      "id": "code:imports",
+      "label": "imports",
+      "definition": "The subject brings the object module into its namespace.",
+      "canonical": "imports",
+      "range": "code:module"
+    },
+    {
+      "id": "code:defines",
+      "label": "defines",
+      "definition": "The object symbol is declared inside the subject.",
+      "canonical": "defines"
+    },
+    {
+      "id": "code:tests",
+      "label": "tests",
+      "definition": "The subject is a test exercising the object callable.",
+      "canonical": "tests",
+      "domain": "code:function",
+      "range": "code:function"
+    }
+  ]
+}

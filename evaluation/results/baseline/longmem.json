@@ -1,0 +1,28 @@
+{
+  "row": "longmem",
+  "feeding_mode": "",
+  "extractor": "local",
+  "n": 0,
+  "not_run": "not run: at the old core's measured ingest rate (LoCoMo conv-26, 19 documents, 8656 s = 7.6 min per document, 2026-09-09, local extractor, CPU only) a limit-10 row is roughly 500 documents for LongMemEval and one 100K-character session split into hundreds for BEAM \u2014 days of CPU per repeat. Recorded not_run rather than estimated; rerun with `python -m evaluation baseline --rows longmem,beam --repeats 3 --limit 10` on faster hardware.",
+  "accuracy": {
+    "median": 0.0,
+    "band": 0.0,
+    "runs": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "commit": "2d50ebacbd873d2d13d69e823d6aa033235e545f"
+  },
+  "evidence_recall": {
+    "median": 0.0,
+    "band": 0.0,
+    "runs": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "commit": "2d50ebacbd873d2d13d69e823d6aa033235e545f"
+  },
+  "commit": "2d50ebacbd873d2d13d69e823d6aa033235e545f"
+}

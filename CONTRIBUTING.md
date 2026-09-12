@@ -56,6 +56,22 @@ and in CI: a wider ruff scope (`graphknows evaluation tests`, not just
 lint` and `make test` are quick local checks, not a substitute for `make gate`
 before you push.
 
+### The merge gate
+
+A green `make gate` alone is not acceptance for a change to retrieval, ingestion
+or the packs: it says the code is clean, not that memory got better. The merge
+gate is all three of
+
+```bash
+make gate
+python -m evaluation panel --compare evaluation/results/baseline
+python -m evaluation deadweight
+```
+
+The panel is the evidence, and no single row is the headline: the comparison
+fails if any row falls below `median − band`, if identity precision dropped, or
+if the run left dead weight — a layer that was written but never read.
+
 Integration tests need a live ArcadeDB and are excluded from the unit run:
 
 ```bash
@@ -125,12 +141,12 @@ add it.
    the setting that enables it. Insertion order defines fusion order.
 3. Measure it. Channels are added on evidence recall, not on principle — both the
    topic and PageRank channels were removed after measurement showed they did not
-   pay ([docs/topics.md](docs/topics.md)).
+   pay.
 
 ### Adding an MCP tool
 
 Tools live in `graphknows/server/mcp/tools/`, grouped by concern (`stm.py`,
-`query.py`, `ltm.py`, `topics.py`, `corpus.py`, `admin.py`).
+`query.py`, `ltm.py`, `corpus.py`, `admin.py`).
 
 1. Add an `async def` to the right module, decorated on the shared FastMCP app.
 2. Accept an optional `namespace` argument — every tool does — and resolve it

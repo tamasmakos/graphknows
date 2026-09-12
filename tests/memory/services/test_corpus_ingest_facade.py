@@ -1,4 +1,4 @@
-"""Memory.corpus_ingest drives the golden-layer ingest + consolidate path.
+"""Memory.corpus_ingest drives the golden-layer ingest + flush path.
 
 Regression guard: this method used to delegate to ``CorpusIngestWorkflow``,
 which was still wired for the retired stm/vector/ltm store split and called
@@ -22,7 +22,7 @@ def _memory() -> Memory:
     mem.ingest_memory = AsyncMock(
         return_value={"file_id": "f", "chunks": 2, "entities": 3, "elapsed_s": 0.1, "errors": []}
     )
-    mem.flush_memory = AsyncMock(return_value={"chunks": 2, "merged_entities": 1, "errors": []})
+    mem.flush = AsyncMock(return_value={"unread_types": [], "errors": []})
     return mem
 
 
@@ -38,10 +38,10 @@ async def test_ingests_every_document_then_consolidates_once() -> None:
     assert out["entities_extracted"] == 6
     assert out["errors"] == []
     assert "error" not in out
-    # One shared session, consolidated exactly once at the end.
+    # One shared session, reported on exactly once at the end.
     assert {c.kwargs["session_id"] for c in mem.ingest_memory.await_args_list} == {"s1"}
-    mem.flush_memory.assert_awaited_once_with("s1")
-    assert out["chunks_consolidated"] == 2
+    mem.flush.assert_awaited_once_with()
+    assert out["unread_types"] == []
 
 
 @pytest.mark.asyncio
@@ -66,7 +66,7 @@ async def test_per_document_failure_does_not_abort_the_batch() -> None:
 
     assert out["documents_processed"] == 1
     assert any("d1" in e and "boom" in e for e in out["errors"])
-    mem.flush_memory.assert_awaited_once()
+    mem.flush.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -75,4 +75,4 @@ async def test_empty_batch_short_circuits() -> None:
     out = await mem.corpus_ingest([])
 
     assert out["documents_processed"] == 0
-    mem.flush_memory.assert_not_awaited()
+    mem.flush.assert_not_awaited()

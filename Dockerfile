@@ -102,7 +102,7 @@ RUN uv pip \
 # extra's distributions aren't actually installed, so a build that drops the
 # step above announces itself instead of silently shipping less. The LLM stack
 # is not listed because it is no longer an extra — it is core.
-ENV GRAPHKNOWS_IMAGE_EXTRAS="ontology,srl"
+ENV GRAPHKNOWS_IMAGE_EXTRAS="ontology"
 
 RUN useradd -m -u 1000 graphknows
 

@@ -1,28 +1,21 @@
 """Unit + integration tests for the single-database GraphStore (golden layer).
 
-Unit tests mock ArcadeDBClient (same style as tests/memory/stores) and assert
-the SQL/Cypher shapes the Phase-1b/1c rewiring will depend on. The integration
-test runs only when ArcadeDB is reachable and exercises the full write→read
-round trip on a scratch ``mem_test_<uuid>`` database.
+Unit tests mock ArcadeDBClient and assert the SQL/Cypher shapes the retriever
+depends on: every read speaks the golden schema, threads its source scope,
+escapes what it interpolates, and composes the tombstone filter. The
+integration test runs only when ArcadeDB is reachable and exercises the full
+write→read round trip on a scratch ``mem_test_<uuid>`` database.
 """
 
 from __future__ import annotations
 
-import logging
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from graphknows.storage.arcadedb.graph_store import (
-    _CHUNK_BATCH,
-    _CORE_DDL,
-    _FRAME_REL_KEY,
-    GraphStore,
-    RelationWrite,
-    _evidence_set,
-    _frame_merge_key,
-)
+from graphknows.exceptions import StoreError
+from graphknows.storage.arcadedb.graph_store import _VERTEX_TYPES, GraphStore
 from graphknows.storage.namespace import db_name
 
 
@@ -38,6 +31,10 @@ def _mock_client(query_rows: list[dict] | None = None) -> MagicMock:
 
 def _command_strings(client: MagicMock) -> list[str]:
     return [call.args[1] for call in client.command.await_args_list]
+
+
+def _last_query(client: MagicMock) -> str:
+    return str(client.query.await_args.args[1])
 
 
 # ---------------------------------------------------------------------------
@@ -57,82 +54,6 @@ def test_db_name_mapping() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_core_ddl_contains_golden_types_and_not_dead_ones() -> None:
-    stmts = [stmt for _, stmt in _CORE_DDL]
-    type_stmts = [s for s in stmts if s.startswith(("CREATE VERTEX TYPE", "CREATE EDGE TYPE"))]
-
-    def created(kind: str, name: str) -> bool:
-        return any(s.startswith(f"CREATE {kind} TYPE {name} ") for s in type_stmts)
-
-    # Golden vertices (FRAME_INSTANCE is the role-filled frame layer — WS D3).
-    # COMMUNITY was retired with compute_community_quality: ArcadeDB's
-    # modularityScore is untrustworthy and the topic stage's Newman modularity
-    # (graphknows.topics.metrics.newman_modularity) is the real number now.
-    for vertex in (
-        "SESSION",
-        "TURN",
-        "FILE",
-        "CHUNK",
-        "ENTITY",
-        "TEMPORAL",
-        "TOPIC",
-        "FRAME",
-        "FRAME_INSTANCE",
-    ):
-        assert created("VERTEX", vertex), f"missing vertex {vertex}"
-    # Golden edges (PLAYS_ROLE / FRAME_EVOKED_IN are the FRAME_INSTANCE layer edges).
-    for edge in (
-        "PART_OF",
-        "IN_SESSION",
-        "MENTIONS",
-        "MENTIONS_DATE",
-        "IN_TOPIC",
-        "EVOKED_BY",
-        "PLAYS_ROLE",
-        "FRAME_EVOKED_IN",
-    ):
-        assert created("EDGE", edge), f"missing edge {edge}"
-    # IN_TOPIC (ENTITY -> TOPIC) carries the cluster-membership pagerank.
-    assert "CREATE PROPERTY IN_TOPIC.pagerank IF NOT EXISTS DOUBLE" in stmts
-    # Dead schema must NOT be recreated. TURN used to sit in this list: the
-    # pre-golden-layer TURN was a dialog-turn model (DIALOG-[:HAS_TURN]->TURN
-    # with NEXT/MENTIONS edges) and that one stays dead — HAS_TURN below still
-    # guards it. The TURN asserted above is a different vertex: a flat
-    # short-term buffer keyed by session_id, linked with IN_SESSION, drained by
-    # flush(). Same name, unrelated shape.
-    for vertex in ("DIALOG", "SEGMENT", "DOC", "SESSIONENTITY", "COMMUNITY"):
-        assert not created("VERTEX", vertex), f"dead vertex {vertex} present"
-    # HAS_TOPIC and TOPIC.embedding were write-only once the topic read path
-    # went: nothing traversed CHUNK->TOPIC and nothing vector-searched TOPIC.
-    assert not created("EDGE", "HAS_TOPIC"), "write-only HAS_TOPIC edge recreated"
-    assert not any("TOPIC.embedding" in s for s in stmts), "write-only TOPIC.embedding recreated"
-    assert not any("ON TOPIC(embedding)" in s for s in stmts), "dead TOPIC vector index recreated"
-    for edge in (
-        "HAS_CHUNK",
-        "HAS_TURN",
-        "HAS_ENTITY",
-        "NEXT",
-        "CO_OCCURS",
-        "APPEARED_IN",
-        "CONTAINS_DOC",
-        "HAS_FILE",
-        "IN_COMMUNITY",
-    ):
-        assert not created("EDGE", edge), f"dead edge {edge} present"
-
-    # Golden naming conventions: unique keys and no legacy properties.
-    joined = " | ".join(stmts)
-    assert "CREATE INDEX ON ENTITY(name_norm) UNIQUE" in joined
-    assert "CREATE INDEX ON CHUNK(chunk_id) UNIQUE" in joined
-    assert "CREATE INDEX ON TEMPORAL(date) UNIQUE" in joined
-    assert "FRAME.chunk_id" not in joined  # evidence via EVOKED_BY edge
-    assert "ENTITY.label" not in joined  # `type`, not `label`
-    # Lifecycle state is NOTUNIQUE-indexed on CHUNK and ENTITY.
-    assert "CREATE INDEX ON CHUNK(state) NOTUNIQUE" in joined
-    assert "CREATE INDEX ON ENTITY(state) NOTUNIQUE" in joined
-
-
-@pytest.mark.asyncio
 async def test_ensure_schema_injects_dims_and_swallows_already_exists() -> None:
     client = _mock_client()
     client.command = AsyncMock(side_effect=Exception("Type already exists"))
@@ -145,7 +66,6 @@ async def test_ensure_schema_injects_dims_and_swallows_already_exists() -> None:
     assert not any("__VEC_DIM__" in s for s in _command_strings(client))
 
 
-@pytest.mark.asyncio
 async def test_ensure_schema_raises_on_real_error() -> None:
     client = _mock_client()
     client.command = AsyncMock(side_effect=Exception("connection refused"))
@@ -155,2391 +75,306 @@ async def test_ensure_schema_raises_on_real_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Entity writes — name_norm casefolding
+# Segment reads
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_write_entities_bulk_casefolds_name_norm() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.write_entities_bulk(
-        session_id="s1",
-        chunk_id="c1",
-        entities=[
-            {"name": "Melanie", "type": "PERSON", "confidence": 0.9},
-            {"name": "  STRASSE  Café ", "type": "PLACE"},
-        ],
-    )
-    assert client.command.await_count == 2
-    node_call = client.command.await_args_list[0]
-    rows = node_call.kwargs["params"]["rows"]
-    assert rows[0]["nn"] == "melanie"
-    assert rows[0]["name"] == "Melanie"
-    # casefold (not lower) + whitespace collapse
-    assert rows[1]["nn"] == "strasse café"
-    assert "MERGE (e:ENTITY {name_norm: row.nn})" in node_call.args[1]
-    # MENTIONS pass carries confidence
-    edge_call = client.command.await_args_list[1]
-    assert "MERGE (c)-[m:MENTIONS]->(e)" in edge_call.args[1]
-    assert "m.confidence" in edge_call.args[1]
-
-
-@pytest.mark.asyncio
-async def test_write_entities_bulk_persists_alias_candidates() -> None:
-    """Overlap resolution's discarded surfaces must reach ENTITY.aliases.
-
-    The extractor resolves overlapping spans to one entity and records the
-    surfaces it dropped ("offers", "new" for "new offers") as alias candidates.
-    Those are the ONLY record that the shorter surface was ever seen, because
-    resolution stops them reaching the writer as entities in their own right —
-    so if the write drops them, a later chunk saying just "offers" can never
-    match the node. Computed-then-discarded is the failure mode CLAUDE.md names.
-
-    Asserts on the VALUE reaching the query, not that a write happened.
-    """
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.write_entities_bulk(
-        session_id="s1",
-        chunk_id="c1",
-        entities=[
-            {
-                "name": "new offers",
-                "type": "PRODUCT",
-                "confidence": 0.8,
-                "aliases": ["offers", "new"],
-            },
-        ],
-    )
-    node_call = client.command.await_args_list[0]
-    rows = node_call.kwargs["params"]["rows"]
-    assert rows[0]["aliases"] == ["offers", "new"], rows[0]
-    # The MERGE must union the incoming candidates in, not just the surface form,
-    # and must be idempotent: re-ingesting a chunk cannot grow the alias list.
-    query = node_call.args[1]
-    assert "row.aliases" in query
-    assert "[a IN row.aliases WHERE NOT a IN coalesce(e.aliases, [])]" in query
-
-
-@pytest.mark.asyncio
-async def test_write_entities_bulk_alias_candidates_default_empty() -> None:
-    """An entity with no discarded overlap carries no aliases — not a None."""
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.write_entities_bulk(
-        session_id="s1", chunk_id="c1", entities=[{"name": "Gina", "type": "PERSON"}]
-    )
-    rows = client.command.await_args_list[0].kwargs["params"]["rows"]
-    assert rows[0]["aliases"] == []
-
-
-@pytest.mark.asyncio
-async def test_write_entities_bulk_noop_on_empty() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.write_entities_bulk(session_id="s1", chunk_id="c1", entities=[])
-    client.command.assert_not_awaited()
-
-
-# ---------------------------------------------------------------------------
-# Topic writes — IN_TOPIC (entity membership) is the whole persisted layer
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_write_topics_emits_in_topic_edges_with_pagerank_on_name_norm() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    written = await store.write_topics(
-        [
-            {
-                "topic_id": "topic:abc:1",
-                "summary": "summary",
-                "modularity": 0.42,
-                "title": "Melanie · Camping",
-                "entities": [("Melanie", 0.9), ("  STRASSE  Café ", 0.3)],
-            }
-        ]
-    )
-    assert written == 1
-    stmts = _command_strings(client)
-    in_topic_call = next(c for c in client.command.await_args_list if "IN_TOPIC" in c.args[1])
-    assert "MATCH (e:ENTITY {name_norm: row.nn})" in in_topic_call.args[1]
-    assert "MERGE (e)-[r:IN_TOPIC]->(tp)" in in_topic_call.args[1]
-    assert "SET r.pagerank = row.pr" in in_topic_call.args[1]
-    rows = in_topic_call.kwargs["params"]["rows"]
-    by_nn = {r["nn"]: r["pr"] for r in rows}
-    # casefold (not lower) + whitespace collapse — same key write_entities_bulk uses.
-    assert by_nn == {"melanie": 0.9, "strasse café": 0.3}
-    # No chunk-evidence edge: HAS_TOPIC had no reader once the topic retrieval
-    # channel went, so the write was pure cost.
-    assert not any("HAS_TOPIC" in s for s in stmts)
-
-
-@pytest.mark.asyncio
-async def test_write_topics_skips_in_topic_when_no_entities() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.write_topics([{"topic_id": "topic:abc:1"}])
-    assert not any("IN_TOPIC" in c.args[1] for c in client.command.await_args_list)
-
-
-# ---------------------------------------------------------------------------
-# Relation writes — evidence append + tombstoning
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_write_relation_evidence_append_sql_shape() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.write_relation(
-        RelationWrite(
-            src_name="Melanie",
-            predicate="LIKES",
-            dst_name="Camping",
-            fact="Melanie likes camping",
-            chunk_id="chunk-1",
-            confidence=0.8,
-            source="gliner",
-        )
-    )
-    stmts = _command_strings(client)
-    # One REL type carries every predicate as a property, so no per-predicate
-    # CREATE EDGE TYPE DDL runs on the ingest path at all.
-    assert not any(s.startswith("CREATE EDGE TYPE") for s in stmts)
-    merge = next(s for s in stmts if "MERGE (a)-[r:REL {predicate: $predicate}]->(b)" in s)
-    # Endpoints merged on name_norm; evidence appended as a deduped quoted literal.
-    assert "MERGE (a:ENTITY {name_norm: $src_nn})" in merge
-    assert "WHEN 'chunk-1' IN coalesce(r.evidence, []) THEN r.evidence" in merge
-    assert "ELSE coalesce(r.evidence, []) + ['chunk-1']" in merge
-    # Golden naming: confidence / valid_at / is_current / state / source
-    for fragment in ("r.confidence", "r.valid_at", "r.is_current = true", "r.state", "r.source"):
-        assert fragment in merge
-    merge_call = next(c for c in client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1])
-    assert merge_call.kwargs["params"]["src_nn"] == "melanie"
-    assert merge_call.kwargs["params"]["dst_nn"] == "camping"
-    assert merge_call.kwargs["params"]["predicate"] == "LIKES"
-    # LIKES is multi-valued: no tombstone pass
-    assert not any("r.invalid_at = $now" in s for s in stmts)
-
-
-@pytest.mark.asyncio
-async def test_write_relation_single_valued_tombstones() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.write_relation(
-        RelationWrite(
-            src_name="Melanie",
-            predicate="LIVES_IN",
-            dst_name="Toronto",
-            chunk_id="chunk-2",
-        )
-    )
-    stmts = _command_strings(client)
-    tombstone = next(s for s in stmts if "r.invalid_at = $now" in s)
-    assert "r.is_current = false" in tombstone
-    # Scoped by the predicate PROPERTY, not a per-predicate edge type — but
-    # matched in a WHERE clause: an inline relationship property map is
-    # unreliable in ArcadeDB Cypher and can silently match nothing.
-    assert "-[r:REL]->" in tombstone
-    where = tombstone.split("WHERE", 1)[1]
-    assert "r.predicate = $predicate" in where
-    assert "r.is_current = true" in where
-    tomb_call = next(
-        c for c in client.command.await_args_list if "r.invalid_at = $now" in c.args[1]
-    )
-    assert tomb_call.kwargs["params"]["predicate"] == "LIVES_IN"
-
-
-@pytest.mark.asyncio
-async def test_merge_entities_keeps_tombstoned_relation_tombstoned() -> None:
-    """A merge re-points loser edges, it does not re-assert them.
-
-    ``merge_entities`` replays each loser edge through ``write_relation``, which
-    is an "assert this fact as of now" API. An edge already tombstoned by the
-    single-valued rule must survive the replay dead: otherwise every flush
-    resurrects it and a single-valued predicate ends up with two current edges.
-    """
-    client = _mock_client()
-    tombstoned_out_row = {
-        "dst": "Toronto",
-        "dst_nn": "toronto",
-        "predicate": "LIVES_IN",
-        "fact": "",
-        "evidence": ["chunk-1"],
-        "confidence": 0.7,
-        "valid_at": None,
-        "source": "gliner",
-        "verifier_score": None,
-        "is_current": False,
-        "invalid_at": "2026-08-01T00:00:00+00:00",
-    }
-    client.query = AsyncMock(
-        side_effect=[
-            [{"name": "Mel", "aliases": []}],  # loser lookup
-            [{"name": "Melanie", "aliases": []}],  # winner lookup
-            [tombstoned_out_row],  # outgoing loser edges
-            [],  # incoming loser edges
-        ]
-    )
-    await GraphStore(client=client).merge_entities("melanie", "mel")
-
-    stmts = _command_strings(client)
-    replay = next(s for s in stmts if "MERGE (a)-[r:REL {predicate: $predicate}]->(b)" in s)
-    assert "r.is_current = true" not in replay
-    assert "r.invalid_at = null" not in replay
-    # A dead edge asserts nothing, so it must not supersede the winner's live one.
-    assert not [s for s in stmts if "r.invalid_at = $now" in s]
-    # The death date survives the merge too, or the bi-temporal record keeps
-    # the death without its when.
-    assert "r.invalid_at = coalesce(r.invalid_at, $invalid_at)" in replay
-    replay_call = next(c for c in client.command.await_args_list if c.args[1] == replay)
-    assert replay_call.kwargs["params"]["invalid_at"] == "2026-08-01T00:00:00+00:00"
-    # The state cannot be preserved if the merge never reads it.
-    assert any("r.is_current AS is_current" in c.args[1] for c in client.query.await_args_list)
-    assert any("r.invalid_at AS invalid_at" in c.args[1] for c in client.query.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_write_relation_accepts_predicate_that_is_not_a_valid_type_name() -> None:
-    """A predicate is data, not a type name, so it need not be a legal identifier.
-
-    Previously the predicate became the edge TYPE, so anything unusable as DDL
-    (leading digit, punctuation) was silently DROPPED — losing the fact outright.
-    """
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.write_relation(RelationWrite(src_name="a", predicate="123!!", dst_name="b"))
-    merge_call = next(c for c in client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1])
-    assert merge_call.kwargs["params"]["predicate"] == "123!!"
-
-
-@pytest.mark.asyncio
-async def test_write_relation_skips_empty_predicate() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.write_relation(RelationWrite(src_name="a", predicate="   ", dst_name="b"))
-    client.command.assert_not_awaited()
-
-
-# ---------------------------------------------------------------------------
-# Frame-instance writes — PLAYS_ROLE + FRAME_EVOKED_IN + convenience relations
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_write_frame_instances_edges_and_convenience_relations() -> None:
-    client = _mock_client()
-    # All three fillers already exist as entities, so all three are persistable.
-    client.query = AsyncMock(return_value=[{"nn": "caroline"}, {"nn": "nurse"}, {"nn": "hospital"}])
-    store = GraphStore(client=client)
-    # A 3-role instance: Employee (agent-like) + Position + Employer. The `id` is
-    # content-hashed at write time (any input id is ignored).
-    await store.write_frame_instances(
-        session_id="s1",
-        chunk_id="c1",
-        instances=[
-            {
-                "frame": "Being_employed",
-                "match_sim": 0.42,
-                "role_confidence": 0.95,
-                "roles": {
-                    "Employee": ["Caroline"],
-                    "Position": ["nurse"],
-                    "Employer": ["hospital"],
-                },
-            }
-        ],
-    )
-    stmts = _command_strings(client)
-
-    # FRAME_INSTANCE vertex + FRAME_EVOKED_IN evidence edge, batched via UNWIND.
-    fi_call = next(
-        c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1]
-    )
-    assert "UNWIND $rows AS row" in fi_call.args[1]
-    assert "MERGE (fi:FRAME_INSTANCE {id: row.fid})" in fi_call.args[1]
-    assert "MERGE (fi)-[:FRAME_EVOKED_IN]->(c)" in fi_call.args[1]
-    inst_rows = fi_call.kwargs["params"]["rows"]
-    assert len(inst_rows) == 1
-    # Content-hash id: same (frame + role fills) -> same node across chunks.
-    assert inst_rows[0]["fid"].startswith("Being_employed:")
-
-    # PLAYS_ROLE edges batched in one UNWIND — 3 roles, 1 filler each.
-    role_call = next(
-        c for c in client.command.await_args_list if "PLAYS_ROLE {role: row.role}" in c.args[1]
-    )
-    role_rows = role_call.kwargs["params"]["rows"]
-    assert len(role_rows) == 3
-    assert {r["role"] for r in role_rows} == {"Employee", "Position", "Employer"}
-    assert all(r["fid"] == inst_rows[0]["fid"] for r in role_rows)
-
-    # Co-role adjacency IS written alongside the reified form, so a frame fact is
-    # walkable between the entities it relates. This replaces an earlier flat
-    # projection that emitted f"{FRAME}_{ROLE}" edges — one edge TYPE per
-    # frame/role pair, one agent-like filler linked to the rest, and the same
-    # facts re-stated in a format the fact-sheet dedup could not match. All three
-    # are fixed here and pinned by tests/frames/test_frame_relations.py:
-    rel_call = next(c for c in client.command.await_args_list if "r:REL" in c.args[1])
-    rel_rows = rel_call.kwargs["params"]["rows"]
-    # every pair, not just the agent's
-    assert len(rel_rows) == 3
-    # one type, frame as a property, roles preserved, marked for the fact-sheet
-    # polarity/modality belong to the MERGE key: without them "X moved" and
-    # "X did not move" are one edge and the later write silently wins.
-    assert "r:REL {predicate: row.p, head_role: row.hr, tail_role: row.tr, " in rel_call.args[1]
-    assert "polarity: row.pol, modality: row.mod}" in rel_call.args[1]
-    assert "r.canonical_predicate = row.cp" in rel_call.args[1]
-    assert all(r["cp"] == f"fn:Being_employed:{r['hr']}->{r['tr']}" for r in rel_rows)
-    assert "source = 'frame'" in rel_call.args[1]
-    assert not [s for s in stmts if "BEING_EMPLOYED" in s.upper()]
-
-
-@pytest.mark.asyncio
-async def test_write_frame_instances_links_the_instance_to_its_frame() -> None:
-    """A FRAME_INSTANCE must reach its FRAME by an edge, not just a string property.
-
-    ``fi.frame`` alone dead-ends at the chunk-tag layer: the FRAME taxonomy
-    (FRAME -[:BROADER]-> FRAME) is only traversable from the fact plane if an
-    instance holds a graph edge to its canonical FRAME vertex. Without it, no
-    query can walk instance -> frame -> ancestor -> sibling instances.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(return_value=[{"nn": "caroline"}, {"nn": "hospital"}])
-    store = GraphStore(client=client)
-    await store.write_frame_instances(
-        session_id="s1",
-        chunk_id="c1",
-        instances=[
-            {
-                "frame": "Being_employed",
-                "roles": {"Employee": ["Caroline"], "Employer": ["hospital"]},
-            }
-        ],
-    )
-
-    fi_call = next(
-        c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1]
-    )
-    fid = fi_call.kwargs["params"]["rows"][0]["fid"]
-
-    evokes_call = next(c for c in client.command.await_args_list if "EVOKES" in c.args[1])
-    stmt = evokes_call.args[1]
-    assert "MATCH (f:FRAME {id: row.frame})" in stmt
-    assert "MERGE (fi)-[:EVOKES]->(f)" in stmt
-    evokes_rows = evokes_call.kwargs["params"]["rows"]
-    assert evokes_rows[0]["frame"] == "Being_employed"
-    assert evokes_rows[0]["fid"] == fid
-
-
-# ---------------------------------------------------------------------------
-# REL provenance contract — both writers, and the residue neither route covers
-# ---------------------------------------------------------------------------
-
-
-async def _frame_rel_statement(client: MagicMock, chunk_id: str = "c1") -> str:
-    """Write one 2-filler frame instance and return the co-role REL statement."""
-    client.query = AsyncMock(return_value=[{"nn": "caroline"}, {"nn": "hospital"}])
-    store = GraphStore(client=client)
-    await store.write_frame_instances(
-        session_id="s1",
-        chunk_id=chunk_id,
-        instances=[
-            {
-                "frame": "Being_employed",
-                "roles": {"Employee": ["Caroline"], "Employer": ["hospital"]},
-            }
-        ],
-    )
-    return next(c.args[1] for c in client.command.await_args_list if "r:REL" in c.args[1])
-
-
-@pytest.mark.asyncio
-async def test_frame_projection_appends_the_chunk_to_rel_evidence() -> None:
-    """The co-role projection is a REL writer, so it honours the REL contract.
-
-    It used to write no evidence at all: measured on conv-30, 2431 of 2696
-    current REL edges had an empty ``evidence`` list, and a consumer reading
-    that field reasonably concluded the graph was unsourced.
-    """
-    client = _mock_client()
-    stmt = await _frame_rel_statement(client, chunk_id="chunk-a")
-
-    assert "r.evidence = CASE" in stmt
-    # The chunk id is an interpolated quoted literal (openCypher cannot express
-    # "$param IN list-property"), constant for the whole UNWIND.
-    assert "'chunk-a' IN coalesce(r.evidence, [])" in stmt
-    assert "coalesce(r.evidence, []) + ['chunk-a']" in stmt
-    # The MERGE key is untouched — a fact and its denial must not merge.
-    assert "polarity: row.pol, modality: row.mod}" in stmt
-    # Route 2 survives alongside it: the same chunks via FRAME_EVOKED_IN.
-    assert "r.frame_instance_id = row.fid" in stmt
-
-
-@pytest.mark.asyncio
-async def test_both_rel_writers_share_one_evidence_append_form() -> None:
-    """One audited fragment, not two hand-rolled ones that can drift apart."""
-    frame_stmt = await _frame_rel_statement(_mock_client(), chunk_id="chunk-a")
-
-    relex_client = _mock_client()
-    await GraphStore(client=relex_client).write_relation(
-        RelationWrite("Caroline", "WORKS_AT", "hospital", chunk_id="chunk-a")
-    )
-    relex_stmt = next(
-        c.args[1] for c in relex_client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1]
-    )
-
-    fragment = _evidence_set("chunk-a")
-    assert fragment in " ".join(frame_stmt.split())
-    assert fragment in " ".join(relex_stmt.split())
-
-
-@pytest.mark.asyncio
-async def test_frame_projection_with_no_chunk_id_counts_the_unsourced_edges(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """No chunk_id => no evidence AND no FRAME_EVOKED_IN. Count it, never drop it.
-
-    Batch 1 MATCHes the CHUNK, so with no chunk id the FRAME_INSTANCE these
-    edges point at is never written either — unsourced by both routes.
-    """
-    client = _mock_client()
-    with caplog.at_level(logging.WARNING):
-        stmt = await _frame_rel_statement(client, chunk_id="")
-
-    assert "r.evidence = coalesce(r.evidence, [])" in stmt
-    assert "'' IN coalesce" not in stmt, "an empty chunk id must not be written as evidence"
-    residue = [r for r in caplog.records if "no recoverable provenance" in r.message]
-    assert residue, "unsourced projected edges must be counted, not silent"
-    assert residue[0].args == (1,)  # the single co-role pair of the 2 fillers
-
-
-@pytest.mark.asyncio
-async def test_merge_repoint_reads_the_same_rel_columns_in_both_directions() -> None:
-    """Incoming edges used to be read with a shorter column list than outgoing.
-
-    Measured on conv-30: 109 REL edges came back from an entity merge as
-    unreified ``lemma:`` edges with no roles, no ``frame_instance_id`` and no
-    evidence — the only edges in the namespace unsourced by BOTH routes.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(
-        side_effect=[
-            [{"name": "Mel", "aliases": []}],
-            [{"name": "Melanie", "aliases": []}],
-            [],
-            [],
-        ]
-    )
-    await GraphStore(client=client).merge_entities("melanie", "mel")
-
-    out_q = next(
-        c.args[1] for c in client.query.await_args_list if "-[r:REL]->(b:ENTITY)" in c.args[1]
-    )
-    in_q = next(
-        c.args[1] for c in client.query.await_args_list if "(a:ENTITY)-[r:REL]->" in c.args[1]
-    )
-    for column in ("evidence", "frame_instance_id", "head_role", "polarity", "ontology_blocked"):
-        assert f"r.{column} AS {column}" in out_q
-        assert f"r.{column} AS {column}" in in_q, f"incoming direction drops {column}"
-
-
-@pytest.mark.asyncio
-async def test_merge_entities_counts_edges_repointed_with_no_provenance(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A repointed edge with neither evidence nor a frame instance is residue."""
-    client = _mock_client()
-    client.query = AsyncMock(
-        side_effect=[
-            [{"name": "Mel", "aliases": []}],
-            [{"name": "Melanie", "aliases": []}],
-            [  # outgoing: one sourced, one frame-only, one with neither route
-                {"dst": "Camping", "dst_nn": "camping", "predicate": "LIKES", "evidence": ["c1"]},
-                {
-                    "dst": "Banff",
-                    "dst_nn": "banff",
-                    "predicate": "Travel",
-                    "evidence": [],
-                    "frame_instance_id": "Travel:abc",
-                },
-                {"dst": "Toronto", "dst_nn": "toronto", "predicate": "Purpose", "evidence": []},
-            ],
-            [],
-        ]
-    )
-    with caplog.at_level(logging.INFO):
-        await GraphStore(client=client).merge_entities("melanie", "mel")
-
-    line = next(r for r in caplog.records if "merge_entities:" in r.message)
-    assert line.args == ("mel", "melanie", 1)
-
-
-@pytest.mark.asyncio
-async def test_write_relation_without_a_chunk_logs_the_unsourced_edge(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """The relex writer's own residue: no chunk_id means no provenance at all."""
-    client = _mock_client()
-    with caplog.at_level(logging.INFO):
-        await GraphStore(client=client).write_relation(RelationWrite("Mel", "LIKES", "Camping"))
-
-    assert [r for r in caplog.records if "unsourced REL edge" in r.message]
-
-
-@pytest.mark.asyncio
-async def test_write_frame_instances_noop_on_empty() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    assert await store.write_frame_instances("s1", "c1", []) == 0
-    client.command.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_frame_instance_identity_ignores_fillers_that_cannot_persist() -> None:
-    """Two instances the graph cannot tell apart must be ONE node.
-
-    ``PLAYS_ROLE`` MATCHes its filler entity and never mints one, so a filler
-    with no ENTITY node is dropped. Hashing it into the id anyway made identity
-    depend on something absent from the graph: measured on conv-30, 20 nodes
-    carried 7 signatures — 13 duplicates that were indistinguishable once
-    written, each holding its own single evidence edge instead of pooling them.
-    """
-    client = _mock_client()
-    # Only Gina and Jon exist as entities; "the vibe" was never extracted.
-    client.query = AsyncMock(return_value=[{"nn": "gina"}, {"nn": "jon"}])
-    store = GraphStore(client=client)
-
-    roles_a = {"Agent": ["Gina", "Jon"], "Activity": ["the vibe"]}
-    roles_b = {"Agent": ["Gina", "Jon"]}
-    await store.write_frame_instances("s1", "c1", [{"frame": "Activity_ongoing", "roles": roles_a}])
-    await store.write_frame_instances("s1", "c2", [{"frame": "Activity_ongoing", "roles": roles_b}])
-
-    fi_calls = [
-        c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1]
-    ]
-    ids = [r["fid"] for c in fi_calls for r in c.kwargs["params"]["rows"]]
-    assert len(ids) == 2
-    assert ids[0] == ids[1], "the unpersistable filler must not fork identity"
-
-    # And the dropped filler never reaches a role edge.
-    role_calls = [c for c in client.command.await_args_list if "PLAYS_ROLE" in c.args[1]]
-    names = {r["nn"] for c in role_calls for r in c.kwargs["params"]["rows"]}
-    assert names == {"gina", "jon"}
-
-
-@pytest.mark.asyncio
-async def test_frame_instance_with_no_persistable_filler_is_not_written() -> None:
-    """An instance whose every filler is unknown has no content to be identified by."""
-    client = _mock_client()
-    client.query = AsyncMock(return_value=[])
-    store = GraphStore(client=client)
-
-    written = await store.write_frame_instances(
-        "s1", "c1", [{"frame": "Activity_ongoing", "roles": {"Agent": ["nobody at all"]}}]
-    )
-
-    assert written == 0
-    assert not [c for c in client.command.await_args_list if "FRAME_INSTANCE" in c.args[1]]
-
-
-@pytest.mark.asyncio
-async def test_frame_instance_with_only_one_surviving_role_edge_is_not_written() -> None:
-    """The extraction gate admits an instance on filled role SLOTS, not on
-    surviving EDGES. ``Firing`` here has two filled roles (Employee, Employer),
-    but only "Tom" exists as an ENTITY — "factory" does not — so only one
-    PLAYS_ROLE edge would ever be drawn. Writing it anyway asserts a graph fact
-    with less support than the gate believed it was admitting (issue #161,
-    "13% under-connected"). This is the write path's own re-check: it is the
-    only place that knows which fillers actually survived the lookup.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(return_value=[{"nn": "tom"}])
-    store = GraphStore(client=client)
-
-    written = await store.write_frame_instances(
-        "s1",
-        "c1",
-        [
-            {
-                "frame": "Firing",
-                "role_confidence": 0.9,
-                "roles": {"Employee": ["Tom"], "Employer": ["factory"]},
-            }
-        ],
-    )
-
-    assert written == 0
-    assert not [c for c in client.command.await_args_list if "FRAME_INSTANCE" in c.args[1]]
-
-
-@pytest.mark.asyncio
-async def test_more_completely_filled_sibling_instance_absorbs_the_lesser_one() -> None:
-    """Two instances of the SAME frame in one write call, differing only by an
-    extra surviving filler, must collapse to a single FRAME_INSTANCE row: the
-    lesser one states strictly less than the more complete one, so keeping both
-    is a duplicate fact under a different hash (issue #161, "near-duplicates
-    inside one chunk"). A real second event — disjoint fillers — must still be
-    written as two rows.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(return_value=[{"nn": "tom"}, {"nn": "factory"}, {"nn": "2019"}])
-    store = GraphStore(client=client)
-
-    written = await store.write_frame_instances(
-        "s1",
-        "c1",
-        [
-            {"frame": "Firing", "roles": {"Employee": ["Tom"], "Employer": ["factory"]}},
-            {
-                "frame": "Firing",
-                "roles": {
-                    "Employee": ["Tom"],
-                    "Employer": ["factory"],
-                    "Time": ["2019"],
-                },
-            },
-        ],
-    )
-
-    fi_call = next(
-        c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1]
-    )
-    fi_rows = fi_call.kwargs["params"]["rows"]
-    assert len(fi_rows) == 1
-    assert written == 1
-
-    surviving_fid = fi_rows[0]["fid"]
-    role_calls = [c for c in client.command.await_args_list if "PLAYS_ROLE" in c.args[1]]
-    role_rows = [
-        r for c in role_calls for r in c.kwargs["params"]["rows"] if r["fid"] == surviving_fid
-    ]
-    assert {r["nn"] for r in role_rows} == {"tom", "factory", "2019"}
-
-
-@pytest.mark.asyncio
-async def test_two_instances_of_the_same_frame_with_disjoint_fillers_stay_two_rows() -> None:
-    """A subset/superset pair collapses (see above); two genuinely different
-    events sharing a frame must not — that would silently drop a real fact.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(
-        return_value=[
-            {"nn": "tom"},
-            {"nn": "acme"},
-            {"nn": "caroline"},
-            {"nn": "beta"},
-        ]
-    )
-    store = GraphStore(client=client)
-
-    written = await store.write_frame_instances(
-        "s1",
-        "c1",
-        [
-            {"frame": "Firing", "roles": {"Employee": ["Tom"], "Employer": ["Acme"]}},
-            {"frame": "Firing", "roles": {"Employee": ["Caroline"], "Employer": ["Beta"]}},
-        ],
-    )
-
-    fi_call = next(
-        c for c in client.command.await_args_list if "MERGE (fi:FRAME_INSTANCE" in c.args[1]
-    )
-    assert len(fi_call.kwargs["params"]["rows"]) == 2
-    assert written == 2
-
-
-# ---------------------------------------------------------------------------
-# Read API — state filter threading
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_search_chunks_ann_filters_state_and_session() -> None:
+async def test_search_segments_ann_filters_by_source_over_an_overfetched_pool() -> None:
     rows = [
-        {
-            "@rid": "#1:0",
-            "chunk_id": "c1",
-            "session_id": "s1",
-            "state": "raw",
-            "text": "a",
-            "distance": 0.1,
-        },
-        {
-            "@rid": "#1:1",
-            "chunk_id": "c2",
-            "session_id": "s1",
-            "state": "consolidated",
-            "text": "b",
-            "distance": 0.2,
-        },
-        {
-            "@rid": "#1:2",
-            "chunk_id": "c3",
-            "session_id": "s2",
-            "state": "raw",
-            "text": "c",
-            "distance": 0.3,
-        },
+        {"@rid": "#1:0", "id": "g1", "text": "a", "source_id": "s1", "distance": 0.1},
+        {"@rid": "#1:1", "id": "g2", "text": "b", "source_id": "s2", "distance": 0.2},
+        {"@rid": "#1:0", "id": "g1", "text": "a", "source_id": "s1", "distance": 0.1},
     ]
-    client = _mock_client(query_rows=rows)
-    store = GraphStore(client=client)
-    out = await store.search_chunks_ann([0.1] * 8, top_k=10, session_id="s1", state="raw")
-    assert [r["chunk_id"] for r in out] == ["c1"]
+    store = GraphStore(client=_mock_client(rows))
+
+    out = await store.search_segments_ann([0.1] * 8, top_k=10, source_ids=["s1"])
+
+    sql = _last_query(store.client)
+    assert 'vectorNeighbors("SEGMENT[embedding]"' in sql and ", 200)" in sql
+    assert [r["id"] for r in out] == ["g1"]  # scoped, and deduplicated by @rid
     assert out[0]["cosine_score"] == pytest.approx(0.9)
-    # vectorNeighbors SQL over the CHUNK embedding index
-    sql = client.query.await_args_list[0].args[1]
-    assert 'vectorNeighbors("CHUNK[embedding]"' in sql
 
 
-@pytest.mark.asyncio
-async def test_full_text_search_threads_state_filter_into_sql() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.full_text_search_chunks(["camping"], session_id="s1", state="raw")
-    sql = client.query.await_args_list[0].args[1]
-    # CONTAINSTEXT, unqualified and un-lowercased: the operator the FULL_TEXT
-    # index answers, in SQL because openCypher has no equivalent.
-    assert client.query.await_args_list[0].kwargs["language"] == "sql"
-    assert "text CONTAINSTEXT 'camping'" in sql
-    assert "session_id = 's1'" in sql
-    assert "state = 'raw'" in sql
+async def test_full_text_search_is_case_folded_sql_ordered_by_id() -> None:
+    store = GraphStore(client=_mock_client())
+
+    await store.full_text_search_segments(["camping", "O'Brien"], top_k=7, source_ids=["s1"])
+
+    sql = _last_query(store.client)
+    assert sql.startswith("SELECT id, text, role, observed_at, source_id FROM SEGMENT")
+    assert "text ILIKE '%camping%' OR text ILIKE '%O\\'Brien%'" in sql
+    assert "source_id IN ['s1']" in sql
+    assert sql.endswith("ORDER BY id LIMIT 7")
 
 
-@pytest.mark.asyncio
-async def test_query_entity_chunks_threads_state_and_escapes_quotes() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.query_entity_chunks(["O'Melanie", "war"], state="consolidated")
-    cypher = client.query.await_args_list[0].args[1]
-    # sanitize() escapes rather than strips: ENTITY.name_norm only casefolds, so
-    # the stored key keeps its apostrophe ("o'melanie"). Stripping produced
-    # 'omelanie', which could never match what was written.
-    assert r"e.name_norm CONTAINS 'o\'melanie'" in cypher
-    assert "e.name_norm = 'war'" in cypher
-    assert "c.state = 'consolidated'" in cypher
+async def test_get_segments_by_ids_keys_rows_by_id() -> None:
+    rows = [{"id": "g1", "text": "a", "role": "Gina", "observed_at": "2023-01-20"}]
+    store = GraphStore(client=_mock_client(rows))
+
+    out = await store.get_segments_by_ids(["g1", ""])
+
+    assert "g.id IN ['g1']" in _last_query(store.client)
+    assert out["g1"]["role"] == "Gina"
+    assert await store.get_segments_by_ids([]) == {}
 
 
-@pytest.mark.asyncio
-async def test_query_entity_chunks_neutralises_backslash() -> None:
-    """A trailing backslash must not escape the closing quote of the literal."""
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.query_entity_chunks(["back\\slash"], state=None)
-    cypher = client.query.await_args_list[0].args[1]
-    assert r"'back\\slash'" in cypher
-
-
-@pytest.mark.asyncio
-async def test_query_temporal_chunks_year_prefix_and_state() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.query_temporal_chunks(["2023", "2023-05-07"], state="raw")
-    cypher = client.query.await_args_list[0].args[1]
-    assert "d.date = '2023'" in cypher
-    assert "d.date STARTS WITH '2023-'" in cypher
-    assert "d.date = '2023-05-07'" in cypher
-    assert "c.state = 'raw'" in cypher
-    assert "MENTIONS_DATE" in cypher
-
-
-@pytest.mark.asyncio
-async def test_core_ddl_frame_carries_summary_and_vector_index() -> None:
-    joined = " | ".join(stmt for _, stmt in _CORE_DDL)
-    assert "CREATE PROPERTY FRAME.summary" in joined
-    assert "CREATE PROPERTY FRAME.embedding" in joined
-    assert "ON FRAME(embedding) LSM_VECTOR" in joined
-
-
-@pytest.mark.asyncio
-async def test_delete_session_leaves_canonical_frames_alone() -> None:
-    """A canonical FRAME is namespace-global, like ENTITY/TOPIC/TEMPORAL.
-
-    It carries no ``session_id``, so the old per-session clause matched nothing;
-    and it must not be deleted anyway — other sessions evoke the same frame, and
-    it may be a parent in the BROADER taxonomy. Its evidence edges go when the
-    chunks do.
-    """
-    client = _mock_client()
-    store = GraphStore(client=client, db="mem")
-    await store.delete_session("s1")
-    deletes = [c.args[1] for c in client.command.await_args_list if "DETACH DELETE" in c.args[1]]
-    assert not [d for d in deletes if "(n:FRAME " in d or "(n:FRAME{" in d]
-    # the session-scoped vertices are still purged
-    assert any("FRAME_INSTANCE" in d for d in deletes)
-    assert any("(n:CHUNK " in d for d in deletes)
-
-
-def test_core_ddl_declares_the_broader_taxonomy_edge() -> None:
-    joined = " | ".join(stmt for _, stmt in _CORE_DDL)
-    assert "CREATE EDGE TYPE BROADER" in joined
-
-
-def test_core_ddl_frame_drops_the_columns_nothing_ever_wrote() -> None:
-    """``lu``/``speaker``/``fes``/``fillers`` were written empty on every row.
-
-    The role-filled frame data that matters is reified on FRAME_INSTANCE and
-    PLAYS_ROLE, which has a live reader. ``session_id`` goes with them: a
-    canonical FRAME spans every session that evokes it.
-    """
-    joined = " | ".join(stmt for _, stmt in _CORE_DDL)
-    for dead in ("FRAME.lu", "FRAME.speaker", "FRAME.fes", "FRAME.fillers", "FRAME.session_id"):
-        assert dead not in joined, f"{dead} has no reader and no writer"
-
-
-@pytest.mark.asyncio
-async def test_write_frames_persists_summary_and_embedding() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client, db="mem")
-    await store.write_frames(
-        [
-            {
-                "frame_type": "Process_start",
-                "chunk_id": "c1",
-                "summary": "the beginning of a process",
-                "embedding": [0.1, 0.2, 0.3],
-            }
-        ],
-    )
-    cmds = _command_strings(client)
-    # summary rides the UNWIND MERGE as a param
-    merge = client.command.await_args_list[0]
-    assert "n.summary = r.summary" in merge.args[1]
-    assert merge.kwargs["params"]["rows"][0]["summary"] == "the beginning of a process"
-    # embedding written as an inline literal via _set_embedding on FRAME(id)
-    emb_stmt = next(s for s in cmds if "SET n.embedding = [" in s and "FRAME" in s)
-    assert "Process_start" not in emb_stmt  # id is a bound $key param, not interpolated
-    emb_call = next(c for c in client.command.await_args_list if "SET n.embedding = [" in c.args[1])
-    assert emb_call.kwargs["params"]["key"] == "Process_start"
-
-
-@pytest.mark.asyncio
-async def test_write_frames_merges_one_canonical_vertex_per_frame_type() -> None:
-    """FRAME is canonical: one vertex per frame, whatever chunk or session evoked it.
-
-    Per-chunk data lives on the EVOKED_BY edge. Without this the graph holds one
-    FRAME per (chunk, frame), which is what made frame-to-frame traversal
-    impossible and forced coverage to be measured off the node.
-    """
-    client = _mock_client()
-    store = GraphStore(client=client, db="mem")
-    await store.write_frames([{"frame_type": "Process_start", "chunk_id": "c1", "confidence": 0.9}])
-    await store.write_frames([{"frame_type": "Process_start", "chunk_id": "c2", "confidence": 0.4}])
-
-    merges = [c for c in client.command.await_args_list if "MERGE (n:FRAME" in c.args[1]]
-    assert [r["id"] for c in merges for r in c.kwargs["params"]["rows"]] == [
-        "Process_start",
-        "Process_start",
+async def test_neighbor_segments_walks_next_one_hop_per_radius_and_credits_the_seed() -> None:
+    hops = [
+        [{"seed": "g2", "id": "g1", "text": "start", "byte_start": 0}],
+        [{"seed": "g1", "id": "g0", "text": "earlier", "byte_start": -5}],
     ]
-    # The per-chunk signal is the edge, and it differs per chunk.
-    edges = [c for c in client.command.await_args_list if "EVOKED_BY" in c.args[1]]
-    assert [r["conf"] for c in edges for r in c.kwargs["params"]["rows"]] == [0.9, 0.4]
-    # Nothing per-chunk or dead is set on the canonical node.
-    node_sql = merges[0].args[1]
-    for dead in ("n.session_id", "n.lu", "n.speaker", "n.fes", "n.fillers"):
-        assert dead not in node_sql
-
-
-@pytest.mark.asyncio
-async def test_write_frames_merges_broader_parents_as_taxonomy() -> None:
-    """A frame's FrameNet parents become BROADER edges: the traversable taxonomy.
-
-    A parent gets no evidence edge (nothing evokes it directly), but it still
-    carries its own definition and embedding — otherwise it is an id-only stub
-    that match_frames (a vector search) can never return, so the hierarchy
-    could be walked down to but never entered from a query.
-    """
     client = _mock_client()
-    store = GraphStore(client=client, db="mem")
-    await store.write_frames(
-        [
-            {
-                "frame_type": "Revenge",
-                "chunk_id": "c1",
-                "parents": [
-                    {
-                        "id": "Rewards_and_punishments",
-                        "summary": "a reward or punishment is given",
-                        "embedding": [0.4, 0.5, 0.6],
-                    },
-                    {
-                        "id": "Response",
-                        "summary": "a reaction to a stimulus",
-                        "embedding": [0.7, 0.8, 0.9],
-                    },
-                ],
-            }
-        ]
-    )
-    edge = next(c for c in client.command.await_args_list if "BROADER" in c.args[1])
-    assert "MERGE (n)-[:BROADER]->(p)" in edge.args[1]
-    assert edge.kwargs["params"]["rows"] == [
-        {
-            "id": "Revenge",
-            "parent": "Rewards_and_punishments",
-            "summary": "a reward or punishment is given",
-        },
-        {"id": "Revenge", "parent": "Response", "summary": "a reaction to a stimulus"},
+    client.query = AsyncMock(side_effect=hops)
+    store = GraphStore(client=client)
+
+    out = await store.neighbor_segments(["g2"], radius=2)
+
+    assert [r["id"] for r in out["g2"]] == ["g1", "g0"]
+    first, second = (call.args[1] for call in client.query.await_args_list)
+    assert "(g:SEGMENT)-[:NEXT]-(n:SEGMENT)" in first and "['g2']" in first
+    assert "['g1']" in second
+    assert await store.neighbor_segments(["g2"], radius=0) == {}
+
+
+async def test_segments_mentioning_matches_name_norm_on_word_boundaries() -> None:
+    store = GraphStore(client=_mock_client())
+
+    await store.segments_mentioning(["O'Melanie", "war", "of"], top_k=5, source_ids=["s1"])
+
+    q = _last_query(store.client)
+    assert "(g:SEGMENT)-[:MENTIONS]->(e:ENTITY)" in q
+    assert "e.name_norm = 'o\\'melanie'" in q and "e.name_norm = 'war'" in q
+    assert "'of'" not in q  # too short to be a name key
+    assert "e.state <> 'forgotten'" in q
+    assert "g.source_id IN ['s1']" in q
+    assert q.endswith("ORDER BY id LIMIT $k")
+
+
+async def test_segments_evoking_searches_concepts_then_follows_evokes() -> None:
+    concepts = [{"@rid": "#2:0", "uri": "c:place", "label": "Place", "distance": 0.2}]
+    evoked = [{"id": "g1", "uri": "c:place", "confidence": 0.5}]
+    client = _mock_client()
+    client.query = AsyncMock(side_effect=[concepts, evoked])
+    store = GraphStore(client=client)
+
+    out = await store.segments_evoking([0.1, 0.2], concept_top_k=5, source_ids=None)
+
+    ann, hop = (call.args[1] for call in client.query.await_args_list)
+    assert 'vectorNeighbors("CONCEPT[embedding]"' in ann
+    assert "(g:SEGMENT)-[v:EVOKES]->(c:CONCEPT)" in hop and "c.uri IN ['c:place']" in hop
+    assert out == [{"id": "g1", "uri": "c:place", "label": "Place", "score": pytest.approx(0.4)}]
+
+
+# ---------------------------------------------------------------------------
+# Entity and fact reads
+# ---------------------------------------------------------------------------
+
+
+async def test_resolve_query_entities_ranks_exact_then_shortest_before_the_cap() -> None:
+    rows = [
+        {"id": "e3", "name": "Jon's studio", "nn": "jon's studio"},
+        {"id": "e1", "name": "Jon", "nn": "jon"},
+        {"id": "e2", "name": "Dance studio", "nn": "dance studio"},
     ]
-    # Parents get a summary via the same MERGE...
-    parent_merge = next(c for c in client.command.await_args_list if "MERGE (p:FRAME" in c.args[1])
-    assert "SET p.frame_type = r.parent, p.summary = r.summary" in parent_merge.args[1]
-    assert parent_merge.kwargs["params"]["rows"][0]["summary"] == "a reward or punishment is given"
-    # ...and an embedding, once each, via the same inline-literal path evoked frames use.
-    emb_calls = {
-        c.kwargs["params"]["key"]
-        for c in client.command.await_args_list
-        if "SET n.embedding = [" in c.args[1]
-    }
-    assert {"Rewards_and_punishments", "Response"} <= emb_calls
-    # No evidence edge: nothing evokes a bare parent.
-    parent_sql = " | ".join(
-        c.args[1] for c in client.command.await_args_list if "r.parent" in c.args[1]
-    )
-    assert "EVOKED_BY" not in parent_sql
+    store = GraphStore(client=_mock_client(rows))
+
+    out = await store.resolve_query_entities(["jon", "studio", "of"], cap=2)
+
+    assert out == [{"id": "e1", "name": "Jon"}, {"id": "e2", "name": "Dance studio"}]
+    q = _last_query(store.client)
+    assert "e.name_norm STARTS WITH 'studio '" in q and "e.state <> 'forgotten'" in q
 
 
-@pytest.mark.asyncio
-async def test_write_frames_skips_taxonomy_when_no_parents() -> None:
+async def test_facts_by_entity_reads_both_directions_with_evidence() -> None:
+    store = GraphStore(client=_mock_client())
+
+    await store.facts_by_entity(["e1"], limit=3)
+
+    q = _last_query(store.client)
+    assert "(s:ENTITY)-[:SUBJECT_OF]->(f:FACT)-[:OBJECT_IS]->(o:ENTITY)" in q
+    assert "(s.id IN ['e1'] OR o.id IN ['e1'])" in q
+    assert "f.is_current = true" in q and "(f)-[:ASSERTED_IN]->(g:SEGMENT)" in q
+    assert q.endswith("ORDER BY confidence DESC, id LIMIT $k")
+    assert store.client.query.await_args.kwargs["params"] == {"k": 3}
+    assert await store.facts_by_entity([]) == []
+
+
+async def test_facts_by_predicate_matches_id_or_canonical_and_scopes_evidence() -> None:
+    store = GraphStore(client=_mock_client())
+
+    await store.facts_by_predicate(["Works_at", " "], limit=5, source_ids=["s1"])
+
+    q = _last_query(store.client)
+    assert "(f)-[:USES]->(p:PREDICATE)" in q
+    assert "(p.id IN ['works_at'] OR p.canonical IN ['works_at'])" in q
+    assert "g.source_id IN ['s1']" in q
+    assert await store.facts_by_predicate([]) == []
+
+
+async def test_sources_filters_by_uri_only_when_asked() -> None:
+    store = GraphStore(client=_mock_client())
+
+    await store.sources()
+    assert "WHERE" not in _last_query(store.client)
+
+    await store.sources(uri="session:s1")
+    assert "WHERE s.uri = 'session:s1'" in _last_query(store.client)
+
+
+# ---------------------------------------------------------------------------
+# Deletion
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_source_removes_facts_then_segments_then_the_source() -> None:
+    store = GraphStore(client=_mock_client())
+
+    await store.delete_source("session:s1")
+
+    stmts = _command_strings(store.client)
+    assert [s.split("DETACH DELETE ")[1] for s in stmts] == ["f", "g", "s"]
+    assert all("SOURCE {uri: $uri}" in s for s in stmts)
+
+
+async def test_delete_source_reports_a_real_failure() -> None:
     client = _mock_client()
-    store = GraphStore(client=client, db="mem")
-    await store.write_frames([{"frame_type": "Motion", "chunk_id": "c1"}])
-    assert not [c for c in client.command.await_args_list if "BROADER" in c.args[1]]
+    client.command = AsyncMock(side_effect=[[], Exception("disk full"), []])
+    with pytest.raises(StoreError, match="SEGMENT: disk full"):
+        await GraphStore(client=client).delete_source("session:s1")
 
 
-@pytest.mark.asyncio
-async def test_write_frames_writes_each_frame_embedding_once() -> None:
-    """The definition embedding is a property of the frame, not of the evocation."""
-    client = _mock_client()
-    store = GraphStore(client=client, db="mem")
-    row = {"frame_type": "Process_start", "embedding": [0.1, 0.2, 0.3]}
-    await store.write_frames([{**row, "chunk_id": "c1"}])
-    await store.write_frames([{**row, "chunk_id": "c2"}])
-    emb = [c for c in client.command.await_args_list if "SET n.embedding = [" in c.args[1]]
-    assert len(emb) == 1
+async def test_clear_all_wipes_every_golden_vertex_type_but_the_stamp() -> None:
+    store = GraphStore(client=_mock_client())
 
-
-@pytest.mark.asyncio
-async def test_emptying_the_database_reinstates_the_frame_writes() -> None:
-    """The write-once cache must not outlive the rows it is tracking.
-
-    ``clear_all`` deletes every FRAME. A cache that still claims they are
-    written makes the next ingest skip their embedding and their taxonomy, and
-    an embedding-less FRAME is invisible to the channel's vector search — the
-    layer goes quietly dead rather than failing.
-    """
-    client = _mock_client()
-    store = GraphStore(client=client, db="mem")
-    row = {"frame_type": "Process_start", "chunk_id": "c1", "embedding": [0.1, 0.2]}
-    await store.write_frames([row])
     await store.clear_all()
-    await store.write_frames([row])
-    emb = [c for c in client.command.await_args_list if "SET n.embedding = [" in c.args[1]]
-    assert len(emb) == 2
 
-
-@pytest.mark.asyncio
-async def test_ensure_schema_reinstates_the_frame_writes() -> None:
-    """Same hazard by the other route: the namespace was dropped and recreated."""
-    client = _mock_client()
-    store = GraphStore(client=client, db="mem")
-    row = {"frame_type": "Process_start", "chunk_id": "c1", "embedding": [0.1, 0.2]}
-    await store.write_frames([row])
-    await store.ensure_schema(dims=2)
-    await store.write_frames([row])
-    emb = [c for c in client.command.await_args_list if "SET n.embedding = [" in c.args[1]]
-    assert len(emb) == 2
-
-
-@pytest.mark.asyncio
-async def test_query_frames_by_embedding_ann_then_evoked_by_join() -> None:
-    """Session scoping is on the CHUNK, and the evocation strength weights the score.
-
-    FRAME is canonical, so it carries no session — filtering it there would drop
-    every frame that happened to be first evoked in another session. The chunk
-    is what belongs to a session.
-    """
-    client = _mock_client()
-    # ANN pass, then the narrower-expansion pass, then the EVOKED_BY join.
-    client.query = AsyncMock(
-        side_effect=[
-            [{"id": "Process_start", "frame_type": "Process_start", "distance": 0.6}],
-            [],
-            [
-                {
-                    "id": "Process_start",
-                    "frame_type": "Process_start",
-                    "chunk_id": "c1",
-                    "confidence": 0.5,
-                },
-                {
-                    "id": "Process_start",
-                    "frame_type": "Process_start",
-                    "chunk_id": "c2",
-                    "confidence": 1.0,
-                },
-            ],
-        ]
-    )
-    store = GraphStore(client=client, db="mem")
-    rows = await store.query_frames_by_embedding([0.1, 0.2], top_k=5, session_id="s1")
-    ann_sql = client.query.await_args_list[0].args[1]
-    assert 'vectorNeighbors("FRAME[embedding]"' in ann_sql
-    join_cypher = client.query.await_args_list[-1].args[1]
-    assert "(n:FRAME)-[ev:EVOKED_BY]->(c:CHUNK)" in join_cypher
-    assert "c.session_id = 's1'" in join_cypher
-    assert "n.session_id" not in join_cypher
-    # 1 - 0.6 = 0.4 query match, scaled by how strongly each chunk evoked it.
-    assert rows == [
-        {"chunk_id": "c1", "frame_type": "Process_start", "score": pytest.approx(0.2)},
-        {"chunk_id": "c2", "frame_type": "Process_start", "score": pytest.approx(0.4)},
-    ]
-
-
-@pytest.mark.asyncio
-async def test_query_frames_by_embedding_expands_to_narrower_frames() -> None:
-    """A query matching a parent frame reaches chunks that only evoked its child.
-
-    This is the reader that makes the BROADER taxonomy worth writing. Without
-    it the channel only ever returns chunks whose frame the query matched
-    head-on, and the frame hierarchy is a write-only layer.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(
-        side_effect=[
-            [
-                {
-                    "id": "Rewards_and_punishments",
-                    "frame_type": "Rewards_and_punishments",
-                    "distance": 0.2,
-                }
-            ],
-            [{"child": "Revenge", "parent": "Rewards_and_punishments"}],
-            [{"id": "Revenge", "frame_type": "Revenge", "chunk_id": "c9", "confidence": 1.0}],
-        ]
-    )
-    store = GraphStore(client=client, db="mem")
-    rows = await store.query_frames_by_embedding([0.1, 0.2], top_k=5)
-    narrower = client.query.await_args_list[1].args[1]
-    assert "(child:FRAME)-[:BROADER]->(parent:FRAME)" in narrower
-    assert "Rewards_and_punishments" in narrower
-    # The child joins the pool, so its chunk is reachable...
-    assert "Revenge" in client.query.await_args_list[2].args[1]
-    # ...at a discount on the parent's 0.8 match, so a direct hit always outranks it.
-    assert rows == [
-        {"chunk_id": "c9", "frame_type": "Revenge", "score": pytest.approx(0.8 * 0.6)},
-    ]
+    labels = [s.split(":")[1].split(")")[0] for s in _command_strings(store.client)]
+    assert labels == list(_VERTEX_TYPES)
+    assert "SCHEMA_STAMP" not in labels and {"SOURCE", "SEGMENT", "FACT"} <= set(labels)
 
 
 # ---------------------------------------------------------------------------
-# Ontology taxonomy (SKOS broader)
-# ---------------------------------------------------------------------------
-
-
-class _FakeTerm:
-    kind = "class"
-    definition = "a definition"
-    module = "AgentOntology"
-
-    def __init__(self, uri: str, label: str, parents: tuple[str, ...] = ()) -> None:
-        self.uri = uri
-        self.label = label
-        self.parents = list(parents)
-
-
-class _FakeIndex:
-    digest = "digest-1"
-    source = "cco"
-
-    def __init__(self, terms: list[_FakeTerm]) -> None:
-        self.terms = terms
-
-    def term_embedding(self, uri: str) -> list[float]:
-        return []
-
-
-@pytest.mark.asyncio
-async def test_write_ontology_persists_broader_edges_keyed_by_uri() -> None:
-    """The class hierarchy lands as edges, not only as a comma-joined string.
-
-    Parents are DECLARED as labels but resolved to URIs before the MERGE: the
-    label index is NOTUNIQUE, so matching the parent by label would fan the edge
-    out across every class sharing that label.
-    """
-    client = _mock_client()
-    store = GraphStore(client=client, db="mem")
-    await store.write_ontology(
-        _FakeIndex(
-            [
-                _FakeTerm("u:studio", "Dance Studio", ("Facility",)),
-                _FakeTerm("u:facility", "Facility"),
-            ]
-        )
-    )
-    edge = next(c for c in client.command.await_args_list if "BROADER" in c.args[1])
-    assert "MERGE (c)-[:BROADER]->(p)" in edge.args[1]
-    assert "{uri: r.puri}" in edge.args[1]
-    assert edge.kwargs["params"]["rows"] == [{"uri": "u:studio", "puri": "u:facility"}]
-
-
-@pytest.mark.asyncio
-async def test_write_ontology_backfills_broader_on_an_existing_namespace() -> None:
-    """A namespace that already has the terms still needs the edges.
-
-    ``write_ontology`` short-circuits on a term count guard, and the subclass
-    expansion now reads ONLY BROADER. Without a backfill, every namespace
-    ingested before this feature would keep its classes and silently stop
-    generalising — no error, no log, just an empty expansion.
-    """
-    client = _mock_client()
-    # Term guard is satisfied (2 terms already present) but no BROADER edges yet.
-    client.query = AsyncMock(side_effect=[[{"c": 2}], [{"c": 0}]])
-    store = GraphStore(client=client, db="mem")
-    await store.write_ontology(
-        _FakeIndex(
-            [
-                _FakeTerm("u:studio", "Dance Studio", ("Facility",)),
-                _FakeTerm("u:facility", "Facility"),
-            ]
-        )
-    )
-    edge = next(c for c in client.command.await_args_list if "BROADER" in c.args[1])
-    assert edge.kwargs["params"]["rows"] == [{"uri": "u:studio", "puri": "u:facility"}]
-    # ...but it must NOT re-MERGE the 1401 class rows to do it.
-    assert not [c for c in client.command.await_args_list if "MERGE (n:ONTOLOGY_CLASS" in c.args[1]]
-
-
-@pytest.mark.asyncio
-async def test_search_ontology_classes_expands_to_subclasses_via_broader() -> None:
-    """A query matching ``Facility`` reaches a chunk tagged only ``Dance Studio``.
-
-    The expansion used to full-scan every ONTOLOGY_CLASS row and re-split the
-    ``parents`` string in Python. Traversing BROADER is one indexed hop, matches
-    on URI rather than on a label that two classes can share, and gives the
-    persisted hierarchy a live reader.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(
-        side_effect=[
-            [{"uri": "u:facility", "label": "Facility", "distance": 0.1}],
-            [{"child": "u:studio", "label": "Dance Studio", "parent": "u:facility"}],
-            [{"chunk_id": "c1", "uri": "u:studio", "sim": 1.0}],
-        ]
-    )
-    store = GraphStore(client=client, db="mem")
-    rows = await store.search_ontology_classes([0.1], top_k=5)
-    broader_q = client.query.await_args_list[1].args[1]
-    assert "(child:ONTOLOGY_CLASS)-[:BROADER]->(parent:ONTOLOGY_CLASS)" in broader_q
-    assert "u:facility" in broader_q
-    assert rows == [
-        {
-            "chunk_id": "c1",
-            "uri": "u:studio",
-            "label": "Dance Studio",
-            "score": pytest.approx(0.9 * 0.6),
-            "via": "chunk",
-        }
-    ]
-
-
-# ---------------------------------------------------------------------------
-# Structured fact context (D8 fact-sheet)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_entity_fact_context_formats_filters_prioritises_and_caps() -> None:
-    # The rel query returns r.predicate — the RAW label. Predicates are data, so a
-    # reserved-word verb ("find") needs no escaping and reads back verbatim.
-    # Frame facts arrive ONLY via frame_rows (the reified PLAYS_ROLE layer); the
-    # flattened f"{FRAME}_{ROLE}" projection is no longer written, so no predicate
-    # here restates a frame — which is what the old noise filter existed to undo.
-    rel_rows = [
-        {"s": "Gina", "p": "SUPPORT", "o": "Jon", "ev": ["c2"]},
-        {
-            "s": "Gina",
-            "p": "FIND",
-            "o": "fashion pieces",
-            "ev": ["c3"],
-        },  # reserved-word verb → KEPT
-        {"s": "Jon", "p": "VISITING", "o": "Rome", "ev": []},  # plain (unevidenced)
-    ]
-    frame_rows = [
-        {"frame": "Activity_start", "roles": ["Agent=Jon", "Activity=dance studio"]},
-        {"frame": "Visiting", "roles": ["Agent=Jon"]},  # < 2 role fills → dropped
-    ]
-    client = _mock_client()
-    client.query = AsyncMock(side_effect=[rel_rows, frame_rows])
-    store = GraphStore(client=client)
-
-    facts = await store.entity_fact_context(["Jon", "Gina"])
-
-    # Frame instance (>=2 roles) ranks first; the 1-role frame is dropped.
-    assert facts[0] == "Activity_start: Agent=Jon, Activity=dance studio"
-    assert not any(f.startswith("Visiting:") for f in facts)
-    assert "Gina support Jon" in facts
-    assert "Gina find fashion pieces" in facts  # reserved-word verb survived
-    assert "Jon visiting Rome" in facts
-    # Evidenced relations precede the bare (unevidenced) VISITING relation.
-    assert facts.index("Gina support Jon") < facts.index("Jon visiting Rome")
-
-    # Query: both directions, current-only, raw predicate, name_norm list literal.
-    rel_cypher = client.query.await_args_list[0].args[1]
-    assert "a.name_norm IN ['gina','jon'] OR b.name_norm IN ['gina','jon']" in rel_cypher
-    assert "r.is_current = true OR r.is_current IS NULL" in rel_cypher
-    assert "r.predicate AS p" in rel_cypher
-    assert "(a:ENTITY)-[r:REL]->(b:ENTITY)" in rel_cypher
-    # Structural edges are separate types, so scoping to REL excludes them by
-    # construction — the old exclusion list is gone.
-    assert "NOT type(r) IN [" not in rel_cypher
-
-
-@pytest.mark.asyncio
-async def test_entity_fact_context_caps_at_max_facts() -> None:
-    rel_rows = [{"s": "Jon", "p": "SUPPORT", "o": f"person{i}", "ev": ["c"]} for i in range(10)]
-    client = _mock_client()
-    client.query = AsyncMock(side_effect=[rel_rows, []])
-    store = GraphStore(client=client)
-    facts = await store.entity_fact_context(["Jon"], max_facts=3)
-    assert len(facts) == 3
-
-
-@pytest.mark.asyncio
-async def test_entity_fact_context_empty_on_no_entities() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    assert await store.entity_fact_context([]) == []
-    client.query.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_entity_fact_context_soft_fails_on_error() -> None:
-    client = _mock_client()
-    client.query = AsyncMock(side_effect=RuntimeError("boom"))
-    store = GraphStore(client=client)
-    assert await store.entity_fact_context(["Jon"]) == []
-
-
-@pytest.mark.asyncio
-async def test_resolve_query_entities_matches_word_boundary() -> None:
-    client = _mock_client(query_rows=[{"name": "Jon", "nn": "jon"}, {"name": "Gina", "nn": "gina"}])
-    store = GraphStore(client=client)
-    names = await store.resolve_query_entities(["jon", "studio", "of"])  # "of" too short
-    assert names == ["Jon", "Gina"]
-    cypher = client.query.await_args_list[0].args[1]
-    # Word-boundary: exact, or a whole space-delimited word — NOT intra-word substring
-    # (so "there" never resolves "theresa").
-    assert "e.name_norm = 'jon'" in cypher
-    assert "e.name_norm ENDS WITH ' studio'" in cypher  # "studio" -> "dance studio"
-    assert "e.name_norm STARTS WITH 'studio '" in cypher
-    assert "e.name_norm CONTAINS ' studio '" in cypher
-    assert "CONTAINS 'studio'" not in cypher  # never a bare intra-word substring
-    assert "'of'" not in cypher  # < 3 chars filtered out
-    # The cap is applied AFTER ranking, so the query must not pre-truncate.
-    assert "LIMIT" not in cypher
-
-
-@pytest.mark.asyncio
-async def test_resolve_query_entities_ranks_before_the_cap() -> None:
-    """The cap binds on every real query, so WHICH entities survive it is the
-
-    whole behaviour. Storage order used to decide; exact-then-shortest decides
-    now. Rows are given worst-first so a pass-through would fail.
-    """
-    client = _mock_client(
-        query_rows=[
-            {
-                "name": "Gina's hard work and effort, Gina",
-                "nn": "gina's hard work and effort, gina",
-            },
-            {"name": "dance studio", "nn": "dance studio"},
-            {"name": "Gina, Gina", "nn": "gina, gina"},
-            {"name": "Gina", "nn": "gina"},
-            {"name": "studio", "nn": "studio"},
-        ]
-    )
-    store = GraphStore(client=client)
-    names = await store.resolve_query_entities(["gina", "studio"], cap=3)
-    # Exact token matches lead; the rest fall back to shortest-first.
-    assert names == ["Gina", "studio", "Gina, Gina"]
-    # What actually matters: the canonical name outranks its corrupted variants,
-    # which is what the unordered LIMIT could not guarantee.
-    assert names.index("Gina") < names.index("Gina, Gina")
-    assert "Gina's hard work and effort, Gina" not in names
-
-
-# ---------------------------------------------------------------------------
-# Bulk chunk writes — batching cap
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_write_chunks_bulk_batches_at_cap() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    n = _CHUNK_BATCH * 2 + 5  # 45 with the default cap of 20 → 3 batches
-    chunks = [
-        {"chunk_id": f"c{i}", "session_id": "s1", "file_id": "f1", "text": f"t{i}", "seq": i}
-        for i in range(n)
-    ]
-    await store.write_chunks_bulk(chunks)
-    merge_calls = [
-        c
-        for c in client.command.await_args_list
-        if "MERGE (c:CHUNK {chunk_id: row.cid})" in c.args[1]
-    ]
-    assert len(merge_calls) == 3
-    assert [len(c.kwargs["params"]["rows"]) for c in merge_calls] == [
-        _CHUNK_BATCH,
-        _CHUNK_BATCH,
-        5,
-    ]
-    # Each batch also writes PART_OF edges; state lands 'raw' on create.
-    edge_calls = [c for c in client.command.await_args_list if "PART_OF" in c.args[1]]
-    assert len(edge_calls) == 3
-    assert "coalesce(c.state, 'raw')" in merge_calls[0].args[1]
-
-
-@pytest.mark.asyncio
-async def test_write_chunks_bulk_links_each_chunk_to_its_session() -> None:
-    """CHUNK-[:IN_SESSION]->SESSION, from the session_id already on every row.
-
-    TURN has carried this edge since the buffer landed; CHUNK never did, so a
-    chunk reached its session only through CHUNK-[:PART_OF]->FILE-[:IN_SESSION]
-    ->SESSION — which does not exist at all for a chunk written with no
-    file_id. Every traversal that wanted 'the session this memory came from'
-    had to fall back to matching on the string property instead.
-    """
-    client = _mock_client()
-    store = GraphStore(client=client)
-
-    await store.write_chunks_bulk(
-        [
-            {"chunk_id": "c1", "session_id": "s1", "text": "t1"},  # no file_id
-            {"chunk_id": "c2", "session_id": "", "text": "t2"},  # no session either
-        ]
-    )
-
-    session_edges = [c for c in client.command.await_args_list if "IN_SESSION" in c.args[1]]
-    assert len(session_edges) == 1
-    # Only the chunk that HAS a session is linked; a sessionless chunk must not
-    # MERGE a SESSION vertex with an empty id into existence.
-    assert [r["cid"] for r in session_edges[0].kwargs["params"]["rows"]] == ["c1"]
-    assert "MATCH (s:SESSION {session_id: row.sid})" in session_edges[0].args[1]
-
-
-@pytest.mark.asyncio
-async def test_write_chunk_embedding_is_inline_literal() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store.write_chunk(
-        {
-            "chunk_id": "c1",
-            "session_id": "s1",
-            "file_id": "f1",
-            "text": "t",
-            "embedding": [0.5, -0.25],
-        }
-    )
-    emb_stmt = next(s for s in _command_strings(client) if "n.embedding =" in s)
-    # Inline SQL literal, never a parameter (LSM_VECTOR constraint).
-    assert "n.embedding = [0.5,-0.25]" in emb_stmt
-
-
-# ---------------------------------------------------------------------------
-# Entity resolution primitives (consolidation / flush path)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_list_entities_counts_mentions() -> None:
-    client = _mock_client(
-        query_rows=[
-            {"name_norm": "melanie", "name": "Melanie", "type": "PERSON", "mention_count": 3},
-            {"name_norm": "others", "name": "others", "type": None, "mention_count": 0},
-        ]
-    )
-    store = GraphStore(client=client)
-    out = await store.list_entities()
-    assert out == [
-        {"name_norm": "melanie", "name": "Melanie", "type": "PERSON", "mention_count": 3},
-        {"name_norm": "others", "name": "others", "type": "", "mention_count": 0},
-    ]
-    cypher = client.query.await_args_list[0].args[1]
-    assert "OPTIONAL MATCH (c:CHUNK)-[:MENTIONS]->(e)" in cypher
-    assert "count(c) AS mention_count" in cypher
-
-
-@pytest.mark.asyncio
-async def test_entity_coverage_folds_out_rel_in_rel_and_plays_role() -> None:
-    client = _mock_client()
-    client.query = AsyncMock(
-        side_effect=[
-            [{"nn": "a"}, {"nn": "b"}, {"nn": "c"}, {"nn": "d"}],  # total ENTITY set
-            [{"nn": "a"}],  # out-REL: a has an outgoing REL
-            [{"nn": "b"}],  # in-REL: b has only an incoming REL
-            [{"nn": "c"}],  # PLAYS_ROLE: c is reached only via a frame role
-        ]
-    )
-    store = GraphStore(client=client)
-    coverage = await store.entity_coverage()
-    assert coverage == {"total": 4, "connected": 3, "isolated": 1}
-
-
-@pytest.mark.asyncio
-async def test_drop_entities_detach_deletes_by_name_norm() -> None:
-    client = _mock_client(query_rows=[{"n": 2}])
-    store = GraphStore(client=client)
-    n = await store.drop_entities(["others", "kind"])
-    assert n == 2
-    delete_stmt = next(s for s in _command_strings(client) if "DETACH DELETE e" in s)
-    assert "e.name_norm IN ['others','kind']" in delete_stmt
-
-
-@pytest.mark.asyncio
-async def test_drop_entities_noop_on_empty() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    assert await store.drop_entities([]) == 0
-    client.command.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_merge_entities_repoints_mentions_relations_and_deletes_loser() -> None:
-    client = _mock_client()
-    client.query = AsyncMock(
-        side_effect=[
-            [{"name": "Mel", "aliases": []}],  # loser lookup
-            [{"name": "Melanie", "aliases": []}],  # winner lookup
-            [  # outgoing loser relation edges
-                {
-                    "dst": "Camping",
-                    "dst_nn": "camping",
-                    "predicate": "LIKES",
-                    "fact": "",
-                    "evidence": ["c1"],
-                    "confidence": 0.8,
-                    "valid_at": None,
-                    "source": "gliner",
-                },
-            ],
-            [],  # incoming loser relation edges
-        ]
-    )
-    store = GraphStore(client=client)
-    merged = await store.merge_entities("melanie", "mel")
-    assert merged is True
-
-    stmts = _command_strings(client)
-    # MENTIONS re-pointed onto the winner.
-    assert any("MERGE (c)-[nm:MENTIONS]->(w)" in s for s in stmts)
-    # Relation re-created on the winner via write_relation (REL/LIKES edge).
-    merge_rel = next(s for s in stmts if "MERGE (a)-[r:REL {predicate: $predicate}]->(b)" in s)
-    rel_call = next(c for c in client.command.await_args_list if "MERGE (a)-[r:REL" in c.args[1])
-    assert rel_call.kwargs["params"]["src_nn"] == "melanie"
-    assert rel_call.kwargs["params"]["dst_nn"] == "camping"
-    assert rel_call.kwargs["params"]["predicate"] == "LIKES"
-    assert "chunk_id" not in merge_rel or "c1" in str(rel_call.kwargs["params"])
-    # Loser surface folded into winner aliases.
-    alias_call = next(
-        c for c in client.command.await_args_list if "SET w.aliases = $aliases" in c.args[1]
-    )
-    assert "Mel" in alias_call.kwargs["params"]["aliases"]
-    # Loser removed.
-    assert any("DETACH DELETE lo" in s for s in stmts)
-
-
-@pytest.mark.asyncio
-async def test_merge_entities_noop_when_loser_missing() -> None:
-    client = _mock_client()
-    client.query = AsyncMock(return_value=[])  # loser lookup returns nothing
-    store = GraphStore(client=client)
-    assert await store.merge_entities("melanie", "mel") is False
-    client.command.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_merge_entities_noop_on_same_node() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    assert await store.merge_entities("melanie", "melanie") is False
-    client.query.assert_not_awaited()
-    client.command.assert_not_awaited()
-
-
-# ---------------------------------------------------------------------------
-# Graph analytics (WS4) — native ArcadeDB algos + numpy pagerank fallback
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_ensure_analytical_view_creates_and_rebuilds() -> None:
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store._ensure_analytical_view()
-    stmts = _command_strings(client)
-    assert any("CREATE GRAPH ANALYTICAL VIEW mem_olap UPDATE MODE OFF" in s for s in stmts)
-    assert any("REBUILD GRAPH ANALYTICAL VIEW mem_olap" in s for s in stmts)
-    # Both statements ride the SQL endpoint (CALL is cypher-only, DDL is sql-only).
-    assert all(c.kwargs.get("language") == "sql" for c in client.command.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_ensure_analytical_view_swallows_already_exists() -> None:
-    client = _mock_client()
-
-    async def command_side_effect(db, cmd, language="cypher", params=None, session_id=None):
-        if cmd.startswith("CREATE GRAPH ANALYTICAL VIEW"):
-            raise Exception("view already exists")
-        return []
-
-    client.command = AsyncMock(side_effect=command_side_effect)
-    store = GraphStore(client=client)
-    await store._ensure_analytical_view()  # must not raise
-    assert any("REBUILD GRAPH ANALYTICAL VIEW" in c.args[1] for c in client.command.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_ensure_analytical_view_raises_on_real_error() -> None:
-    client = _mock_client()
-    client.command = AsyncMock(side_effect=Exception("connection refused"))
-    store = GraphStore(client=client)
-    with pytest.raises(Exception, match="connection refused"):
-        await store._ensure_analytical_view()
-
-
-@pytest.mark.asyncio
-async def test_compute_and_persist_pagerank_native_success() -> None:
-    client = _mock_client(
-        query_rows=[{"nn": "melanie", "rank": 0.42}, {"nn": "caroline", "rank": 0.15}]
-    )
-    store = GraphStore(client=client)
-    updated = await store.compute_and_persist_pagerank()
-    assert updated == 2
-    # ArcadeDB yields the pagerank column as `score`; YIELDing `rank` binds an
-    # unknown field that comes back null and silently forces the numpy fallback.
-    assert any(
-        "CALL algo.pageRank()" in c.args[1] and "YIELD node, score" in c.args[1]
-        for c in client.query.await_args_list
-    )
-    # Persisted in one batched UNWIND, not a per-entity SET loop.
-    set_calls = [c for c in client.command.await_args_list if "SET e.pagerank = r.v" in c.args[1]]
-    assert len(set_calls) == 1
-    prs = sorted(r["v"] for r in set_calls[0].kwargs["params"]["rows"])
-    assert prs == [0.15, 0.42]
-
-
-@pytest.mark.asyncio
-async def test_compute_and_persist_pagerank_soft_fails_on_native_error() -> None:
-    client = _mock_client()
-    client.query = AsyncMock(
-        side_effect=Exception("CommandSQLParsingException: algo.pageRank unsupported")
-    )
-    store = GraphStore(client=client)
-    assert await store.compute_and_persist_pagerank() == 0
-    assert not any("SET e.pagerank = r.v" in c.args[1] for c in client.command.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_compute_and_persist_pagerank_soft_fails_when_all_ranks_null() -> None:
-    """Regression guard: on a real ~190-entity ArcadeDB 26.5.1 graph,
-    ``CALL algo.pageRank()`` returns rows with every ``rank`` null (verified
-    live during WS4) — that must be treated as a failure, not persisted as
-    meaningless zeros.
-    """
-    client = _mock_client(
-        query_rows=[{"nn": "melanie", "rank": None}, {"nn": "caroline", "rank": None}]
-    )
-    store = GraphStore(client=client)
-    assert await store.compute_and_persist_pagerank() == 0
-    assert not any("SET e.pagerank = r.v" in c.args[1] for c in client.command.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_compute_and_persist_pagerank_skip_view_ensure_avoids_rebuild() -> None:
-    client = _mock_client(query_rows=[{"nn": "melanie", "rank": 0.5}])
-    store = GraphStore(client=client)
-    await store.compute_and_persist_pagerank(skip_view_ensure=True)
-    assert not any("GRAPH ANALYTICAL VIEW" in c.args[1] for c in client.command.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_compute_graph_embeddings_writes_list_property() -> None:
-    client = _mock_client()
-
-    async def query_side_effect(db, cypher, params=None):
-        if "algo.node2vec" in cypher:
-            return [{"nn": "melanie", "embedding": [0.1, 0.2, 0.3]}]
-        if "(a:ENTITY)-[r:REL]->(b:ENTITY)" in cypher:
-            return [{"nn": "melanie", "deg": 2}]
-        if "(a:ENTITY)<-[r:REL]-(b:ENTITY)" in cypher:
-            return [{"nn": "melanie", "deg": 2}]
-        return []
-
-    client.query = AsyncMock(side_effect=query_side_effect)
-    store = GraphStore(client=client)
-    updated = await store.compute_graph_embeddings()
-    assert updated == 1
-    # Inline literal, not a $param (ArcadeDB double-wraps LIST-typed params in
-    # SET — verified live; see the _emb_sql usage in the source).
-    set_call = next(
-        c for c in client.command.await_args_list if "e.graph_embedding = [" in c.args[1]
-    )
-    assert "e.graph_embedding = [0.1,0.2,0.3]" in set_call.args[1]
-    assert set_call.kwargs["params"] == {"nn": "melanie"}
-
-
-@pytest.mark.asyncio
-async def test_compute_graph_embeddings_skips_sparse_entities() -> None:
-    client = _mock_client()
-
-    async def query_side_effect(db, cypher, params=None):
-        if "algo.node2vec" in cypher:
-            return [{"nn": "loner", "embedding": [0.1, 0.2]}]
-        # Degree queries return nothing for "loner" -> total degree 0 < 3.
-        return []
-
-    client.query = AsyncMock(side_effect=query_side_effect)
-    store = GraphStore(client=client)
-    updated = await store.compute_graph_embeddings()
-    assert updated == 0
-    # View-ensure DDL runs, but no ENTITY was actually written.
-    assert not any("e.graph_embedding = [" in c.args[1] for c in client.command.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_compute_graph_embeddings_soft_fails_on_native_error() -> None:
-    client = _mock_client()
-    client.query = AsyncMock(side_effect=Exception("algo.node2vec not supported"))
-    store = GraphStore(client=client)
-    updated = await store.compute_graph_embeddings()
-    assert updated == 0
-    assert not any("e.graph_embedding = [" in c.args[1] for c in client.command.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_compute_communities_writes_community_id() -> None:
-    client = _mock_client(query_rows=[{"nn": "melanie", "cid": 2}, {"nn": "caroline", "cid": 2}])
-    store = GraphStore(client=client)
-    updated = await store.compute_communities()
-    assert updated == 2
-    set_calls = [
-        c for c in client.command.await_args_list if "SET e.community_id = r.v" in c.args[1]
-    ]
-    assert len(set_calls) == 1  # one batched UNWIND
-    assert all(r["v"] == 2 for r in set_calls[0].kwargs["params"]["rows"])
-
-
-@pytest.mark.asyncio
-async def test_compute_communities_soft_fails_to_zero_on_error() -> None:
-    client = _mock_client()
-    client.query = AsyncMock(side_effect=Exception("algo.louvain not supported"))
-    store = GraphStore(client=client)
-    updated = await store.compute_communities()
-    assert updated == 0
-    assert not any("e.community_id = $cid" in c.args[1] for c in client.command.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_compute_communities_soft_fails_on_empty_result() -> None:
-    client = _mock_client(query_rows=[])
-    store = GraphStore(client=client)
-    assert await store.compute_communities() == 0
-    assert not any("e.community_id = $cid" in c.args[1] for c in client.command.await_args_list)
-
-
-# ---------------------------------------------------------------------------
-# Integration (live ArcadeDB only)
+# Integration
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
 async def test_graph_store_round_trip_on_scratch_database(arcadedb_required: None) -> None:
-    """Full write→read round trip on a scratch mem_test_<uuid> database."""
+    """Full write→read round trip on a scratch mem_test_<uuid> database.
+
+    SOURCE, ENTITY and CONCEPT are written with raw Cypher here: their writers
+    pass ``meta`` / ``type_histogram`` as MAP params and ``embedding`` as a
+    LIST param, both of which ArcadeDB's Cypher rejects (a T020 writer defect,
+    not a read defect). The reads under test do not care who wrote the row.
+    """
+    from graphknows.models.fact import Fact, Mention
+    from graphknows.models.segment import Segment, SegmentKind
+    from graphknows.models.symbols import PredicateRef
     from graphknows.settings import GraphKnowsSettings
     from graphknows.storage import build_arcadedb_client
+    from graphknows.storage.arcadedb._sql import vector_literal
+    from graphknows.storage.arcadedb.writers import (
+        EntityWriter,
+        Evidence,
+        FactWriter,
+        SegmentWriter,
+        SymbolWriter,
+    )
 
-    s = GraphKnowsSettings()
-    client = build_arcadedb_client(s)
-    db = f"mem_test_{uuid.uuid4().hex[:8]}"
-    store = GraphStore(client=client, db=db)
+    client = build_arcadedb_client(GraphKnowsSettings())
+    store = GraphStore(client=client, db=f"mem_test_{uuid.uuid4().hex[:8]}")
     await store.connect()
     try:
-        await store.ensure_schema(dims=8)
-        await store.ensure_schema(dims=8)  # idempotent second run
+        await store.ensure_schema(dims=4)
+        await store.ensure_schema(dims=4)  # idempotent second run
 
-        await store.ensure_session("sess-1", started_at="2026-07-13T00:00:00Z")
-        await store.ensure_file("file-1", "sess-1")
-
-        emb_a = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        emb_b = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        await store.write_chunks_bulk(
-            [
-                {
-                    "chunk_id": "chunk-a",
-                    "session_id": "sess-1",
-                    "file_id": "file-1",
-                    "text": "Melanie went camping in Banff.",
-                    "seq": 0,
-                    "embedding": emb_a,
-                },
-                {
-                    "chunk_id": "chunk-b",
-                    "session_id": "sess-1",
-                    "file_id": "file-1",
-                    "text": "Caroline moved to Toronto.",
-                    "seq": 1,
-                    "embedding": emb_b,
-                },
-            ]
+        await store.command(
+            "MERGE (s:SOURCE {id: 'src-1'}) SET s.uri = 'session:s1', s.content_hash = 'abc', "
+            "s.imported_at = '2026-01-01T00:00:00+00:00'"
         )
-        await store.write_entities_bulk(
-            "sess-1",
-            "chunk-a",
-            [
-                {"name": "Melanie", "type": "PERSON", "confidence": 0.9},
-                {"name": "Banff", "type": "PLACE", "confidence": 0.8},
-            ],
+        first = Segment(
+            source_id="src-1",
+            text="Melanie went camping in Yosemite.",
+            kind=SegmentKind.turn,
+            byte_range=(0, 33),
+            role="Melanie",
         )
-        # Same relation from two chunks → evidence list must accumulate both.
-        await store.write_relation(
-            RelationWrite(
-                "Melanie",
-                "LIKES",
-                "Camping",
-                fact="Melanie likes camping",
-                chunk_id="chunk-a",
-                confidence=0.7,
-                source="gliner",
+        second = Segment(
+            source_id="src-1", text="It rained.", kind=SegmentKind.turn, byte_range=(34, 44)
+        )
+        for segment in (first, second):
+            await SegmentWriter(store).write(segment)
+        await store.command(
+            "MATCH (a:SEGMENT {id: $a}), (b:SEGMENT {id: $b}) MERGE (a)-[:NEXT]->(b)",
+            a=first.id,
+            b=second.id,
+        )
+        await store.command(
+            f"MATCH (g:SEGMENT {{id: $id}}) SET g.embedding = {vector_literal([1.0, 0.0, 0.0, 0.0])}",
+            id=first.id,
+        )
+        for entity_id, name in (("e1", "Melanie"), ("e2", "Yosemite")):
+            await store.command(
+                "MERGE (e:ENTITY {id: $id}) "
+                "SET e.name = $name, e.name_norm = $nn, e.state = 'active'",
+                id=entity_id,
+                name=name,
+                nn=name.casefold(),
+            )
+        await EntityWriter(store).write_mention(
+            Mention(segment_id=first.id, entity_id="e1", surface="Melanie", span=(0, 7))
+        )
+        await store.command(
+            "MERGE (c:CONCEPT {uri: 'c:place'}) SET c.label = 'Place', "
+            f"c.embedding = {vector_literal([0.0, 1.0, 0.0, 0.0])}"
+        )
+        symbols = SymbolWriter(store)
+        await symbols.write_evokes(first.id, "c:place", 0.8)
+        await symbols.write_predicate(
+            PredicateRef(
+                id="p:went", label="went to", definition="moved to", canonical="went", pack="t"
             )
         )
-        await store.write_relation(
-            RelationWrite(
-                "Melanie",
-                "LIKES",
-                "Camping",
-                chunk_id="chunk-b",
-                confidence=0.9,
-            )
-        )
+        fact = Fact(id="f1", subject="e1", predicate="p:went", object="e2", confidence=0.9)
+        await FactWriter(store).write(fact, [Evidence(segment_id=first.id, span=(0, 33))])
 
-        # ANN read-back
-        ann = await store.search_chunks_ann(emb_a, top_k=2, session_id="sess-1", state="raw")
-        assert ann and ann[0]["chunk_id"] == "chunk-a"
+        [source_row] = await store.sources(uri="session:s1")
+        assert source_row["id"] == "src-1"
 
-        # Entity traversal
-        ent = await store.query_entity_chunks(["Melanie"], session_id="sess-1", top_k=5)
-        assert any(r["chunk_id"] == "chunk-a" for r in ent)
+        ann = await store.search_segments_ann([1.0, 0.0, 0.0, 0.0], 2, ["src-1"])
+        assert [r["id"] for r in ann] == [first.id]
+        assert ann[0]["role"] == "Melanie"
 
-        # Evidence provenance accumulated across both writes; confidence keeps max.
-        # One REL type for every predicate; LIKES is the `predicate` property.
-        rows = await store.query(
-            "MATCH (a:ENTITY {name_norm: 'melanie'})-[r:REL {predicate: 'LIKES'}]->(b) "
-            "RETURN r.evidence AS evidence, r.confidence AS confidence, r.fact AS fact"
-        )
-        assert rows, "LIKES edge not found"
-        assert set(rows[0]["evidence"]) == {"chunk-a", "chunk-b"}
-        assert rows[0]["confidence"] == pytest.approx(0.9)
-        assert rows[0]["fact"] == "Melanie likes camping"
+        pool = await store.full_text_search_segments(["CAMPING"], 5, ["src-1"])
+        assert [r["id"] for r in pool] == [first.id]
 
-        # The OTHER REL writer honours the same provenance contract, against a
-        # real ArcadeDB: the co-role projection appends its chunk to `evidence`
-        # (inside an UNWIND, via an interpolated literal) and the replay of the
-        # same chunk dedups instead of appending twice.
-        instance = [
-            {
-                "frame": "Travel",
-                "match_sim": 0.8,
-                "role_confidence": 0.9,
-                "roles": {"Traveler": ["Melanie"], "Goal": ["Banff"]},
-            }
-        ]
-        await store.write_frame_instances("sess-1", "chunk-a", instance)
-        await store.write_frame_instances("sess-1", "chunk-a", instance)
-        frame_rel = await store.query(
-            # WHERE, not an inline relationship property map: inline maps are
-            # unreliable for MATCHING in ArcadeDB's Cypher.
-            "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) WHERE r.source = 'frame' "
-            "RETURN r.evidence AS evidence, r.frame_instance_id AS fid"
-        )
-        assert frame_rel, "co-role REL edge not found"
-        assert frame_rel[0]["evidence"] == ["chunk-a"], "evidence missing or duplicated on replay"
-        # Route 2 still reaches the same chunk through the frame instance.
-        assert frame_rel[0]["fid"]
-        reachable = await store.query(
-            "MATCH (fi:FRAME_INSTANCE)-[:FRAME_EVOKED_IN]->(c:CHUNK) "
-            "RETURN fi.id AS fid, c.chunk_id AS cid"
-        )
-        assert {r["cid"] for r in reachable if r["fid"] == frame_rel[0]["fid"]} == {"chunk-a"}
+        by_id = await store.get_segments_by_ids([first.id, second.id])
+        assert set(by_id) == {first.id, second.id}
 
-        # get_chunks_by_ids
-        by_id = await store.get_chunks_by_ids(["chunk-a", "chunk-b"])
-        assert set(by_id) == {"chunk-a", "chunk-b"}
-        assert by_id["chunk-a"]["state"] == "raw"
+        neighbours = await store.neighbor_segments([first.id], radius=1)
+        assert [n["id"] for n in neighbours[first.id]] == [second.id]
+
+        mentioning = await store.segments_mentioning(["melanie"], 5, ["src-1"])
+        assert [r["id"] for r in mentioning] == [first.id]
+
+        evoking = await store.segments_evoking([0.0, 1.0, 0.0, 0.0], 3, ["src-1"])
+        assert [(r["id"], r["uri"]) for r in evoking] == [(first.id, "c:place")]
+
+        assert await store.resolve_query_entities(["melanie"]) == [{"id": "e1", "name": "Melanie"}]
+
+        [by_entity] = await store.facts_by_entity(["e2"])
+        assert (by_entity["subject_name"], by_entity["object_name"]) == ("Melanie", "Yosemite")
+        assert by_entity["segment_id"] == first.id
+
+        [by_predicate] = await store.facts_by_predicate(["went"], source_ids=["src-1"])
+        assert by_predicate["id"] == "f1"
+
+        assert store.read_types >= {"SOURCE", "SEGMENT", "NEXT", "MENTIONS", "EVOKES", "FACT"}
+
+        await store.delete_source("session:s1")
+        assert await store.sources() == []
+        assert await store.get_segments_by_ids([first.id]) == {}
+        assert await store.facts_by_entity(["e1"]) == []
     finally:
-        try:
-            await store.drop_database()
-        finally:
-            await store.close()
-
-
-@pytest.mark.asyncio
-async def test_write_entities_bulk_collapses_duplicate_merge_keys() -> None:
-    """Two rows sharing a name_norm must never reach the UNWIND.
-
-    Regression: the UNWIND MERGEd both before the ENTITY[name_norm] UNIQUE index
-    settled, ArcadeDB raised DuplicatedKeyException, and the caller's whole
-    DOCUMENT failed — silently deleting every chunk in it from the graph. An
-    extractor running with flat_ner=False returns overlapping spans, so the same
-    surface arrives under several labels routinely.
-    """
-    client = _mock_client()
-    store = GraphStore(client=client)
-
-    await store.write_entities_bulk(
-        "s1",
-        "c1",
-        [
-            {"name": "Becoming Nicole", "type": "WORK_OF_ART", "score": 0.7},
-            {"name": "becoming  nicole", "type": "PERSON", "score": 0.9},  # same merge key
-            {"name": "Caroline", "type": "PERSON", "score": 0.8},
-        ],
-    )
-
-    call = next(c for c in client.command.await_args_list if "MERGE (e:ENTITY" in c.args[1])
-    rows = call.kwargs["params"]["rows"]
-    keys = [r["nn"] for r in rows]
-    assert len(keys) == len(set(keys)), "duplicate merge keys reached the UNWIND"
-    assert sorted(keys) == ["becoming nicole", "caroline"]
-    # Highest confidence wins the type.
-    nicole = next(r for r in rows if r["nn"] == "becoming nicole")
-    assert nicole["conf"] == pytest.approx(0.9)
-    assert nicole["etype"] == "PERSON"
-
-
-@pytest.mark.asyncio
-async def test_write_frame_instances_never_creates_entity_nodes() -> None:
-    """The frame layer attaches to entities; it must never mint them.
-
-    This asserted the OPPOSITE until measured. It used to MERGE each filler as
-    an ENTITY before the edge pass, guarding a DuplicatedKeyException when one
-    entity filled two roles (Being_named with Entity=X and Name=X). That guard
-    is now structurally unnecessary — there is no entity write to duplicate —
-    and the MERGE it guarded was itself the defect: on LoCoMo conv-30 it invented
-    624 of 2105 ENTITY nodes (30%) with no type, no confidence and no MENTIONS
-    edge to any chunk, purely because a frame pointed at a span. Those nodes are
-    unreachable by any entity query and cannot be resolved or merged with
-    anything, yet they reached the generator's fact-sheet as role fillers
-    ("Buyer=Hey Gina!", "Speaker=Yeah").
-
-    A span worth a node is one the EXTRACTION path recognised on its own
-    evidence. A role citing a span nothing else saw has no provenance, so the
-    edge is dropped rather than the node invented.
-    """
-    client = _mock_client()
-    # The filler already exists as an entity, so it is persistable and the
-    # instance is written — which is what lets this assert on the edge shape.
-    client.query = AsyncMock(return_value=[{"nn": "becoming nicole"}])
-    store = GraphStore(client=client)
-
-    await store.write_frame_instances(
-        "s1",
-        "c1",
-        [
-            {
-                "frame": "Being_named",
-                "match_sim": 0.9,
-                "role_confidence": 0.9,
-                # SAME filler in two roles — the shape that broke ingest.
-                "roles": {"Entity": ["Becoming Nicole"], "Name": ["Becoming Nicole"]},
-            }
-        ],
-    )
-
-    stmts = _command_strings(client)
-
-    # No statement anywhere in this path may create an ENTITY.
-    assert not [s for s in stmts if "MERGE (e:ENTITY" in s], (
-        "the frame path must not mint ENTITY nodes — a filler with no extraction "
-        "evidence has no provenance and becomes an unreachable, untyped node"
-    )
-
-    # The role edge MATCHes an already-existing entity; a filler the extractor
-    # never saw simply matches nothing and the edge is not written.
-    edge = next(s for s in stmts if "PLAYS_ROLE {role: row.role}" in s)
-    assert "MATCH (e:ENTITY {name_norm: row.nn})" in edge
-
-
-@pytest.mark.asyncio
-async def test_a_fact_and_its_denial_are_two_instances_not_one():
-    """The content hash covers role fills AND how they are asserted.
-
-    Before polarity entered the signature, "Melanie moved to Berlin" and
-    "Melanie did not move to Berlin" hashed to the same FRAME_INSTANCE id, so
-    the second write silently overwrote the first and the graph asserted
-    whichever arrived last.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(return_value=[{"nn": "melanie"}, {"nn": "berlin"}])
-    store = GraphStore(client=client)
-
-    roles = {"Theme": ["Melanie"], "Goal": ["Berlin"]}
-    await store.write_frame_instances(
-        session_id="s1",
-        chunk_id="c1",
-        instances=[
-            {"frame": "Motion", "roles": roles, "polarity": "pos"},
-            {"frame": "Motion", "roles": roles, "polarity": "neg"},
-        ],
-    )
-    inst_rows = client.command.await_args_list[0].kwargs["params"]["rows"]
-    assert len({r["fid"] for r in inst_rows}) == 2, "denial collapsed onto the assertion"
-    assert {r["pol"] for r in inst_rows} == {"pos", "neg"}
-
-
-@pytest.mark.asyncio
-async def test_entity_merge_keeps_a_frame_edge_s_identity():
-    """Repointing a loser edge must not downgrade it to an unanchored lemma edge.
-
-    `write_relation` coalesces canonical_predicate/anchor/reified to its own
-    tier-3/4 defaults — correct for a fresh relex edge, wrong for a replay of one
-    that already had a tier-1 frame identity. Measured on conv-30 before the fix:
-    109 edges came back as `lemma:<frame name>`, unreified, with their roles
-    gone, purely because an endpoint had been merged.
-    """
-    client = _mock_client()
-    store = GraphStore(client=client)
-    row = {
-        "predicate": "Purpose",
-        "confidence": 0.8,
-        "evidence": [],
-        "source": "frame",
-        "canonical_predicate": "fn:Purpose:Agent->Goal",
-        "anchor": "frame",
-        "reified": True,
-        "frame": "Purpose",
-        "frame_instance_id": "Purpose:abc123",
-        "head_role": "Agent",
-        "tail_role": "Goal",
-        "polarity": "neg",
-        "ontology_blocked": True,
-    }
-    await store._repoint_relation("Gina", "Mentors", row)
-
-    carried = [
-        c
-        for c in client.command.await_args_list
-        if "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY)" in c.args[1]
-    ]
-    assert carried, "structural columns were not re-applied after repointing"
-    stmt, params = carried[-1].args[1], carried[-1].kwargs["params"]
-    assert params["canonical_predicate"] == "fn:Purpose:Agent->Goal"
-    assert params["reified"] is True
-    assert params["head_role"] == "Agent" and params["tail_role"] == "Goal"
-    assert params["polarity"] == "neg"
-    # Sticky by design: a refusal recorded on either edge survives the merge.
-    assert "r.ontology_blocked = coalesce(r.ontology_blocked, false) OR true" in stmt
-    # Inline relationship property maps are unreliable in ArcadeDB Cypher.
-    assert "WHERE" in stmt and "[r:REL {" not in stmt
-
-
-@pytest.mark.asyncio
-async def test_repointing_a_plain_edge_carries_nothing_extra():
-    """No structural columns on the loser means no follow-up write."""
-    client = _mock_client()
-    store = GraphStore(client=client)
-    await store._repoint_relation(
-        "A", "B", {"predicate": "knows", "evidence": [], "ontology_blocked": False}
-    )
-    assert not [
-        c
-        for c in client.command.await_args_list
-        if "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY)" in c.args[1]
-    ]
-
-
-# ---------------------------------------------------------------------------
-# Entity merge is frame-aware (#150): two REL writers, two MERGE keys, and a
-# repair path that must replay an edge under the key its own writer used.
-# ---------------------------------------------------------------------------
-
-
-def _frame_row(polarity: str = "pos", **over: object) -> dict:
-    """One loser REL row as merge_entities reads it: a co-role projected edge."""
-    return {
-        "dst": "Banff",
-        "dst_nn": "banff",
-        "predicate": "Travel",
-        "evidence": ["c1"],
-        "confidence": 0.8,
-        "source": "frame",
-        "canonical_predicate": "fn:Travel:Traveler->Goal",
-        "anchor": "frame",
-        "reified": True,
-        "frame": "Travel",
-        "frame_instance_id": f"Travel:{polarity}",
-        "head_role": "Traveler",
-        "tail_role": "Goal",
-        "polarity": polarity,
-        "modality": "none",
-        **over,
-    }
-
-
-def _rel_merges(client: MagicMock) -> list[tuple[str, dict]]:
-    return [
-        (c.args[1], c.kwargs.get("params") or {})
-        for c in client.command.await_args_list
-        if "MERGE (a)-[r:REL" in c.args[1]
-    ]
-
-
-def _carry_sets(client: MagicMock) -> list[tuple[str, dict]]:
-    return [
-        (c.args[1], c.kwargs.get("params") or {})
-        for c in client.command.await_args_list
-        if "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY)" in c.args[1]
-    ]
-
-
-@pytest.mark.asyncio
-async def test_entity_merge_replays_a_fact_and_its_denial_as_two_edges() -> None:
-    """DEFECT 1: the repoint used to collapse the projection's MERGE key.
-
-    The co-role projection MERGEs on {predicate, head_role, tail_role, polarity,
-    modality} precisely so "Melanie moved to Berlin" and "Melanie did NOT move to
-    Berlin" stay two edges. Replaying them through write_relation's
-    {predicate}-only key merged them into one, and merge_entities runs on EVERY
-    flush — nickname merges (Mel -> Melanie) are the normal path.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(
-        side_effect=[
-            [{"name": "Mel", "aliases": []}],
-            [{"name": "Melanie", "aliases": []}],
-            [_frame_row("pos"), _frame_row("neg")],  # differ ONLY in polarity
-            [],
-        ]
-    )
-    await GraphStore(client=client).merge_entities("melanie", "mel")
-
-    merges = _rel_merges(client)
-    assert len(merges) == 2, "the fact and its denial were not replayed separately"
-    for stmt, params in merges:
-        for column in _FRAME_REL_KEY:
-            assert f"{column}: $key_{column}" in stmt, f"{column} left out of the MERGE key"
-        assert params["key_head_role"] == "Traveler"
-        assert params["key_modality"] == "none"
-    assert {params["key_polarity"] for _, params in merges} == {"pos", "neg"}
-
-
-@pytest.mark.asyncio
-async def test_carrying_columns_targets_one_edge_not_every_shared_predicate() -> None:
-    """DEFECT 1, second half: the follow-up SET matched by predicate alone.
-
-    `MATCH ... WHERE r.predicate = $predicate` hits EVERY edge between the pair
-    with that predicate — between two frame fillers, every role and polarity
-    variant of the frame — and overwrote them all with the last loser's columns.
-    """
-    client = _mock_client()
-    await GraphStore(client=client)._repoint_relation("Melanie", "Banff", _frame_row("neg"))
-
-    stmt, params = _carry_sets(client)[-1]
-    for column in _FRAME_REL_KEY:
-        assert f"AND r.{column} = $key_{column}" in stmt, f"{column} missing from the WHERE"
-    # The carried column and the key column share a name; the parameter map must
-    # not collapse them.
-    assert params["polarity"] == "neg" and params["key_polarity"] == "neg"
-    # Inline relationship property maps stay out of MATCHing queries.
-    assert "[r:REL {" not in stmt
-
-
-@pytest.mark.asyncio
-async def test_frame_projection_marks_predicate_with_its_vocabulary() -> None:
-    """Issue #159: predicate must announce which vocabulary it comes from.
-
-    REL.predicate is shared by two vocabularies: binary-relation labels (e.g.
-    "owns") and, from this projection, bare FrameNet frame names (e.g.
-    "Travel"). Unmarked, a raw predicate census can't tell them apart. The
-    fix is the same `fn:` tier prefix evaluation/audit/core.py already uses,
-    on the same field a reader is already looking at -- no second lookup.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(return_value=[{"nn": "melanie"}, {"nn": "banff"}])
-    store = GraphStore(client=client)
-    await store.write_frame_instances(
-        session_id="s1",
-        chunk_id="c1",
-        instances=[{"frame": "Travel", "roles": {"Traveler": ["Melanie"], "Goal": ["Banff"]}}],
-    )
-
-    call = next(
-        c
-        for c in client.command.await_args_list
-        if "MERGE (a)-[r:REL" in c.args[1] and "row.p" in c.args[1]
-    )
-    stmt = call.args[1]
-    rows = call.kwargs["params"]["rows"]
-    assert len(rows) == 1
-    row = rows[0]
-
-    assert row["p"] == "fn:Travel"
-    assert row["cp"] == "fn:Travel:Goal->Traveler"
-
-    assert "r.frame = row.p" not in stmt
-    assert "r.frame = row.f" in stmt
-    assert row["f"] == "Travel"
-
-
-@pytest.mark.asyncio
-async def test_a_repointed_frame_edge_can_re_merge_with_the_projection() -> None:
-    """DEFECT 2: the replay must land under the key the projection MERGEs on.
-
-    An edge rebuilt under {predicate} alone carries no roles/polarity/modality,
-    so the next ingest's batch 2b matches nothing and MERGEs a duplicate beside
-    it — silent frame-adjacency growth on every re-ingest.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(return_value=[{"nn": "melanie"}, {"nn": "banff"}])
-    store = GraphStore(client=client)
-    await store.write_frame_instances(
-        session_id="s1",
-        chunk_id="c1",
-        instances=[{"frame": "Travel", "roles": {"Traveler": ["Melanie"], "Goal": ["Banff"]}}],
-    )
-    projected = next(s for s, _ in _rel_merges(client) if "row.p" in s)
-
-    client.command.reset_mock()
-    await store._repoint_relation("Melanie", "Banff", _frame_row("pos"))
-    replayed, _ = _rel_merges(client)[0]
-
-    def key_columns(stmt: str) -> set[str]:
-        inner = stmt.split("MERGE (a)-[r:REL {", 1)[1].split("}", 1)[0]
-        return {part.split(":", 1)[0].strip() for part in inner.split(",")}
-
-    assert key_columns(projected) == key_columns(replayed), (
-        "the two REL writers must MERGE on the same key or a merged edge "
-        "duplicates itself on the next ingest"
-    )
-    assert key_columns(projected) == {"predicate", *_FRAME_REL_KEY}
-
-
-@pytest.mark.asyncio
-async def test_repointing_a_relex_edge_still_keys_on_the_predicate_alone() -> None:
-    """Only the projection's own edges are replayed under the wider key."""
-    client = _mock_client()
-    await GraphStore(client=client)._repoint_relation(
-        "Melanie", "Camping", {"predicate": "LIKES", "evidence": ["c1"], "reified": False}
-    )
-    stmt, params = _rel_merges(client)[0]
-    assert "MERGE (a)-[r:REL {predicate: $predicate}]->(b)" in stmt
-    assert not [k for k in params if k.startswith("key_")]
-
-
-def test_frame_merge_key_needs_a_reified_edge_with_both_roles() -> None:
-    """A frame edge written before roles existed is replayed the old way."""
-    assert _frame_merge_key(_frame_row("neg")) == {
-        "head_role": "Traveler",
-        "tail_role": "Goal",
-        "polarity": "neg",
-        "modality": "none",
-    }
-    assert _frame_merge_key({"predicate": "LIKES"}) is None
-    assert _frame_merge_key({"reified": True, "head_role": "Traveler"}) is None
-    # Defaults are the projection's own, so the rebuilt edge is the one the next
-    # ingest MERGEs onto rather than a second edge beside it.
-    key = _frame_merge_key({"reified": True, "head_role": "A", "tail_role": "B"})
-    assert key == {"head_role": "A", "tail_role": "B", "polarity": "pos", "modality": "none"}
-
-
-@pytest.mark.asyncio
-async def test_frame_instances_dropped_by_an_absent_chunk_are_counted(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """DEFECT 3: batch 1's MATCH is silent, batch 2b writes its edges regardless.
-
-    With no CHUNK vertex the FRAME_INSTANCEs are never created, while the co-role
-    REL edges still carry a frame_instance_id that resolves to nothing. Only a
-    RETURNed count can see it.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(return_value=[{"nn": "melanie"}, {"nn": "banff"}])
-    client.command = AsyncMock(return_value=[{"n": 0}])
-    store = GraphStore(client=client)
-    instances = [{"frame": "Travel", "roles": {"Traveler": ["Melanie"], "Goal": ["Banff"]}}]
-
-    with caplog.at_level(logging.WARNING):
-        await store.write_frame_instances("s1", "missing-chunk", instances)
-    dropped = [r for r in caplog.records if "frame instances dropped" in r.message]
-    assert dropped, "a batch that wrote nothing must not pass silently"
-    assert dropped[0].args == ("missing-chunk", 1)
-    assert any("RETURN count(fi) AS n" in s for s in _command_strings(client))
-
-    caplog.clear()
-    client.command = AsyncMock(return_value=[{"n": 1}])
-    with caplog.at_level(logging.WARNING):
-        await store.write_frame_instances("s1", "chunk-a", instances)
-    assert not [r for r in caplog.records if "frame instances dropped" in r.message]
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_entity_merge_keeps_frame_adjacency_on_scratch_database(
-    arcadedb_required: None,
-) -> None:
-    """The whole of #150 against a real ArcadeDB: merge, then re-ingest.
-
-    Two frame edges differing only in polarity must survive the merge as two
-    edges, and the re-ingest that follows must MERGE onto them instead of
-    duplicating the adjacency.
-    """
-    from graphknows.settings import GraphKnowsSettings
-    from graphknows.storage import build_arcadedb_client
-
-    s = GraphKnowsSettings()
-    client = build_arcadedb_client(s)
-    db = f"mem_test_{uuid.uuid4().hex[:8]}"
-    store = GraphStore(client=client, db=db)
-    await store.connect()
-    try:
-        await store.ensure_schema(dims=8)
-        await store.ensure_session("sess-1", started_at="2026-07-13T00:00:00Z")
-        await store.ensure_file("file-1", "sess-1")
-        await store.write_chunks_bulk(
-            [
-                {
-                    "chunk_id": cid,
-                    "session_id": "sess-1",
-                    "file_id": "file-1",
-                    "text": "Mel travelled to Banff. Mel did not travel to Banff.",
-                    "seq": seq,
-                    "embedding": [1.0] + [0.0] * 7,
-                }
-                for seq, cid in enumerate(("chunk-a", "chunk-b"))
-            ]
-        )
-        await store.write_entities_bulk(
-            "sess-1",
-            "chunk-a",
-            [
-                {"name": "Mel", "type": "PERSON", "confidence": 0.9},
-                {"name": "Melanie", "type": "PERSON", "confidence": 0.9},
-                {"name": "Banff", "type": "PLACE", "confidence": 0.8},
-            ],
-        )
-        roles = {"Traveler": ["Mel"], "Goal": ["Banff"]}
-        await store.write_frame_instances(
-            "sess-1",
-            "chunk-a",
-            [
-                {"frame": "Travel", "roles": roles, "polarity": "pos"},
-                {"frame": "Travel", "roles": roles, "polarity": "neg"},
-            ],
-        )
-
-        async def frame_edges(name_norm: str) -> list[dict]:
-            # Either endpoint: co-role fillers are siblings of one fact and edge
-            # DIRECTION follows the role name (Goal < Traveler), so these are
-            # read undirected. WHERE, never an inline relationship property map:
-            # inline maps are unreliable for MATCHING in ArcadeDB's Cypher.
-            return await store.query(
-                "MATCH (a:ENTITY)-[r:REL]->(b:ENTITY) WHERE r.source = 'frame' "
-                "AND (a.name_norm = $nn OR b.name_norm = $nn) "
-                "RETURN r.polarity AS polarity, r.head_role AS head_role, "
-                "r.canonical_predicate AS cp, r.evidence AS evidence, "
-                "r.reified AS reified",
-                nn=name_norm,
-            )
-
-        assert len(await frame_edges("mel")) == 2, "the denial did not survive the write"
-
-        assert await store.merge_entities("melanie", "mel")
-        merged = await frame_edges("melanie")
-        assert len(merged) == 2, "the fact and its denial collapsed into one edge on merge"
-        assert {e["polarity"] for e in merged} == {"pos", "neg"}
-        assert {e["head_role"] for e in merged} == {"Goal"}
-        assert {e["cp"] for e in merged} == {"fn:Travel:Goal->Traveler"}
-        assert all(e["reified"] for e in merged)
-        assert all(e["evidence"] == ["chunk-a"] for e in merged)
-
-        # Re-ingest: the same fact, now naming the winner, from a second chunk.
-        # It must MERGE onto the repointed edge, not beside it.
-        await store.write_frame_instances(
-            "sess-1",
-            "chunk-b",
-            [{"frame": "Travel", "roles": {"Traveler": ["Melanie"], "Goal": ["Banff"]}}],
-        )
-        after = await frame_edges("melanie")
-        assert len(after) == 2, "the re-ingest duplicated the frame adjacency"
-        positive = next(e for e in after if e["polarity"] == "pos")
-        assert set(positive["evidence"]) == {"chunk-a", "chunk-b"}
-    finally:
-        try:
-            await store.drop_database()
-        finally:
-            await store.close()
-
-
-@pytest.mark.asyncio
-async def test_two_fillers_of_the_same_role_do_not_become_a_relation():
-    """Co-participation is not a relation.
-
-    The projection paired every two distinct fillers of an instance, including
-    two fillers of the SAME role, and emitted them as a directed REL. That
-    produced `(Gina) -Residence[Co_resident->Co_resident]-> (Jon)` and
-    `(banker) -Avoiding[Agent->Agent]-> (Gina)` — edges that read as facts and
-    assert nothing true. Measured on conv-30: 829 of 2590 reified edges, 32% of
-    the fact layer.
-
-    Both fillers stay joined by their FRAME_INSTANCE via PLAYS_ROLE, which is
-    where co-participation is correctly expressed.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(return_value=[{"nn": "gina"}, {"nn": "jon"}, {"nn": "rome"}])
-    store = GraphStore(client=client)
-
-    await store.write_frame_instances(
-        session_id="s1",
-        chunk_id="c1",
-        instances=[
-            {
-                "frame": "Residence",
-                # Two co-residents (same role) plus a location (different role).
-                "roles": {"Co_resident": ["Gina", "Jon"], "Location": ["Rome"]},
-                "match_sim": 1.0,
-                "role_confidence": 0.9,
-            }
-        ],
-    )
-    rel_call = next(c for c in client.command.await_args_list if "r:REL" in c.args[1])
-    rows = rel_call.kwargs["params"]["rows"]
-
-    same_role = [r for r in rows if r["hr"] == r["tr"]]
-    assert not same_role, f"same-role pairs were written as relations: {same_role}"
-
-    # The cross-role adjacency — the part only this projection can provide — survives.
-    assert {(r["hr"], r["tr"]) for r in rows} == {("Co_resident", "Location")}
-    assert {r["t"] for r in rows} == {"rome"}
-
-
-@pytest.mark.asyncio
-async def test_an_instance_whose_roles_all_collide_writes_no_adjacency():
-    """Every pair same-role means no cross-role adjacency exists to write.
-
-    The instance and its PLAYS_ROLE edges are still written — the fact is real,
-    it just has no entity-to-entity projection.
-    """
-    client = _mock_client()
-    client.query = AsyncMock(return_value=[{"nn": "gina"}, {"nn": "jon"}])
-    store = GraphStore(client=client)
-
-    await store.write_frame_instances(
-        session_id="s1",
-        chunk_id="c1",
-        instances=[{"frame": "Avoiding", "roles": {"Agent": ["Gina", "Jon"]}}],
-    )
-    assert not [c for c in client.command.await_args_list if "r:REL" in c.args[1]]
-    assert [c for c in client.command.await_args_list if "PLAYS_ROLE" in c.args[1]]
+        await store.drop_database()
+        await store.close()

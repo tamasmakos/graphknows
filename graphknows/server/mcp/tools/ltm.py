@@ -1,4 +1,4 @@
-"""MCP tools for long-term memory exploration."""
+"""MCP tools for long-term memory exploration and forgetting."""
 
 from __future__ import annotations
 
@@ -7,13 +7,6 @@ from typing import Any
 from graphknows.server.mcp._app import app
 from graphknows.server.mcp._bounded import bounded
 from graphknows.server.mcp._state import get_runtime
-
-
-@app.tool()
-async def ltm_topics(min_entities: int = 3) -> dict[str, Any]:
-    """List Topic nodes with an entity count above the threshold."""
-    runtime = await get_runtime()
-    return await runtime.ltm_topics(min_entities=min_entities)
 
 
 @app.tool()
@@ -33,3 +26,16 @@ async def ltm_entities(session_id: str = "", limit: int = 200) -> dict[str, Any]
     """
     runtime = await get_runtime()
     return await runtime.ltm_entities(session_id=session_id, limit=limit)
+
+
+@app.tool()
+@bounded
+async def memory_forget(record_id: str) -> dict[str, Any]:
+    """Tombstone one fact, entity or segment so recall stops seeing it (FR-037).
+
+    Never a delete: merge logs and provenance stay replayable. Returns the
+    counters, including how many facts the cascade tombstoned with a segment.
+    """
+    runtime = await get_runtime()
+    counters = await runtime.forget(record_id)
+    return counters.model_dump()

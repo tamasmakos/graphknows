@@ -1,4 +1,4 @@
-"""MCP tools for STM ingest, recall, and flush."""
+"""MCP tools for memory ingest and the run report."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ async def memory_ingest(
     metadata: dict[str, Any] | None = None,
     text: str = "",
 ) -> dict[str, Any]:
-    """Ingest text or a conversation thread into short-term memory."""
+    """Ingest text or a conversation thread into memory."""
     runtime = await get_runtime()
     return await runtime.ingest_memory(
         messages=messages,
@@ -38,7 +38,7 @@ async def memory_ingest(
 
 
 @app.tool()
-async def memory_flush(session_id: str) -> dict[str, Any]:
-    """Flush a session from short-term memory into long-term memory."""
+async def memory_flush() -> dict[str, Any]:
+    """Report how identity resolved and which written types nothing read back."""
     runtime = await get_runtime()
-    return await runtime.flush_memory(session_id)
+    return await runtime.flush()

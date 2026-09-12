@@ -1,0 +1,27 @@
+{
+  "row": "locomo",
+  "feeding_mode": "document",
+  "extractor": "local",
+  "n": 10,
+  "not_run": null,
+  "accuracy": {
+    "median": 0.9,
+    "band": 0.09999999999999998,
+    "runs": [
+      0.9,
+      0.9,
+      0.8
+    ],
+    "commit": "2d50ebacbd873d2d13d69e823d6aa033235e545f"
+  },
+  "evidence_recall": {
+    "median": 0.6,
+    "band": 0.0,
+    "runs": [
+      0.6,
+      0.6,
+      0.6
+    ],
+    "commit": "2d50ebacbd873d2d13d69e823d6aa033235e545f"
+  }
+}

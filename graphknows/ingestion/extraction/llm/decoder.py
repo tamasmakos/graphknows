@@ -41,10 +41,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, create_model
 
-from graphknows.ingestion.extraction.entities.extractor import (
-    _BASE_ENTITY_LABELS,
-    ExtractionResult,
-)
+from graphknows.ingestion.extraction.entities.extractor import ExtractionResult
 from graphknows.ingestion.extraction.llm.anchor import ResponseGates
 from graphknows.ingestion.extraction.llm.retry import RetryBudget, failure_gate
 from graphknows.ingestion.extraction.llm.schema import (
@@ -144,12 +141,16 @@ _SECTIONS: tuple[tuple[str, str, Any], ...] = (
 
 
 def _signature_for(request: DecodeRequest) -> Any:
-    """``Decode`` minus every section this chunk has no input for."""
+    """``Decode`` minus every section this chunk has no input for, plus pack guidance."""
     signature = _decode_signature()
     for source, section, _ in _SECTIONS:
         if not getattr(request, source):
             log.debug("decode section omitted: %s is empty, so no %s asked for", source, section)
             signature = signature.delete(source).delete(section)
+    if request.prompt_addendum:
+        signature = signature.with_instructions(
+            f"{signature.instructions}\n\n{request.prompt_addendum}"
+        )
     return signature
 
 
@@ -205,13 +206,13 @@ def _completion_text(signature: Any, completion: Any) -> str:
     return text
 
 
-def _entity_labels(extra: Sequence[str] | None) -> tuple[str, ...]:
-    """The base inventory unioned with this chunk's ontology classes, order kept.
+def _entity_labels(offered: Sequence[str] | None) -> tuple[str, ...]:
+    """The offered label set, deduplicated, order kept.
 
-    The local path unions the same base set with its spaCy observation; mining
-    that costs a parse and buys a model that reads the chunk itself nothing.
+    The pack's labels REPLACE, they never union: a core inventory added here
+    would put labels on offer that no pack asked for (FR-022).
     """
-    return tuple(dict.fromkeys((*_BASE_ENTITY_LABELS, *(extra or ()))))
+    return tuple(dict.fromkeys(offered or ()))
 
 
 def _openrouter_request_options(model: str) -> dict[str, Any]:
@@ -332,6 +333,7 @@ class LLMDecoder:
         speaker: str = "",
         *,
         frame_candidates: Sequence[FrameCandidate] = (),
+        prompt_addendum: str = "",
     ) -> ExtractionResult:
         """Label one chunk. Exactly one provider call, or none for empty text.
 
@@ -349,10 +351,11 @@ class LLMDecoder:
             relation_spec=dict(extra_relation_labels or {}) if settings.decode_relations else {},
             frame_candidates=tuple(frame_candidates) if settings.decode_frames else (),
             speaker=speaker,
+            prompt_addendum=prompt_addendum,
         )
         if not request.entity_labels:
-            # The base inventory is never empty, so this is `decode_entities`
-            # off — and it takes the other two sections with it: a relation is
+            # `decode_entities` off, or a pack offering no labels — and it takes
+            # the other two sections with it: a relation is
             # built from entity surfaces and a role filler is anchored as one,
             # so both would be gated away whole. Asking anyway would spend a
             # call on a reply that cannot survive it (FR-016).

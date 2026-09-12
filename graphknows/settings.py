@@ -417,14 +417,6 @@ class GraphKnowsSettings(BaseSettings):
     # the same value as ``ontology`` to go back to one vocabulary for both jobs.
     relation_ontology: str = Field(default="", alias="GRAPHKNOWS_RELATION_ONTOLOGY")
 
-    # Retrieval channels — modular ingest+retrieve signals (see memory/channels/).
-    # Frames (deterministic FrameNet layer) are ON by default; disable with
-    # GRAPHKNOWS_ENABLE_FRAMES=false.
-    enable_frames: bool = Field(default=True, alias="GRAPHKNOWS_ENABLE_FRAMES")
-    # The FRAME_INSTANCE layer as a retrieval leg (channels/frame_facts.py).
-    # OFF until it is A/B'd: the fact layer has never fed retrieval, and the last
-    # channel added to the fusion tracked accuracy 0.766 -> 0.722.
-    enable_frame_facts: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_FRAME_FACTS")
     # The ontology retrieval channel is OPT-IN and defaults OFF: it has never
     # been measured on its own. It went live as a side effect of making ontology
     # INJECTION always-on (its `if settings.ontology_source:` gate could not be
@@ -436,29 +428,15 @@ class GraphKnowsSettings(BaseSettings):
     # the switch is to restore the measured channel set so the next A/B isolates
     # one change. Turn it on to measure it, and record the number here.
     enable_ontology_channel: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_ONTOLOGY_CHANNEL")
-    # Experiment layered ON TOP of the FE plane (graphknows.symbolic.framenet.fe):
-    # vetoes a role filler whose graph entity type conflicts with the FE's
-    # FrameNet semantic type (e.g. a LOCATION filling a Sentient-typed role).
-    # The FE plane's own justification (coreness, Requires/Excludes, CoreSet
-    # fillability) does not depend on this flag — it is default OFF so the
-    # type veto itself can be A/B'd independently before it gates real writes.
-    enable_fe_type_gate: bool = Field(default=False, alias="GRAPHKNOWS_ENABLE_FE_TYPE_GATE")
 
-    # Saturation ceilings for the two tag-driven channels (channels/frames.py,
-    # channels/ontology.py). A tag covering more than this fraction of a
+    # Saturation ceiling for the tag-driven ontology channel
+    # (channels/ontology.py). A tag covering more than this fraction of a
     # session's chunks is dropped from the join: like the conversation
-    # participants (see the entity-saturation drop), a generic frame such as
-    # ``Activity_ongoing`` — or the class ``Person`` in a personal-conversation
-    # corpus — matches nearly every chunk, so returning its chunks floods recall
-    # with the whole conversation and carries no discriminative signal.
-    frame_saturation_ratio: float = Field(default=0.5, alias="GRAPHKNOWS_FRAME_SATURATION_RATIO")
+    # participants (see the entity-saturation drop), a generic class such as
+    # ``Person`` in a personal-conversation corpus matches nearly every chunk,
+    # so returning its chunks floods recall with the whole conversation and
+    # carries no discriminative signal.
     class_saturation_ratio: float = Field(default=0.5, alias="GRAPHKNOWS_CLASS_SATURATION_RATIO")
-
-    # Frame-aware re-ranking of the fused pool (ranking/frame_boost.py), where
-    # the alpha is sized to the observed probe-to-context gap.
-    frame_rerank: bool = Field(default=True, alias="GRAPHKNOWS_FRAME_RERANK")
-    frame_rerank_alpha: float = Field(default=0.5, alias="GRAPHKNOWS_FRAME_RERANK_ALPHA")
-    frame_rerank_top_k: int = Field(default=8, alias="GRAPHKNOWS_FRAME_RERANK_TOP_K")
 
     # Pool shape and post-cut expansion (retrieval/retriever.py): retrieve wide,
     # return narrow, and — off by default — stitch each result's seq-adjacent

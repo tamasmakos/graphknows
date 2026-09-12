@@ -11,7 +11,8 @@ from __future__ import annotations
 import csv
 import json
 import math
-from dataclasses import dataclass
+import statistics
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,58 @@ class ReportPaths:
     json_path: Path
     csv_path: Path
     markdown_path: Path
+
+
+@dataclass(frozen=True)
+class PanelRow:
+    """One benchmark row of a panel run (contracts/panel-report.md).
+
+    ``dataclasses.asdict`` yields the contract's JSON shape. A row that could not
+    be provisioned carries the reason in *not_run* and is never omitted.
+    """
+
+    row: str
+    feeding_mode: str
+    extractor: str
+    accuracy: float = 0.0
+    evidence_recall: float = 0.0
+    by_category: dict[str, float] = field(default_factory=dict)
+    n: int = 0
+    not_run: str | None = None
+
+
+@dataclass(frozen=True)
+class InternalMetrics:
+    """The once-per-run internal metrics (FR-040); ``asdict`` is the JSON shape."""
+
+    identity: dict[str, float] = field(default_factory=dict)
+    fact_precision: dict[str, float] = field(default_factory=dict)
+    dead_weight: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BaselineMetric:
+    """Repeated runs of one metric. *median* is the headline, *band* the run noise."""
+
+    runs: list[float]
+    commit: str
+
+    @property
+    def median(self) -> float:
+        return statistics.median(self.runs)
+
+    @property
+    def band(self) -> float:
+        return max(self.runs) - min(self.runs)
+
+    def to_record(self) -> dict[str, Any]:
+        """The contract's ``median``/``band``/``runs``/``commit`` shape."""
+        return {
+            "median": self.median,
+            "band": self.band,
+            "runs": list(self.runs),
+            "commit": self.commit,
+        }
 
 
 def _mean(vals: list[float]) -> float:
@@ -316,4 +369,40 @@ def compare_modes(
     )
     lines.append("")
     lines.append(f"_llm_free n={len(llm_free_cases)}  llm_assisted n={len(llm_assisted_cases)}_")
+    return "\n".join(lines) + "\n"
+
+
+EXTRACTOR_COLUMNS = ("local", "llm")
+_PANEL_METRICS = ("accuracy", "evidence_recall")
+
+
+def _panel_cell(row: PanelRow | None, metric: str) -> str:
+    """One table cell: a score, the reason a row did not run, or an absent path."""
+    if row is None:
+        return "—"
+    if row.not_run:
+        return f"not run ({row.not_run})"
+    return f"{float(getattr(row, metric)):.3f}"
+
+
+def render_panel(rows: list[PanelRow]) -> str:
+    """Panel table with the local and LLM extraction paths as separate columns (FR-043)."""
+    by_row: dict[str, dict[str, PanelRow]] = {}
+    for row in rows:
+        by_row.setdefault(row.row, {})[row.extractor] = row
+
+    header = ["Row", *(f"{ex} {m}" for ex in EXTRACTOR_COLUMNS for m in _PANEL_METRICS)]
+    lines = [
+        "# Panel",
+        "",
+        "| " + " | ".join(header) + " |",
+        "|" + "---|" * len(header),
+    ]
+    for name, paths in sorted(by_row.items()):
+        cells = [
+            _panel_cell(paths.get(ex), metric)
+            for ex in EXTRACTOR_COLUMNS
+            for metric in _PANEL_METRICS
+        ]
+        lines.append(f"| `{name}` | " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"

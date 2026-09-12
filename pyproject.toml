@@ -112,14 +112,6 @@ ontology = ["rdflib>=7.0.0", "networkx>=3.0"]
 # (no test, example, eval, or docs page) and raised a bare ImportError, so the
 # extra it named guarded nothing.
 langgraph = ["langgraph>=0.2.0"]
-# Transformer frame identification (graphknows.symbolic.framenet.srl), an alternative to the
-# default LU+embedding frame guess. Lazily imported behind MissingExtraError and
-# only reached when GRAPHKNOWS_FRAME_SRL is on, so the base install never pulls
-# it. Kept an extra for two reasons beyond size: it pins `protobuf<6` where this
-# project resolves 7.x, and it drags pytorch-lightning + nlpaug in for TRAINING
-# code that inference never runs. Installing it will downgrade protobuf — check
-# nothing else in the environment needs 6+ before you do.
-srl = ["frame-semantic-transformer>=1.1.0"]
 # Langfuse tracing for the LangGraph example. Nothing in the library imports it
 # — the example builds the callback only when LANGFUSE_* is set.
 #
@@ -150,6 +142,10 @@ path = "graphknows/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["graphknows"]
+# Domain packs are data, not code. `packages` ships the directory, but hatchling
+# drops anything the VCS ignores — an ignore rule matching *.json would silently
+# produce an installed package with no packs. `artifacts` force-includes them.
+artifacts = ["graphknows/packs/data/**/*.json"]
 
 [tool.hatch.build.targets.sdist]
 # `.claude` is the agent harness (skills, workflows, hooks) — version controlled so the
@@ -159,8 +155,8 @@ packages = ["graphknows"]
 exclude = ["evaluation", "examples", "tests", "research", ".scratch", ".claude", "CLAUDE.md"]
 
 [project.scripts]
+graphknows = "graphknows.cli.memory:main"
 graphknows-mcp = "graphknows.server.mcp.stdio_server:main"
-graphknows-topics = "graphknows.cli.topics:main"
 
 # ── Dev tooling ────────────────────────────────────────────────────────────────
 
@@ -231,11 +227,7 @@ known_first_party = ["graphknows"]
 #     removed (#218))
 #   - langfuse        (`observability` extra — deliberate, ignored below)
 #   - langchain       (`observability` extra — deliberate, ignored below)
-# No DEP003/DEP004 findings this run. frame-semantic-transformer (`srl` extra)
-# was NOT flagged: graphknows/symbolic/framenet/srl.py:80 has a real
-# `from frame_semantic_transformer import ...` statement deptry's AST scan
-# sees, even though the availability probe on line 44 uses
-# importlib.util.find_spec rather than an import.
+# No DEP003/DEP004 findings this run.
 #
 # Verified against deptry's own docs (https://deptry.com/usage/, v0.25.1):
 # [project.dependencies] / [project.optional-dependencies] are extracted as

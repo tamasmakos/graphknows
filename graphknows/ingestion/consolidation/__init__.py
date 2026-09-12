@@ -1,5 +1,1 @@
-"""Consolidation-time graph cleanup (flush path)."""
-
-from graphknows.ingestion.consolidation.entity_resolution import resolve_entities
-
-__all__ = ["resolve_entities"]
+"""Consolidation: which surfaces name one entity, and on what evidence."""
