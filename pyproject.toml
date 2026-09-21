@@ -152,7 +152,8 @@ artifacts = ["graphknows/packs/data/**/*.json"]
 # rules survive a clone, but it is not part of the distribution. hatchling drops
 # VCS-ignored files, so before it was tracked it was excluded for free; now that it is
 # tracked, only this line keeps ~1.5 MB of skills out of the sdist.
-exclude = ["evaluation", "examples", "tests", "research", ".scratch", ".claude", "CLAUDE.md"]
+exclude = ["evaluation", "examples", "tests", "research", ".scratch", ".claude/**",
+           ".serena/**", ".processrecall/**", "CLAUDE.md"]
 
 [project.scripts]
 graphknows = "graphknows.cli.memory:main"

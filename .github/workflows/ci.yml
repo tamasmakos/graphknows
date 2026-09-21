@@ -369,6 +369,8 @@ jobs:
           members = tarfile.open(sdist).getnames()
           assert any(m.endswith("pyproject.toml") for m in members), "pyproject.toml missing from the sdist"
           assert any("graphknows/" in m for m in members), "graphknows/ source missing from the sdist"
+          leaked = [m for m in members if any(f"/{d}/" in m for d in (".claude", ".serena", ".processrecall"))]
+          assert not leaked, f"agent-local tooling leaked into the sdist: {leaked[:5]}"
           sdist_kb = os.path.getsize(sdist) / 1024
           print(f"sdist OK: {os.path.basename(sdist)} ({sdist_kb:.0f} KB, pyproject.toml + graphknows/ present)")
           PY

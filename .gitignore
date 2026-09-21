@@ -73,6 +73,9 @@ skills-lock.json
 # -- the harness and dependency gates that matter live in tracked files outside it. A spec is
 # published by `/specify {github:true}`, which force-adds just that one feature directory.
 .claude/
+# Same category: agent-local caches, written per machine, never a deliverable.
+.serena/
+.processrecall/
 AGENTS.md
 .codegraph
 # local analysis scratch (not committed)
