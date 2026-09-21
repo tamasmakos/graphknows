@@ -11,7 +11,6 @@
 PYSEC-2026-3481       # mcp               1.27.0  -> 1.28.1
 PYSEC-2026-3482       # mcp
 PYSEC-2026-3483       # mcp
-GHSA-4xgf-cpjx-pc3j   # pydantic-settings 2.13.1  -> 2.14.2
 PYSEC-2026-3036       # python-multipart  0.0.29  -> 0.0.31
 PYSEC-2026-3037       # python-multipart
 PYSEC-2026-3040       # python-multipart

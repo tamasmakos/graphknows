@@ -36,7 +36,9 @@ dependencies = [
     # env_file loading in settings.py needs python-dotenv, but pydantic-settings
     # already requires it unconditionally (not behind an extra) — no separate
     # declaration needed here.
-    "pydantic-settings>=2.2.0",
+    # Floor at the fix for CVE-2026-58203 / GHSA-4xgf-cpjx-pc3j: the lock binds
+    # this repo, not someone installing the published wheel.
+    "pydantic-settings>=2.14.2",
     "httpx>=0.27.0",
     "numpy>=1.26.0",
     "dateparser>=1.2.0",
