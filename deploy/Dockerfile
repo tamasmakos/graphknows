@@ -1,6 +1,6 @@
 # GraphKnows release image: built once with network, run with none.
 #
-#   docker build -f deploy/Dockerfile -t graphknows:2.0.0 .
+#   docker build -f deploy/Dockerfile -t graphknows:3.0.0 .
 #
 # The build context is the release bundle — `deploy/`, `scripts/` and the wheel
 # at its root — whose layout mirrors the repository, so the relative paths below
@@ -20,7 +20,7 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/opt/models/huggingface \
     NLTK_DATA=/opt/models/nltk_data
 
-COPY graphknows-2.0.0-py3-none-any.whl /tmp/
+COPY graphknows-3.0.0-py3-none-any.whl /tmp/
 
 # Exact filename, never a glob: `[ontology]` is a glob character class, so
 # `graphknows-*.whl[ontology]` matches nothing and pip is handed the literal
@@ -29,9 +29,9 @@ COPY graphknows-2.0.0-py3-none-any.whl /tmp/
 # en_core_web_lg is not a wheel dependency and spacy.load() never downloads it,
 # so the bake's spacy step needs it installed here.
 RUN pip install --no-cache-dir \
-    "/tmp/graphknows-2.0.0-py3-none-any.whl[ontology]" \
+    "/tmp/graphknows-3.0.0-py3-none-any.whl[ontology]" \
     "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl" \
-    && rm /tmp/graphknows-2.0.0-py3-none-any.whl
+    && rm /tmp/graphknows-3.0.0-py3-none-any.whl
 
 WORKDIR /app
 
