@@ -53,12 +53,12 @@ hand-run `uv build` from a laptop.
 
 ### Where a release goes
 
-**Nowhere public.** The wheel is attached as an asset on this private
-repository's GitHub Release for the pushed tag; it is not published to PyPI or
-any other public index. The Release is the private channel, and access to the
-repository is what gates access to the artifact.
+**PyPI, and this repository's Release.** The publish job hands PyPI a
+short-lived OIDC token through its Trusted Publisher and uploads the wheel and
+sdist CI built; the same wheel is attached, beside the deployment bundle, as an
+asset on the GitHub Release for the pushed tag.
 
-Two assets are attached:
+Two assets are attached to the Release:
 
 | Asset | What it is |
 | --- | --- |
@@ -66,13 +66,13 @@ Two assets are attached:
 | `graphknows-deploy-<version>.tar.gz` | the deployment bundle: `deploy/` and `scripts/` beside the wheel, in the repository's own layout, so `deploy/Dockerfile` builds identically from the unpacked bundle or from a checkout |
 
 The bundle exists because a recipient must be able to build the deployment
-without access to this repository. `scripts/` ships in no wheel, so the bundle
+without cloning the repository. `scripts/` ships in no wheel, so the bundle
 carries it rather than the client cloning for three files.
 
-There is no one-time registration step. Attaching a Release asset needs only
-`contents: write`, scoped to the publish job, and no stored token: earlier
-releases used PyPI's Trusted Publisher over OIDC, and that machinery is gone
-along with the public index it served.
+Publishing needs one one-time registration: a Trusted Publisher for the
+`graphknows` project on PyPI, naming this repository and `release.yml`. No
+secret is stored anywhere — `id-token: write`, scoped to the publish job, is
+the whole credential.
 
 ### Recovering from a failed release
 
@@ -80,6 +80,7 @@ A pushed tag is not cleanly re-pushable. Recover **fix-forward**: bump to the
 next version, add a CHANGELOG entry, and tag again. Never delete and re-push a
 tag — it is not recoverable the way a normal bump-and-retag is.
 
-Re-running the upload for the *same* tag is safe (assets are attached with
-`--clobber`), which is the one thing that got easier: a public index would have
-refused a re-upload of a filename it had already seen.
+Re-running the upload for the *same* tag is safe: Release assets are attached
+with `--clobber`, and the PyPI step runs with `skip-existing`, so a rerun after
+a successful upload passes over the files PyPI already holds instead of failing
+on them.

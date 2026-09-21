@@ -160,32 +160,46 @@ def test_version_is_never_hand_restated_in_the_workflow() -> None:
     )
 
 
-def test_publishes_wheel_as_private_release_asset() -> None:
-    """The wheel is attached to this private repository's Release, never sent to
-    a public package index.
+def test_publishes_to_pypi_over_trusted_publishing() -> None:
+    """The wheel goes to PyPI over OIDC, and stays attached to the Release.
 
-    This replaces the Trusted Publisher assertions this file used to carry.
-    FR-007 reversed the requirement they encoded, so the check moves with the
-    requirement rather than being deleted: everything the old node protected is
-    still protected here -- no stored token, no build in the publish job, and
-    now additionally no public index.
+    The repository is public again, so FR-007's "never a public index" is no
+    longer the requirement and the check moves with it rather than being
+    deleted. Everything the private-asset node protected is still protected:
+    no stored token, no build in the publish job, and the Release-asset
+    channel remains -- the deployment bundle is still delivered that way.
     """
     text = _release_text()
     assert "gh release upload" in text, (
         f"{RELEASE}: the wheel is not attached to the Release -- `gh release upload` is absent"
     )
-    assert "pypa/gh-action-pypi-publish" not in text, (
-        f"{RELEASE}: still publishes to PyPI; the artifact must stay private"
+    assert re.search(r"uses: pypa/gh-action-pypi-publish@[0-9a-f]{40}", text), (
+        f"{RELEASE}: no SHA-pinned `pypa/gh-action-pypi-publish` step -- a mutable "
+        f"tag on the publishing action is a supply-chain hole"
     )
     for forbidden, why in (
         ("secrets.PYPI", "a stored PyPI token"),
         ("password:", "a stored password"),
         ("api_token", "a stored API token"),
-        ("id-token", "an OIDC identity, which only a public index needs"),
     ):
         assert forbidden not in text, (
-            f"{RELEASE}: references {forbidden} -- {why} has no place here"
+            f"{RELEASE}: references {forbidden} -- {why} is the long-lived secret "
+            f"Trusted Publisher exists to remove"
         )
+
+
+def test_id_token_is_scoped_to_the_publish_job_only() -> None:
+    """`id-token: write` must appear exactly once, indented as a job-level
+    `permissions:` entry -- at the top level it would hand an OIDC identity to
+    every job in the workflow."""
+    text = _release_text()
+    occurrences = [line for line in text.splitlines() if re.search(r"id-token:\s*write", line)]
+    assert len(occurrences) == 1, (
+        f"{RELEASE}: expected exactly one `id-token: write` line, found {len(occurrences)}"
+    )
+    assert occurrences[0].startswith("      "), (
+        f"{RELEASE}: `id-token: write` is not job-scoped -- {occurrences[0]!r}"
+    )
 
 
 def test_contents_write_is_scoped_to_the_publish_job_only() -> None:
@@ -306,10 +320,9 @@ def test_docs_describe_the_tag_push_release_mechanism() -> None:
     goes, and the fix-forward rule (a tag is never deleted/re-pushed) —
     otherwise the mechanism is undocumented.
 
-    Re-pinned with the workflow: this used to require the one-time Trusted
-    Publisher registration, which FR-007 removed along with the public index.
-    The doc must now state the private Release channel instead, at the same
-    strictness."""
+    Re-pinned with the workflow: the doc must name both channels the publish
+    job writes to -- PyPI over the Trusted Publisher, and the GitHub Release
+    asset that carries the deployment bundle -- at the same strictness."""
     text = VERSIONING_DOC.read_text(encoding="utf-8")
     assert re.search(r"git push.*tag|push the tag", text, re.IGNORECASE), (
         f"{VERSIONING_DOC}: does not mention pushing the release tag"
@@ -317,8 +330,8 @@ def test_docs_describe_the_tag_push_release_mechanism() -> None:
     assert re.search(r"Release asset|GitHub Release", text), (
         f"{VERSIONING_DOC}: does not say the artifact is attached to a GitHub Release"
     )
-    assert re.search(r"not published to PyPI|nowhere public|[Nn]owhere public", text), (
-        f"{VERSIONING_DOC}: does not state that the release never reaches a public index"
+    assert re.search(r"Trusted Publisher", text), (
+        f"{VERSIONING_DOC}: does not state that PyPI publishing goes through the Trusted Publisher"
     )
     assert "deployment bundle" in text, (
         f"{VERSIONING_DOC}: does not document the deployment bundle attached beside the wheel"

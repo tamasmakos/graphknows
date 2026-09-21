@@ -38,8 +38,8 @@ def test_docs_name_no_absent_symbols() -> None:
 def test_torch_backend_guidance_is_consistent() -> None:
     """`TORCH_BACKEND` guidance is one value, stated once, referenced everywhere (FR-044).
 
-    Also: the changelog must not describe PyPI Trusted Publisher OIDC publishing,
-    which `release.yml` does not do — it attaches the wheel to a GitHub Release.
+    Also: the changelog must describe the PyPI Trusted Publisher OIDC publishing
+    `release.yml` performs, alongside the GitHub Release asset.
     """
     dockerfile_text = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
     readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -60,12 +60,12 @@ def test_torch_backend_guidance_is_consistent() -> None:
     release_workflow_text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
     )
-    assert "pypi" not in release_workflow_text.lower(), (
-        "release.yml now publishes to PyPI — CHANGELOG.md's correction is stale"
+    assert "pypa/gh-action-pypi-publish" in release_workflow_text, (
+        "release.yml no longer publishes to PyPI — CHANGELOG.md's description is stale"
     )
-    assert "to pypi" not in changelog_text.lower(), (
-        "CHANGELOG.md still claims release.yml publishes to PyPI"
+    assert "pypi" in changelog_text.lower(), (
+        "CHANGELOG.md does not mention the PyPI publishing release.yml performs"
     )
-    assert "trusted publisher oidc flow" not in changelog_text.lower(), (
-        "CHANGELOG.md still claims release.yml uses the Trusted Publisher OIDC flow"
+    assert "nowhere public" not in changelog_text.lower(), (
+        "CHANGELOG.md still claims the release reaches no public index"
     )

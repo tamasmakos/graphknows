@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and the project aims to
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.0] — 2026-09-21
 
 ### Changed
 - **`llm_assisted` is now a replacement decoder, not a sidecar.** In that mode the
@@ -20,9 +20,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a `vX.Y.Z` tag reuses `ci.yml` by reference (Sonar skipped, since a tag has
   no PR context), then refuses to publish unless the tag matches the
   `__version__` literal in `graphknows/_version.py`, and attaches the wheel CI
-  itself built, plus a deployment bundle, as assets on this private
-  repository's GitHub Release for the tag — nowhere public, no PyPI publish,
-  no Trusted Publisher OIDC, no stored API token; see `docs/versioning.md`.
+  itself built, plus a deployment bundle, as assets on the repository's GitHub
+  Release for the tag. The same distributions go to PyPI through its Trusted
+  Publisher over OIDC — no stored API token; see `docs/versioning.md`.
 
 ### Removed
 
@@ -33,8 +33,8 @@ wrong the code was kept (`IN_TOPIC` is written by `topics/persist.py` and read b
 `Memory.ltm_topics`, so it stays).
 
 **BREAKING — documented public surface** (see `docs/versioning.md`). These went
-without a deprecation window; the package version is unchanged at `2.0.0`, so
-that decision is still open:
+without a deprecation window, which is why this release is a major bump: 2.0.0
+never reached a public index, so 3.0.0 is the first version on PyPI:
 
 - `graphknows.integrations.client.RemoteMemory` — a wrapper mirroring `Memory`'s
   verbs over MCP. Zero importers outside its own test; `GraphKnowsMCPClient` is

@@ -156,17 +156,12 @@ def test_release_records_provenance_covering_the_wheel_and_bundle() -> None:
     the bundle's Dockerfile/compose/scripts payload unattested.
 
     This is a self-attested record (sha256 digests + commit/run/ref), not a
-    Sigstore-signed attestation: test_publishes_wheel_as_private_release_asset
-    (tests/test_release_workflow.py) already pins that `id-token` — the OIDC
-    permission any signed attestation needs — never reappears in this
-    workflow now that FR-007 removed the PyPI Trusted Publisher that used to
-    need one. A signed attestation step would fail that test outright, so
-    this file must not require one either.
+    Sigstore-signed attestation. PyPI attests what it receives; this record
+    covers what PyPI never sees — the deployment bundle and the SBOM — and the
+    job's OIDC identity is scoped to the upload, pinned by
+    test_id_token_is_scoped_to_the_publish_job_only
+    (tests/test_release_workflow.py).
     """
-    assert "id-token" not in RELEASE_TEXT, (
-        f"{RELEASE_WORKFLOW}: contains `id-token` — a provenance step here must be "
-        "self-attested, not OIDC-signed (see test_publishes_wheel_as_private_release_asset)"
-    )
 
     step_text = _step_text("record provenance for the release assets")
     assert "sha256" in step_text, (

@@ -75,10 +75,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      # Scoped here alone: attaching a release asset writes to this repository.
-      # Nothing is published to a public index, so no OIDC identity is needed
-      # and no API token is stored anywhere.
+      # Scoped here alone: attaching a release asset writes to this repository,
+      # and PyPI exchanges a short-lived OIDC identity token for an upload
+      # token. No API token is stored anywhere.
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -111,6 +112,19 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      - name: publish to PyPI
+        # Pinned to a full commit SHA: a mutable tag is supply-chain surface on
+        # the one path that publishes under the project's name. It runs before
+        # the SBOM and provenance records land in dist/ -- the action uploads
+        # every file it finds there, and PyPI rejects anything that is not a
+        # distribution.
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          # Re-running a release run must stay safe. PyPI refuses a filename it
+          # has already seen; without this, a rerun after a successful upload
+          # would fail here and never reach the Release assets below.
+          skip-existing: true
 
       - name: assemble the deployment bundle
         # The layout mirrors the repository -- deploy/ and scripts/ at the
@@ -149,10 +163,10 @@ jobs:
       - name: record provenance for the release assets
         # A self-attested provenance record — sha256 digests of the release
         # assets bound to the commit, workflow run and tag that produced
-        # them — not a Sigstore-signed attestation: this workflow carries no
-        # OIDC signing permission (test_publishes_wheel_as_private_release_asset
-        # pins that none reappears now that FR-007 removed the package-index trusted
-        # Publisher that used to need one).
+        # them — not a Sigstore-signed attestation: the OIDC identity this job
+        # holds is scoped to the PyPI upload, and PyPI publishes its own
+        # attestations for what it receives. This record covers the assets
+        # PyPI never sees: the deployment bundle and the SBOM.
         run: |
           set -eu
           python3 - dist/*.whl "$BUNDLE" dist/graphknows-sbom.spdx.json <<'PY'

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 
 def get_version() -> str:
